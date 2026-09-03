@@ -180,8 +180,21 @@ HDR 씬 (RGBA16F, Cook-Torrance GGX, 표면 그래디언트 범프, 해석적 �
 
 ## 문서
 
+- [인수인계 문서](docs/HANDOFF.md) — **작업을 이어받는다면 여기부터.**
+  코드 규약, 밟았던 함정, 밸런스 손잡이의 위치, 테스트 돌리는 법
 - [게임 개발 계획서](docs/GAME_DESIGN.md) — 시스템 설계와 마일스톤
 - [원작 리서치](docs/RESEARCH.md) — 소셜게임 스토리 조사 기록과 출처
+
+## 테스트
+
+```bash
+node tools/balance.mjs 12345 10   # 밸런스 시뮬레이션 (브라우저 불필요)
+node tools/sloppy.mjs             # 최악의 플레이로 파산 방지선 확인
+(setsid python3 -m http.server 8123 &)
+node tools/probe.mjs              # 부팅 확인
+node tools/meeting.mjs            # 회의 연출
+node tools/flow.mjs               # 전체 플로우 19개 검사
+```
 
 ## 현재 상태
 
