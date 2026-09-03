@@ -203,7 +203,7 @@ export function comboLabel(score) {
 
 /* ---------- platforms ---------- */
 export const PLATFORMS = [
-  { id: 'feature', ko: '피처폰', rank: 0, fans: 0.55, hp: 0.75, cost: 20000, share: 0.55 },
+  { id: 'feature', ko: '피처폰', rank: 0, fans: 0.55, hp: 0.62, cost: 20000, share: 0.55 },
   { id: 'smart', ko: '스마트폰', rank: 2, fans: 1.00, hp: 1.60, cost: 55000, share: 1.00 },
   { id: 'sns', ko: 'SNS 플랫폼', rank: 5, fans: 1.35, hp: 2.60, cost: 120000, share: 1.25 },
   { id: 'tablet', ko: '태블릿', rank: 9, fans: 1.20, hp: 3.20, cost: 190000, share: 1.10 },
@@ -241,15 +241,20 @@ export function rankInfo(rank) {
     staffCap: Math.min(24, 5 + Math.floor(r * 0.9)),
     motivationCap: Math.min(60, 5 + r * 2),
     floors: Math.min(5, 1 + Math.floor((r - 1) / 4)),
-    staminaMax: Math.min(40, 8 + Math.floor(r * 1.1)),
+    // Stamina has to cover development AND staff training AND proposals, and
+    // it is the real throughput limiter: every point is another battle turn,
+    // so this curve decides how many games a year the studio can ship.
+    staminaMax: Math.min(38, 8 + Math.floor(r * 1.0)),
     managedCap: 3,
   };
 }
 
-/* Rank thresholds: ~28k fans by rank 5, ~550k by 10, ~11M by 15. Tuned against
-   the headless balance run so a well-played five-year career lands near rank 20
-   rather than exhausting the ladder in the first year. */
-export const RANK_UP_FANS = (rank) => Math.round(2400 * Math.pow(1.85, rank - 1));
+/* Rank thresholds: ~10k fans by rank 5, ~255k by 10, ~7M by 15. Tuned against
+   the headless balance run: a studio reaches rank 2-3 in its first year (so
+   year one still visibly moves), the platform ladder opens through the middle
+   years, and the twenties stay a long career away rather than being exhausted
+   before the second Christmas. */
+export const RANK_UP_FANS = (rank) => Math.round(900 * Math.pow(2.2, rank - 1));
 
 /* ---------- items ---------- */
 /* `level` is how many levels the gift is worth; the price is derived from the
@@ -270,3 +275,101 @@ export const GIVEN = ['지훈', '서연', '민준', '하윤', '도윤', '지우'
 
 export const TITLE_WORDS_A = ['드림', '스타', '판타', '몬스터', '크리스탈', '네오', '무한', '리틀', '그랜드', '하이퍼', '미라클', '오르카', '루나', '블레이즈', '코스믹'];
 export const TITLE_WORDS_B = ['사가', '월드', '퀘스트', '타워', '러시', '스토리', '마스터', '리그', '아레나', '킹덤', '파티', '크래프트', '레전드', '체이서'];
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Systems from the design analysis: traits, research, marketing, contracts,
+   market trends and office expansion. Each exists to answer one of the doc's
+   points about why the loop keeps its grip.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ---------- 직원 특성 ----------
+   The doc is explicit that staff must have clear strengths AND weaknesses, or
+   the roster stops being a decision. Each trait is a visible reason to pick one
+   person over another for a given project. */
+export const TRAITS = {
+  workaholic: { ko: '일벌레', desc: '데미지 +18%, 의욕이 잘 안 오른다', dmg: 1.18, moodGain: 0.4 },
+  perfectionist: { ko: '완벽주의', desc: '품질 +22%, 데미지 -12%', quality: 1.22, dmg: 0.88 },
+  spark: { ko: '번뜩임', desc: '크리티컬 확률 +12%p', crit: 0.12 },
+  veteran: { ko: '베테랑', desc: '버그를 크게 줄인다', bugCut: 0.35 },
+  cheerful: { ko: '분위기 메이커', desc: '팀 전체 의욕 유지에 도움', teamMood: 1 },
+  cheap: { ko: '박봉 감수', desc: '급여 -30%', salary: 0.7 },
+  star: { ko: '스타 개발자', desc: '출시 시 팬 +15%', fans: 1.15, salary: 1.25 },
+  genreFan: { ko: '장르 덕후', desc: '특정 장르에서 +35%', genreBonus: 1.35 },
+  nightowl: { ko: '올빼미', desc: '데미지 +25%, 버그 +40%', dmg: 1.25, bugs: 1.4 },
+  mentor: { ko: '멘토', desc: '아이템 육성 효과 +50%', train: 1.5 },
+};
+export const TRAIT_IDS = Object.keys(TRAITS);
+
+/* ---------- 연구 포인트 ----------
+   The long-horizon currency. Development produces it; it buys permanent
+   capability rather than a one-off boost, which is what separates it from cash. */
+export const RESEARCH = [
+  { id: 'genre', ko: '장르 연구', desc: '기획서 등급이 오를 확률 증가', cost: 40, max: 8 },
+  { id: 'tools', ko: '개발 도구', desc: '모든 팀원 데미지 +6%/단계', cost: 55, max: 8 },
+  { id: 'qa', ko: 'QA 체계', desc: '완성 시 버그 -12%/단계', cost: 45, max: 6 },
+  { id: 'market', ko: '시장 조사', desc: '초기 유저 +8%/단계', cost: 60, max: 8 },
+  { id: 'ops', ko: '운영 노하우', desc: '유저 이탈 완화', cost: 70, max: 6 },
+];
+
+export function researchEffect(levels) {
+  const L = levels || {};
+  return {
+    grade: (L.genre || 0) * 0.14,
+    dmg: 1 + (L.tools || 0) * 0.06,
+    bugs: Math.max(0.25, 1 - (L.qa || 0) * 0.12),
+    users: 1 + (L.market || 0) * 0.08,
+    decay: (L.ops || 0) * 0.0035,
+  };
+}
+
+export function researchCost(id, level) {
+  const r = RESEARCH.find((x) => x.id === id);
+  if (!r) return Infinity;
+  return Math.round(r.cost * Math.pow(1.55, level));
+}
+
+/* ---------- 홍보 ----------
+   Buys expectation before launch. The doc lists it as a distinct managed axis:
+   you can win users with quality, or with money, and the trade should be legible. */
+export const MARKETING = [
+  { id: 'none', ko: '홍보 없음', cost: 0, users: 1.0, fans: 1.0, desc: '입소문에 맡긴다' },
+  { id: 'sns', ko: 'SNS 바이럴', cost: 0.35, users: 1.30, fans: 1.15, desc: '가성비가 좋다' },
+  { id: 'influencer', ko: '인플루언서', cost: 0.9, users: 1.65, fans: 1.35, desc: '화제성이 크게 오른다' },
+  { id: 'tv', ko: 'TV / 옥외 광고', cost: 2.2, users: 2.20, fans: 1.70, desc: '비싸지만 확실하다' },
+];
+/* Cost is a multiple of the project's development cost, so promotion always
+   scales with the size of what you are promoting. */
+export function marketingCost(mk, devCost) {
+  return Math.round(devCost * mk.cost);
+}
+
+/* ---------- 계약 일감 ----------
+   The doc's anti-bankruptcy rule: never let a player be permanently stuck at
+   zero. Contracts are dull, safe money that always exists. */
+export const CONTRACTS = [
+  { id: 'port', ko: '이식 외주', weeks: 1, stamina: 3, pay: 26000, research: 4 },
+  { id: 'asset', ko: '에셋 제작 대행', weeks: 1, stamina: 2, pay: 17000, research: 2 },
+  { id: 'qa', ko: 'QA 대행', weeks: 1, stamina: 2, pay: 14000, research: 6 },
+  { id: 'server', ko: '서버 구축 대행', weeks: 1, stamina: 4, pay: 42000, research: 8 },
+];
+/* Contract pay scales with company rank so it stays a floor, not a career. */
+export function contractPay(c, rank) {
+  return Math.round(c.pay * Math.pow(1.28, rank - 1));
+}
+
+/* ---------- 시장 유행 ----------
+   One genre and one content run hot each quarter. The doc calls for exactly
+   this: a reason a known-good combo is not always the right answer. */
+export const TREND_BONUS = 1.55;
+export const TREND_PENALTY = 0.78;
+
+/* ---------- 사무실 ----------
+   Floors are bought, not granted. Rank says what you are allowed to occupy;
+   money says what you actually do occupy. */
+export function floorCost(n) {
+  // n is the floor being bought, 1-indexed: the second floor is n = 2. The
+  // ratio is steep on purpose: the top floor should be a thing a studio saves
+  // for across a couple of years, not a rounding error on one good launch.
+  return Math.round(320000 * Math.pow(3.0, n - 2));
+}
+export const FLOOR_UPKEEP = 9000;

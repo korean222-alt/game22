@@ -344,6 +344,26 @@ body.in-battle #hint{display:none}
   letter-spacing:2.4px;color:rgba(255,255,255,.42);white-space:nowrap;pointer-events:none;
   text-shadow:0 1px 4px rgba(0,0,0,.5);
 }
+/* Speech bubble over a staffer's head. Without `position:absolute` this is a
+   full-width block at the top of the overlay, which is exactly what it became
+   when the rule went missing in a stylesheet rewrite. */
+.bub{
+  position:absolute;transform:translate(-50%,-100%);
+  background:#fdfcf7;color:#26262b;
+  font-size:11px;font-weight:700;line-height:1.35;
+  padding:4px 9px;border-radius:9px;white-space:nowrap;
+  max-width:min(280px,42vw);overflow:hidden;text-overflow:ellipsis;
+  box-shadow:0 4px 14px rgba(0,0,0,.34);border:1px solid rgba(0,0,0,.12);
+  pointer-events:none;margin-top:-4px;
+}
+.bub:after{
+  content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+  border:5px solid transparent;border-top-color:#fdfcf7;
+}
+.bub.idea{background:#ffeeb8;border-color:rgba(160,110,20,.4)}
+.bub.idea:after{border-top-color:#ffeeb8}
+@media (max-height:470px){ .bub{font-size:10.5px;padding:3px 8px} }
+
 .dmg{
   position:absolute;transform:translate(-50%,-50%);font-size:15px;font-weight:900;
   color:#fff;text-shadow:0 2px 6px rgba(0,0,0,.75);pointer-events:none;
@@ -409,3 +429,86 @@ body.in-battle #hint{display:none}
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.01ms !important;transition-duration:.01ms !important}
 }
+
+/* ── additions for the meeting scene and the expanded panels ── */
+.hz.res b{color:var(--sky)}
+@media (max-height:470px){ .hz.res{display:none} }
+
+/* While a meeting plays the panel gets out of the way and a skip hint shows. */
+body.meeting #side{transform:translateX(calc(-100% - var(--sal) - var(--gap) - 4px));opacity:0;pointer-events:none}
+body.meeting #battle{transform:translateY(150%)}
+body.meeting #menuBtn{opacity:.35;pointer-events:none}
+body.meeting::after{
+  content:"화면을 탭하면 건너뜁니다";
+  position:fixed;left:50%;bottom:calc(var(--sab) + 14px);transform:translateX(-50%);
+  z-index:14;font-size:10.5px;color:rgba(255,255,255,.72);
+  background:rgba(16,18,23,.72);padding:5px 12px;border-radius:8px;
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  animation:fadein .5s ease .6s both;pointer-events:none;
+}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+
+/* Trend banner in the company panel. */
+.trend{
+  display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:9px;
+  background:linear-gradient(90deg,rgba(232,176,85,.16),rgba(232,176,85,.04));
+  border:1px solid rgba(232,176,85,.28);margin-bottom:7px;
+}
+.trend .ic{font-size:15px;flex:none}
+.trend .tx{font-size:11px;line-height:1.45}
+.trend b{color:var(--gold)}
+
+/* Floor cards in the office panel. */
+.floorcard{
+  display:flex;align-items:center;gap:9px;padding:9px 10px;margin-bottom:6px;
+  border-radius:10px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.07);
+}
+.floorcard.locked{opacity:.45}
+.floorcard.owned{border-color:rgba(113,192,122,.35);background:rgba(113,192,122,.07)}
+.floorcard .fn{
+  width:34px;height:34px;border-radius:8px;flex:none;display:flex;align-items:center;
+  justify-content:center;font-weight:800;font-size:12px;background:rgba(255,255,255,.09);
+}
+.floorcard.owned .fn{background:rgba(113,192,122,.22);color:var(--good)}
+.floorcard .fb{flex:1;min-width:0}
+.floorcard .fb .ft{font-weight:700;font-size:12px}
+.floorcard .fb .fs{font-size:10px;color:var(--dim);margin-top:2px}
+
+/* Research rows. */
+.res{display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:5px;
+  border-radius:9px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.07)}
+.res .rn{flex:1;min-width:0}
+.res .rt{font-size:11.5px;font-weight:700}
+.res .rd{font-size:10px;color:var(--dim);margin-top:1px;line-height:1.4}
+.res .pips{display:flex;gap:2px;margin-top:4px}
+.res .pip{width:7px;height:4px;border-radius:2px;background:rgba(255,255,255,.14)}
+.res .pip.on{background:var(--sky)}
+
+/* Discovery log. */
+.combo{display:flex;justify-content:space-between;gap:6px;padding:5px 8px;border-radius:7px;
+  background:rgba(255,255,255,.04);margin-bottom:4px;font-size:11px}
+.combo .cs{color:var(--gold);font-weight:700;flex:none}
+
+.toggle{display:flex;justify-content:space-between;align-items:center;gap:8px;
+  padding:8px 10px;border-radius:9px;background:rgba(255,255,255,.045);
+  border:1px solid rgba(255,255,255,.07);margin-bottom:6px;cursor:pointer;font-size:11.5px}
+.toggle .sw{width:34px;height:19px;border-radius:10px;background:rgba(255,255,255,.14);
+  position:relative;flex:none;transition:background .18s ease}
+.toggle .sw:after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;
+  border-radius:50%;background:#d8d5cc;transition:transform .18s ease}
+.toggle.on .sw{background:var(--gold)}
+.toggle.on .sw:after{transform:translateX(15px);background:#241a08}
+
+/* 사무실 공사 배너 — a floor purchase rebuilds the whole tower (AO bake plus a
+   walk grid per storey), which is a few seconds of work on a phone. Without
+   this the game just appears to lock up. */
+#busy{
+  position:fixed; left:50%; top:calc(env(safe-area-inset-top,0px) + 12px);
+  transform:translateX(-50%);
+  display:none; z-index:60; pointer-events:none;
+  padding:8px 16px; border-radius:999px;
+  background:rgba(12,14,18,.88); border:1px solid rgba(255,255,255,.14);
+  color:#e9edf2; font-size:12px; font-weight:700; letter-spacing:.02em;
+  box-shadow:0 6px 22px rgba(0,0,0,.45);
+}
+body.busy #busy{display:block}

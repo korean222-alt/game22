@@ -104,13 +104,25 @@ export function bakeAO(mb, strength = 0.72, cell = 1.0) {
 /* Walkable space. `raw` is true occupancy; `dilated` has obstacles grown by the
    walker radius so a clear point means a clear body. */
 export class NavGrid {
-  constructor(mb, y0, y1, cell = 0.5, dilate = 2) {
+  /* `area` is the walkable rectangle {x0,z0,x1,z1}. Pass it. Deriving the
+     bounds from the solids instead sweeps in every distant scenery block, and
+     the size clamp below then silently rescales the grid so cells no longer
+     map to the world positions the caller thinks they do — which looks exactly
+     like "pathfinding is broken" and is very hard to see from the outside. */
+  constructor(mb, y0, y1, cell = 0.5, dilate = 2, area = null) {
     const S = mb.solids;
-    const bb = boundsOf(S, 4);
+    const bb = area
+      ? { min: [area.x0, 0, area.z0], max: [area.x1, 0, area.z1] }
+      : boundsOf(S, 4);
     this.cell = cell;
     this.min = [bb.min[0], bb.min[2]];
-    this.DX = Math.max(1, Math.min(600, Math.ceil((bb.max[0] - bb.min[0]) / cell)));
-    this.DZ = Math.max(1, Math.min(600, Math.ceil((bb.max[2] - bb.min[2]) / cell)));
+    const wantX = Math.ceil((bb.max[0] - bb.min[0]) / cell);
+    const wantZ = Math.ceil((bb.max[2] - bb.min[2]) / cell);
+    if (wantX > 900 || wantZ > 900) {
+      throw new Error(`NavGrid area too large: ${wantX}x${wantZ} cells. Pass a tighter area.`);
+    }
+    this.DX = Math.max(1, wantX);
+    this.DZ = Math.max(1, wantZ);
 
     const raw = new Uint8Array(this.DX * this.DZ);
     for (let i = 0; i < S.length; i += 6) {
@@ -155,6 +167,133 @@ export class NavGrid {
       if (!this.isClearRaw(x + Math.cos(a) * r, z + Math.sin(a) * r)) return false;
     }
     return true;
+  }
+
+  _cell(x, z) {
+    return [Math.floor((x - this.min[0]) / this.cell), Math.floor((z - this.min[1]) / this.cell)];
+  }
+
+  _world(gx, gz) {
+    return [this.min[0] + (gx + 0.5) * this.cell, this.min[1] + (gz + 0.5) * this.cell];
+  }
+
+  _free(gx, gz) {
+    if (gx < 0 || gz < 0 || gx >= this.DX || gz >= this.DZ) return false;
+    return this.dilated[gx * this.DZ + gz] === 0;
+  }
+
+  /* A desk seat sits inside the dilated obstacle that is the chair, so both
+     ends of a walk usually start blocked. Spiral out to the nearest cell a
+     body actually fits in and path between those instead. */
+  nearestFree(gx, gz, maxR = 14) {
+    if (this._free(gx, gz)) return [gx, gz];
+    for (let r = 1; r <= maxR; r++) {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dz = -r; dz <= r; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;   // ring only
+          if (this._free(gx + dx, gz + dz)) return [gx + dx, gz + dz];
+        }
+      }
+    }
+    return null;
+  }
+
+  /* A* over the dilated grid, then string-pulled against the same grid so the
+     result is a handful of corners rather than a staircase of half-unit steps.
+     Returns world-space [x,z] pairs, or null when there is no route. */
+  path(x0, z0, x1, z1, budget = 9000) {
+    const a = this.nearestFree(...this._cell(x0, z0));
+    const b = this.nearestFree(...this._cell(x1, z1));
+    if (!a || !b) return null;
+    const DZ = this.DZ;
+    const startI = a[0] * DZ + a[1], goalI = b[0] * DZ + b[1];
+    if (startI === goalI) return [[x1, z1]];
+
+    const H = (i) => {
+      const gx = (i / DZ) | 0, gz = i % DZ;
+      const dx = Math.abs(gx - b[0]), dz = Math.abs(gz - b[1]);
+      // octile distance: the admissible heuristic for 8-way movement
+      return (dx + dz) + (1.41421356 - 2) * Math.min(dx, dz);
+    };
+
+    const gScore = new Map([[startI, 0]]);
+    const came = new Map();
+    // Binary heap keyed on f; small enough that an array-based heap is ample.
+    const heap = [[H(startI), startI]];
+    const push = (f, i) => {
+      heap.push([f, i]);
+      let c = heap.length - 1;
+      while (c > 0) {
+        const p = (c - 1) >> 1;
+        if (heap[p][0] <= heap[c][0]) break;
+        [heap[p], heap[c]] = [heap[c], heap[p]]; c = p;
+      }
+    };
+    const pop = () => {
+      const top = heap[0], last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        let p = 0;
+        for (;;) {
+          const l = p * 2 + 1, r = l + 1;
+          let m = p;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === p) break;
+          [heap[m], heap[p]] = [heap[p], heap[m]]; p = m;
+        }
+      }
+      return top;
+    };
+
+    const NB = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
+                [1, 1, 1.41421356], [1, -1, 1.41421356], [-1, 1, 1.41421356], [-1, -1, 1.41421356]];
+    let visited = 0, found = false;
+    while (heap.length && visited++ < budget) {
+      const [, cur] = pop();
+      if (cur === goalI) { found = true; break; }
+      const cg = gScore.get(cur);
+      const gx = (cur / DZ) | 0, gz = cur % DZ;
+      for (const [dx, dz, w] of NB) {
+        const nx = gx + dx, nz = gz + dz;
+        if (!this._free(nx, nz)) continue;
+        // Do not cut a diagonal through a corner a body could not pass.
+        if (dx && dz && (!this._free(gx + dx, gz) || !this._free(gx, gz + dz))) continue;
+        const ni = nx * DZ + nz;
+        const ng = cg + w;
+        if (gScore.has(ni) && gScore.get(ni) <= ng) continue;
+        gScore.set(ni, ng);
+        came.set(ni, cur);
+        push(ng + H(ni), ni);
+      }
+    }
+    if (!found) return null;
+
+    const cells = [];
+    for (let i = goalI; i !== undefined; i = came.get(i)) {
+      cells.push(i);
+      if (i === startI) break;
+    }
+    cells.reverse();
+
+    const pts = cells.map((i) => this._world((i / DZ) | 0, i % DZ));
+    pts.push([x1, z1]);
+
+    // String-pull: keep only the corners the straight-line test cannot skip.
+    const out = [];
+    let anchor = [x0, z0];
+    let i = 0;
+    while (i < pts.length) {
+      let far = i;
+      for (let j = pts.length - 1; j > i; j--) {
+        if (this.segClear(anchor[0], anchor[1], pts[j][0], pts[j][1])) { far = j; break; }
+      }
+      out.push(pts[far]);
+      anchor = pts[far];
+      if (far === pts.length - 1) break;
+      i = far + 1;
+    }
+    return out;
   }
 
   /* is the straight walk A->B clear? trimEnd ignores the last few feet, which

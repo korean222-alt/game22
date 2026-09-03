@@ -7,18 +7,29 @@
    Coordinates: -Z is north. A desk with ry = 0 faces north, and the person
    sitting at it is 2.6 units to the south of the desk centre.
 
-   The generator also emits the game-facing furniture: a desk slot list the
-   staff system assigns people to, and named rooms for the label overlay. */
+   FACING CONVENTION
+     Every seat this file emits carries `yaw`, which is the RIG yaw: a rig at
+     yaw y faces the world direction (sin y, cos y). Furniture takes its own
+     rotation, and for a chair that is `yaw - PI/2`. Keeping the seat's facing
+     and the chair's rotation derived from one number is what stops people
+     sitting backwards.
+
+   The generator also emits the game-facing furniture: desk slots the staff
+   system assigns people to, meeting seats the meeting scene walks them to,
+   idle spots the ambient behaviour wanders between, and named rooms for the
+   label overlay. */
 
 import { MeshBuilder } from '../core/meshbuilder.js';
 import { MAT } from '../core/color.js';
 import { mulberry32 } from '../core/math.js';
 import { P } from './palette.js';
 import {
-  wall, wallDoor, glassWall, floorField, slab, workstation, chairGuest, confTable,
+  wall, wallDoor, glassWall, floorField, slab, workstation, chairGuest, chairTask, confTable,
   whiteboard, wallTV, signBoard, plantTall, trashBin, troffer, fileCab, shelfUnit,
   serverRack, copier, waterCooler, vending, couch, cubeWall, stairs, rug,
-  STOREY, FLOOR_Y,
+  receptionDesk, counterRun, fridge, microwave, coffeeMaker, lockers, phoneBooth,
+  barCounter, stool, tableRound, pinBoard, supplyShelf, standDesk, plantBasket,
+  STOREY, FLOOR_Y, DESK_Y,
 } from './props.js';
 
 export const BUILDING = {
@@ -32,17 +43,28 @@ export const BUILDING = {
    belongs where — the original's tip that writers and developers want separate
    floors is the reason floors have a role at all. */
 export const FLOOR_PLANS = [
-  { name: '1F · 로비 / 개발실', role: 'dev', accent: P.accent },
-  { name: '2F · 개발실', role: 'dev', accent: '#3f6a5a' },
-  { name: '3F · 기획실', role: 'plan', accent: '#6a5a3f' },
-  { name: '4F · 사운드 / 아트', role: 'art', accent: '#5a3f6a' },
-  { name: '5F · 네트워크실', role: 'net', accent: '#3f5a6a' },
+  { name: '1F · 로비 / 개발실', short: '로비·개발', role: 'dev', accent: P.accent },
+  { name: '2F · 개발실', short: '개발실', role: 'dev', accent: '#3f6a5a' },
+  { name: '3F · 기획실', short: '기획실', role: 'plan', accent: '#6a5a3f' },
+  { name: '4F · 아트 / 사운드', short: '아트·사운드', role: 'art', accent: '#5a3f6a' },
+  { name: '5F · 네트워크실', short: '네트워크실', role: 'net', accent: '#3f5a6a' },
 ];
 
 const CORE = { x0: 27, x1: 39, z0: 17, z1: 27 };   // lift + stair core
+const MR = { x0: 45, x1: 62, z0: 2, z1: 16 };      // meeting room
+const BR = { x0: 2, x1: 18, z0: 29, z1: 42 };      // break room + pantry
 
-function isInCore(x, z) {
-  return x > CORE.x0 - 1 && x < CORE.x1 + 1 && z > CORE.z0 - 1 && z < CORE.z1 + 1;
+function inRect(r, x, z, pad = 0) {
+  return x > r.x0 - pad && x < r.x1 + pad && z > r.z0 - pad && z < r.z1 + pad;
+}
+
+/* Translate a sub-mesh built at ground level up to a floor. Building props in
+   their own MeshBuilder and lifting them keeps every prop function free of a
+   base-height argument it would otherwise have to thread everywhere. */
+function liftInto(m, sub, base) {
+  for (let i = 1; i < sub.p.length; i += 3) sub.p[i] += base;
+  for (let i = 1; i < sub.solids.length; i += 6) { sub.solids[i] += base; sub.solids[i + 3] += base; }
+  m.append(sub);
 }
 
 /* ---------- one floor ---------- */
@@ -51,20 +73,26 @@ function buildFloor(m, fi, plan, out) {
   const base = fi * B.storey;
   const rnd = mulberry32(0x9e37 + fi * 7919);
   const wallH = B.wallH;
+  const isGround = fi === 0;
 
-  // Slab and carpet. Flag 4+fi tags the floor plate so the wall-cut leaves it
-  // alone while still letting per-floor logic identify it later.
+  const put = (fn) => { const s = new MeshBuilder(); fn(s); liftInto(m, s, base); };
+
+  /* ---- slab and floor finishes ---- */
   m.flag = 3;
-  floorField(m, B.x0, B.z0, B.x1, B.z1, fi === 0 ? P.carpetWarm : P.carpet, 4, base + FLOOR_Y);
+  floorField(m, B.x0, B.z0, B.x1, B.z1, isGround ? P.carpetWarm : P.carpet, 4, base + FLOOR_Y);
+  // Hard floor where people walk in wet shoes or spill coffee, exactly as a
+  // real fit-out would zone it.
+  floorField(m, BR.x0, BR.z0, BR.x1, BR.z1, P.tile, 2.5, base + FLOOR_Y + 0.01);
+  if (isGround) floorField(m, 22, 27.5, 44, 36, P.tile, 2.5, base + FLOOR_Y + 0.01);
   m.flag = 0;
 
-  // Perimeter: glass to north and south (the daylight sides), solid east/west.
+  /* ---- perimeter: glass north and south, solid east and west ---- */
   glassWall(m, B.x0, B.z0, B.x1, B.z0, wallH, 0.9, base);
   glassWall(m, B.x0, B.z1, B.x1, B.z1, wallH, 0.9, base);
   wall(m, B.x0, B.z0, B.x0, B.z1, wallH, B.thick, P.wall, false, base);
   wall(m, B.x1, B.z0, B.x1, B.z1, wallH, B.thick, P.wall, false, base);
 
-  // ---- service core ----
+  /* ---- service core ---- */
   m.flag = 1;
   wall(m, CORE.x0, CORE.z0, CORE.x1, CORE.z0, wallH, 0.6, plan.accent, true, base);
   wall(m, CORE.x0, CORE.z1, CORE.x1, CORE.z1, wallH, 0.6, plan.accent, true, base);
@@ -72,108 +100,220 @@ function buildFloor(m, fi, plan, out) {
   wallDoor(m, CORE.x1, CORE.z0, CORE.x1, CORE.z1, wallH, 0.6, P.wallDk, 5, 4, 6.4, 0.9);
   m.flag = 0;
 
-  // Lift doors, plus the stair run that connects to the floor above.
-  m.mat = MAT.METAL;
-  for (let i = 0; i < 2; i++) {
-    m.box(CORE.x0 + 3 + i * 5, base + 3.4, CORE.z0 - 0.5, 3.4, 6.8, 0.30, P.chrome);
-  }
-  m.mat = 0;
-  if (fi < FLOOR_PLANS.length - 1) {
-    const sm = new MeshBuilder();
-    stairs(sm, CORE.x0 + 2, CORE.z1 - 2.5, -Math.PI / 2, 16, 0.85, B.storey / 16);
-    for (let i = 1; i < sm.p.length; i += 3) sm.p[i] += base;
-    for (let i = 1; i < sm.solids.length; i += 6) { sm.solids[i] += base; sm.solids[i + 3] += base; }
-    m.append(sm);
-  }
+  put((s) => {
+    // lift doors facing the north lobby strip
+    s.mat = MAT.METAL;
+    for (let i = 0; i < 2; i++) s.box(CORE.x0 + 2.5 + i * 3.8, 3.4, CORE.z0 - 0.5, 3.4, 6.8, 0.30, P.chrome);
+    s.mat = MAT.SCREEN;
+    s.noSolid = true;
+    for (let i = 0; i < 2; i++) s.box(CORE.x0 + 2.5 + i * 3.8, 7.3, CORE.z0 - 0.62, 0.9, 0.5, 0.06, '#ffb45a');
+    s.noSolid = false;
+    s.mat = 0;
+    // The flight lives inside the core, east of the lifts. Eleven treads at 0.8
+    // fit the core's ten-unit depth; a longer run would spill onto the floor.
+    if (fi < FLOOR_PLANS.length - 1) {
+      stairs(s, CORE.x1 - 3.0, CORE.z0 + 1.0, 0, 11, 0.8, B.storey / 11, 4.0);
+    }
+  });
+  signBoard(m, CORE.x0 + 6, base + 9.0, CORE.z0 - 0.75, -Math.PI / 2, 8, 1.6, plan.accent);
 
-  signBoard(m, CORE.x0 + 6, base + 8.4, CORE.z0 - 0.75, -Math.PI / 2, 8, 1.6, plan.accent);
-
-  // ---- meeting room, north-east corner ----
-  const MR = { x0: 46, x1: 62, z0: 2, z1: 15 };
+  /* ---- meeting room ---- */
   m.flag = 1;
   glassWall(m, MR.x0, MR.z0, MR.x0, MR.z1, wallH, 0, base);
-  wallDoor(m, MR.x0, MR.z1, MR.x1, MR.z1, wallH, 0.5, P.wall, 4, 4, 6.4, 1.0);
+  // Swings INTO the room (negative angle). Opening outward parked the leaf
+  // across the corridor that serves the desks east of it and stranded them.
+  wallDoor(m, MR.x0, MR.z1, MR.x1, MR.z1, wallH, 0.5, P.wall, 5, 4.5, 6.4, -1.0);
   m.flag = 0;
-  confTable(m, (MR.x0 + MR.x1) / 2, (MR.z0 + MR.z1) / 2, 0, 9, 4.4);
-  for (let i = 0; i < 3; i++) {
-    chairGuest(m, (MR.x0 + MR.x1) / 2 - 3.4, MR.z0 + 4 + i * 3.2, Math.PI / 2, P.chairB);
-    chairGuest(m, (MR.x0 + MR.x1) / 2 + 3.4, MR.z0 + 4 + i * 3.2, -Math.PI / 2, P.chairB);
-  }
-  whiteboard(m, MR.x1 - 0.5, base + 6.4, (MR.z0 + MR.z1) / 2, Math.PI, 9, 4.6);
-  wallTV(m, MR.x0 + 0.4, base + 6.4, MR.z0 + 3.6, 0, 5.2, 3.0);
-  out.rooms.push({ name: '회의실', x: (MR.x0 + MR.x1) / 2, y: base + 7, z: (MR.z0 + MR.z1) / 2, floor: fi });
 
-  // ---- break area, south-west ----
-  const BR = { x0: 2, x1: 17, z0: 30, z1: 42 };
+  const mcx = (MR.x0 + MR.x1) / 2, mcz = (MR.z0 + MR.z1) / 2 + 1;
+  const seats = [];
+  let headSeat = null;
+  put((s) => {
+    confTable(s, mcx, mcz, 0, 9.5, 4.6);
+    // Three a side, plus the head of the table. yaw is the rig facing; the
+    // chair takes yaw - PI/2 so the person never sits backwards.
+    for (let i = 0; i < 3; i++) {
+      const sz = mcz - 3.2 + i * 3.2;
+      seats.push({ x: mcx - 3.7, z: sz, yaw: Math.PI / 2 });    // west side, faces +x
+      seats.push({ x: mcx + 3.7, z: sz, yaw: -Math.PI / 2 });   // east side, faces -x
+    }
+    for (const st of seats) chairGuest(s, st.x, st.z, st.yaw - Math.PI / 2, P.chairB);
+    // Head of the table, under the screen: where the boss sits.
+    headSeat = { x: mcx, z: mcz - 6.2, yaw: 0 };                // faces +z
+    chairGuest(s, headSeat.x, headSeat.z, headSeat.yaw - Math.PI / 2, P.chairR);
+
+    s.mat = MAT.PAPER;
+    for (let i = 0; i < 5; i++) {
+      s.boxY(mcx + (i % 2 ? 1.5 : -1.5), DESK_Y + 0.16, mcz - 3.0 + i * 1.6, 1.4, 0.05, 1.1,
+        (rnd() - 0.5) * 0.3, P.paper);
+    }
+    s.mat = 0;
+    for (let i = 0; i < 3; i++) {
+      s.mat = MAT.GLOSS;
+      s.cyl(mcx + (i - 1) * 2.4, DESK_Y + 0.4, mcz + 2.6, 0.28, 0.6, ['#e8e4d8', '#c95f4f', '#4f7fc9'][i], 10);
+      s.mat = 0;
+    }
+  });
+  whiteboard(m, MR.x1 - 0.5, base + 6.4, mcz + 2, Math.PI, 8, 4.4);
+  wallTV(m, mcx, base + 6.6, MR.z0 + 0.45, Math.PI / 2, 7.0, 4.0);
+  out.rooms.push({ name: '회의실', x: mcx, y: base + 8.4, z: mcz, floor: fi });
+  out.meetings.push({
+    id: `mtg${fi}`, floor: fi,
+    center: [mcx, base + 5.5, mcz],
+    seats: seats.map((s) => ({ ...s, floor: fi })),
+    head: { ...headSeat, floor: fi },
+    door: { x: MR.x0 + 5, z: MR.z1 + 2.2 },
+  });
+
+  /* ---- break room and pantry ---- */
   m.flag = 1;
   wall(m, BR.x1, BR.z0, BR.x1, BR.z1, wallH, 0.5, P.wallWarm, true, base);
-  wallDoor(m, BR.x0, BR.z0, BR.x1, BR.z0, wallH, 0.5, P.wallWarm, 8, 4.5, 6.4, 1.1);
+  wallDoor(m, BR.x0, BR.z0, BR.x1, BR.z0, wallH, 0.5, P.wallWarm, 9, 5, 6.4, 1.1);
   m.flag = 0;
-  rug(m, 9, 36, 9, 7, P.rug);
-  couch(m, 6.5, 36, -Math.PI / 2, 2, P.couch);
-  waterCooler(m, 15, 33);
-  vending(m, 12.5, 41, Math.PI);
-  plantTall(m, 3.5, 40.5, 1.1);
-  out.rooms.push({ name: '휴게실', x: 9, y: base + 7, z: 36, floor: fi });
+  rug(m, 8, 38.5, 10, 6.5, P.rug);
+  put((s) => {
+    // Pantry down the west wall, seating down the east, and a clear lane at
+    // x 6-11 straight in from the door so the room is one connected space.
+    counterRun(s, BR.x0 + 1.6, 35, -Math.PI / 2, 9, true);
+    coffeeMaker(s, BR.x0 + 1.7, 3.1, 31.6, -Math.PI / 2);
+    microwave(s, BR.x0 + 1.7, 3.1, 38.2, -Math.PI / 2);
+    fridge(s, BR.x0 + 1.7, 41.0, -Math.PI / 2);
+    tableRound(s, 14.2, 33.0, 1.8);
+    for (let i = 0; i < 3; i++) {
+      const a = i * 2.094 + 1.1;
+      stool(s, 14.2 + Math.cos(a) * 2.9, 33.0 + Math.sin(a) * 2.9);
+    }
+    couch(s, 14.6, 39.6, Math.PI, 2, P.couch);
+    waterCooler(s, BR.x1 - 1.6, 30.4);
+    vending(s, BR.x1 - 1.8, 41.0, -Math.PI / 2);
+    trashBin(s, 11.6, 41.4);
+    plantBasket(s, 4.0, 30.2, 0.95);
+  });
+  pinBoard(m, BR.x1 - 0.35, base + 5.6, 36.5, Math.PI, 5.5, 3.4);
+  out.rooms.push({ name: '휴게실', x: 9.5, y: base + 8.0, z: 36, floor: fi });
+  out.spots.push(
+    { kind: 'coffee', floor: fi, x: 6.6, z: 31.8, yaw: -Math.PI / 2 },
+    { kind: 'water', floor: fi, x: BR.x1 - 3.8, z: 30.6, yaw: Math.PI / 2 },
+    { kind: 'sofa', floor: fi, x: 10.6, z: 39.4, yaw: Math.PI / 2 },
+    { kind: 'table', floor: fi, x: 10.4, z: 33.2, yaw: Math.PI / 2 },
+  );
 
-  // ---- desk field ----
-  // Two bands along the daylight walls plus one interior band, skipping any pod
-  // that would land in the core or in a room.
-  const bands = [
-    { z: 9.5, ry: 0 },              // north band, facing the window
-    { z: 22.5, ry: Math.PI },       // interior band, facing south
-    { z: 36.5, ry: Math.PI },       // south band, facing the window
+  /* ---- reception, ground floor only ----
+     Everything here stays south of z = 31.5. The strip z 27.5–31.5 is the
+     floor's only full-width cross corridor, and furniture placed in it — a
+     counter, a plant, a waiting couch — severs the north half of the building
+     from the south half. */
+  if (isGround) {
+    put((s) => {
+      receptionDesk(s, 33, 34.0, Math.PI / 2, 9);          // faces +z, toward the doors
+      chairTask(s, 33, 37.0, -Math.PI / 2, P.chairG);
+      couch(s, 22.0, 35.0, Math.PI / 2, 2, '#5a4f63');
+      tableRound(s, 25.6, 35.0, 1.5);
+      plantTall(s, 39.5, 35.0, 1.05);
+      plantTall(s, 19.0, 39.5, 1.05);
+      barCounter(s, 32, 3.0, Math.PI / 2, 16);             // window bar on the north glass
+      for (let i = 0; i < 5; i++) stool(s, 26 + i * 3, 5.0);
+    });
+    signBoard(m, 33, base + 7.6, 31.6, Math.PI / 2, 11, 2.1, plan.accent);
+    out.rooms.push({ name: '리셉션', x: 33, y: base + 6.5, z: 34, floor: fi });
+    out.spots.push({ kind: 'window', floor: fi, x: 32, z: 6.2, yaw: 0 });
+  } else {
+    put((s) => {
+      barCounter(s, 32, 3.0, Math.PI / 2, 20);
+      for (let i = 0; i < 6; i++) stool(s, 24 + i * 3.2, 5.0);
+    });
+    out.spots.push({ kind: 'window', floor: fi, x: 30, z: 6.2, yaw: 0 });
+  }
+
+  /* ---- amenities down the east side of the core ---- */
+  put((s) => {
+    // Everything here hugs a wall or a corner: the east spine (x 40–44.5) and
+    // the cross corridors have to stay clear or the floor stops connecting.
+    lockers(s, 3.6, 24.5, 0, 4);              // west wall, clear of the core
+    phoneBooth(s, 60.0, 21.5, Math.PI);
+    phoneBooth(s, 60.0, 27.5, Math.PI);
+    copier(s, 45.0, 41.2, 0);
+    supplyShelf(s, 49.5, 41.4, 0);
+    trashBin(s, 41.5, 41.4);
+    shelfUnit(s, 20.5, 2.6, Math.PI / 2, 7, 6.5, true);
+    fileCab(s, 62.0, 33, Math.PI, 4, 2.4);
+    fileCab(s, 62.0, 36, Math.PI, 4, 2.4);
+    plantTall(s, 62.0, 41.0, 1.15);
+    plantTall(s, 2.8, 17.5, 1.0);
+    if (fi >= 2) standDesk(s, 33, 30.0, Math.PI);
+  });
+  out.spots.push(
+    { kind: 'printer', floor: fi, x: 45.0, z: 38.4, yaw: Math.PI },
+    { kind: 'locker', floor: fi, x: 7.0, z: 24.5, yaw: -Math.PI / 2 },
+  );
+
+  if (plan.role === 'net') {
+    put((s) => { for (let i = 0; i < 4; i++) serverRack(s, 50 + i * 3.4, 24, 0); });
+    out.rooms.push({ name: '서버실', x: 55, y: base + 8.0, z: 24, floor: fi });
+  }
+
+  /* ---- desk field ----
+     Desks are placed in PODS separated by corridors, not as a continuous band.
+     A 5.4-wide desk every 6.6 units leaves a 1.2 gap, which the navigation
+     grid's body dilation closes — so a solid band of them is a wall, and the
+     floor becomes unwalkable. Aisles have to be designed in, not hoped for.
+
+     Reserved circulation, in world units:
+       z 6.5–9.5   north walk lane, behind the window bar
+       z 16.5–20   cross corridor between the north and middle pods
+       z 27.5–31.5 cross corridor between the middle and south pods
+       x 21–25.5   west spine        x 40–44.5  east spine (lift core to rooms)
+  */
+  // Chairs sit 2.6 behind the desk and are themselves obstacles, so a pod needs
+  // roughly 4 units of clear floor behind it. The strip directly north of the
+  // lift core has no room for that and is left as lobby.
+  const PODS = isGround ? [
+    { z: 11.0, ry: 0, xs: [7.5, 14.1] },
+    { z: 23.0, ry: Math.PI, xs: [7.5, 14.1] },
+    { z: 23.0, ry: Math.PI, xs: [48.0, 54.6] },
+    // No south pod on the ground floor: that half is reception, lounge and the
+    // print bay, and desks there would leave nowhere to walk.
+  ] : [
+    { z: 11.0, ry: 0, xs: [7.5, 14.1] },
+    { z: 11.0, ry: 0, xs: [28.5, 35.1] },
+    { z: 23.0, ry: Math.PI, xs: [7.5, 14.1] },
+    { z: 23.0, ry: Math.PI, xs: [48.0, 54.6] },
+    { z: 36.0, ry: Math.PI, xs: [25.0, 31.6] },
+    { z: 36.0, ry: Math.PI, xs: [48.0, 54.6] },
   ];
+
   let slot = 0;
-  for (const band of bands) {
-    for (let x = 5; x <= 58; x += 8.2) {
-      if (isInCore(x, band.z)) continue;
-      if (x > MR.x0 - 3 && band.z < MR.z1 + 2) continue;
-      if (x < BR.x1 + 3 && band.z > BR.z0 - 2) continue;
+  for (const pod of PODS) {
+    for (const x of pod.xs) {
       const variant = Math.floor(rnd() * 4);
       const dual = rnd() > 0.45;
-      const sm = new MeshBuilder();
-      workstation(sm, x, band.z, band.ry, variant, dual);
-      for (let i = 1; i < sm.p.length; i += 3) sm.p[i] += base;
-      for (let i = 1; i < sm.solids.length; i += 6) { sm.solids[i] += base; sm.solids[i + 3] += base; }
-      m.append(sm);
-
-      // Where the person sits, in world space, on this floor.
-      const cos = Math.cos(band.ry), sin = Math.sin(band.ry);
+      put((s) => workstation(s, x, pod.z, pod.ry, variant, dual));
       out.desks.push({
         id: `f${fi}s${slot++}`,
         floor: fi, role: plan.role,
-        x, z: band.z, ry: band.ry,
-        seatX: x + 2.6 * sin, seatZ: band.z + 2.6 * cos,
+        x, z: pod.z, ry: pod.ry,
+        // The chair sits 2.6 behind the desk; the rig faces the desk, so its
+        // yaw is the desk's rotation turned around.
+        seatX: x + 2.6 * Math.sin(pod.ry),
+        seatZ: pod.z + 2.6 * Math.cos(pod.ry),
+        yaw: pod.ry + Math.PI,
         y: base,
       });
-      if (rnd() > 0.6) cubeWall(m, x + 4.1, band.z, band.ry, 3.2, 4.0);
     }
+    // A low screen at the end of each pod, clear of the aisle.
+    put((s) => cubeWall(s, pod.xs[pod.xs.length - 1] + 3.6, pod.z, pod.ry, 3.0, 3.6));
   }
 
-  // ---- odds and ends ----
-  fileCab(m, 42, 3, Math.PI, 4, 2.4);
-  fileCab(m, 42, 6, Math.PI, 4, 2.4);
-  shelfUnit(m, 22, 2.4, Math.PI / 2, 8, 6.5, true);
-  copier(m, 25, 41, 0);
-  trashBin(m, 40, 41);
-  plantTall(m, 61, 22, 1.2);
-  plantTall(m, 2.5, 22, 1.0);
-  if (plan.role === 'net') {
-    for (let i = 0; i < 4; i++) serverRack(m, 52 + i * 3.2, 24, 0);
-    out.rooms.push({ name: '서버실', x: 57, y: base + 7, z: 24, floor: fi });
-  }
-
-  // ---- ceiling lights + the slab above ----
-  for (let x = 6; x < 62; x += 11) {
-    for (let z = 5; z < 42; z += 9) {
-      if (isInCore(x, z)) continue;
+  /* ---- ceiling lights + the slab above ---- */
+  for (let x = 6; x < 62; x += 10) {
+    for (let z = 5; z < 42; z += 8.5) {
+      if (inRect(CORE, x, z, 1)) continue;
       troffer(m, x, z, 0, base + B.storey);
     }
   }
   slab(m, B.x0 - 1, B.z0 - 1, B.x1 + 1, B.z1 + 1, base + B.storey - 0.3);
 
-  out.rooms.push({ name: plan.name.split('·')[1]?.trim() || plan.name, x: 32, y: base + 8, z: 6, floor: fi });
+  out.rooms.push({ name: plan.short, x: 20, y: base + 9.0, z: 14, floor: fi });
 }
 
 /* ---------- ground and shell ---------- */
@@ -187,7 +327,6 @@ function buildSite(m, floors) {
   m.mat = MAT.DEF;                                       // not TILE: its 1-unit
   m.box(32, -1.2, 22, 260, 2, 260, P.ground);            // grout would tile the
                                                          // whole plaza as graph paper
-  m.mat = MAT.DEF;
   m.box(32, -0.55, 78, 200, 1, 46, P.asphalt);           // the street
   m.mat = 0;
   m.noSolid = false;
@@ -238,11 +377,11 @@ function buildSite(m, floors) {
 /* ---------- entry point ---------- */
 export function buildOffice(floorCount = FLOOR_PLANS.length) {
   const m = new MeshBuilder();
-  const out = { desks: [], rooms: [] };
+  const out = { desks: [], rooms: [], meetings: [], spots: [] };
   const n = Math.max(1, Math.min(FLOOR_PLANS.length, floorCount));
   for (let fi = 0; fi < n; fi++) buildFloor(m, fi, FLOOR_PLANS[fi], out);
   buildSite(m, n);
-  return { mesh: m, desks: out.desks, rooms: out.rooms, floors: n };
+  return { mesh: m, ...out, floors: n };
 }
 
-export { STOREY };
+export { STOREY, CORE, MR, BR };

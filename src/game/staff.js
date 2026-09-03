@@ -6,7 +6,7 @@
    loop is what makes you care which staffer proposed what. */
 
 import {
-  JOBS, JOB_ABILITY, JOB_ROLE, ITEMS, SURNAMES, GIVEN, rankInfo,
+  JOBS, JOB_ABILITY, JOB_ROLE, ITEMS, SURNAMES, GIVEN, rankInfo, TRAITS, TRAIT_IDS, GENRES,
 } from './data.js';
 import { SKINS, HAIRS, SHIRTS, PANTS, P } from '../world/palette.js';
 
@@ -42,9 +42,43 @@ function makeLook(rnd) {
   return look;
 }
 
+/* One or two traits per person. The analysis doc is blunt that a roster where
+   everyone is simply better or worse stops being a decision — a trait is the
+   visible reason to pick this person for this project. */
+function rollTraits(rnd) {
+  const n = rnd() > 0.62 ? 2 : 1;
+  const pool = [...TRAIT_IDS];
+  const out = [];
+  while (out.length < n && pool.length) {
+    out.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
+  }
+  return out;
+}
+
+export function traitsOf(s) {
+  return (s.traits || []).map((id) => ({ id, ...TRAITS[id] })).filter((t) => t.ko);
+}
+
+/* Multiplicative trait keys (dmg, quality, bugs, salary, fans, train). */
+export function traitMult(s, key) {
+  let v = 1;
+  for (const t of traitsOf(s)) if (t[key] !== undefined) v *= t[key];
+  return v;
+}
+
+/* Additive trait keys (crit, teamMood). */
+export function traitAdd(s, key) {
+  let v = 0;
+  for (const t of traitsOf(s)) if (t[key] !== undefined) v += t[key];
+  return v;
+}
+
+export function hasTrait(s, id) { return (s.traits || []).includes(id); }
+
 export function makeStaff(rnd, jobId, opts = {}) {
   const job = JOBS[jobId];
   const talent = opts.talent ?? (0.75 + rnd() * 0.7);      // a lifelong multiplier
+  const traits = opts.traits || rollTraits(rnd);
   const s = {
     id: nextId(),
     name: SURNAMES[Math.floor(rnd() * SURNAMES.length)] + GIVEN[Math.floor(rnd() * GIVEN.length)],
@@ -57,12 +91,16 @@ export function makeStaff(rnd, jobId, opts = {}) {
     // Ability scores grow with level; `bonus` is what items have added.
     bonus: { plan: 0, prog: 0, graph: 0, sound: 0, social: 0 },
     itemsGiven: [],
+    traits,
+    // The genre a 장르 덕후 actually specialises in; harmless on anyone else.
+    favGenre: GENRES[Math.floor(rnd() * GENRES.length)].id,
     salary: Math.round(job.cost * (0.85 + talent * 0.35)),
     deskId: null,
     look: makeLook(rnd),
     reincarnations: 0,
     gamesShipped: 0,
   };
+  s.salary = Math.round(s.salary * traitMult(s, 'salary'));
   return s;
 }
 
@@ -99,10 +137,13 @@ export function proposalPower(s, floorRole) {
   return ability(s, 'plan') * job.proposal * motivationMult(s) * (onTheme ? 1.35 : 1.0);
 }
 
-/* Mirrors the original's curve: a few hundred won early, about 12,000 a gift by
-   level 98. Solving 320 + 98^1.85 * k = 12000 gives k = 2.4. */
+/* Gifts are the late game's money sink. The exponent matters more than the
+   coefficient: at 1.85 a mature studio's cash pile buys every remaining level
+   in an afternoon, and money stops being a decision from about year four. At
+   2.3 the same pile buys a handful of levels for the people who need them
+   most, so "who do I grow?" stays a question for the whole career. */
 export function levelUpCost(s) {
-  return Math.round(320 + Math.pow(Math.max(1, s.level), 1.85) * 2.4);
+  return Math.round(320 + Math.pow(Math.max(1, s.level), 2.3) * 1.6);
 }
 
 /* What a specific gift costs this specific staffer right now. */
@@ -110,12 +151,20 @@ export function itemCost(s, item) {
   return Math.round(levelUpCost(s) * item.level * item.cost);
 }
 
+/* Stamina a gift costs. Rising with level is what actually paces growth: money
+   stops mattering once the company is profitable, so if the stamina price were
+   flat a mature studio could max its whole roster in a couple of months. */
+export function trainStamina(s) {
+  return 1 + Math.floor(s.level / 22);
+}
+
 export function giveItem(s, itemId, rank) {
   const item = ITEMS.find((i) => i.id === itemId);
   if (!item) return { ok: false, why: '없는 아이템' };
   if (s.level >= s.maxLevel) return { ok: false, why: '이미 최대 레벨' };
-  const gain = Math.min(item.level, s.maxLevel - s.level);
-  s.level += gain;
+  const gain = Math.min(Math.round(item.level * traitMult(s, 'train')), s.maxLevel - s.level);
+  s.level += Math.max(1, gain);
+  if (s.level > s.maxLevel) s.level = s.maxLevel;
   const cap = rankInfo(rank).motivationCap;
   s.motivation = Math.min(cap, s.motivation + item.motivation);
   // Items nudge the ability the item is about, which is what makes the choice
@@ -124,6 +173,30 @@ export function giveItem(s, itemId, rank) {
   if (key) s.bonus[key] += 1 + item.level * 0.4;
   if (!s.itemsGiven.includes(itemId)) s.itemsGiven.push(itemId);
   return { ok: true, gain };
+}
+
+/* ---------- experience ----------
+   Gifts are the fast lane to a level; shipping is the slow one. Without a slow
+   lane a studio that never spends a won on training is frozen at level 3
+   forever, which is the one state the design must not allow — the doc's rule
+   is that a player is never PERMANENTLY stuck. The curve is deliberately
+   shallow at the bottom and steep by the sixties, so early games visibly grow
+   the founders and late levels still have to be bought. */
+export function expToNext(s) {
+  return Math.round(18 * Math.pow(Math.max(1, s.level), 1.15));
+}
+
+export function gainExp(s, amount) {
+  if (s.level >= s.maxLevel) { s.exp = 0; return 0; }
+  s.exp = (s.exp || 0) + amount;
+  let gained = 0;
+  while (s.level < s.maxLevel && s.exp >= expToNext(s)) {
+    s.exp -= expToNext(s);
+    s.level += 1;
+    gained += 1;
+  }
+  if (s.level >= s.maxLevel) s.exp = 0;
+  return gained;
 }
 
 /* Job change: three distinct items given AND max level, per the original. */
@@ -171,7 +244,8 @@ export function reincarnate(s, newJobId) {
 
 export function addMotivation(s, n, rank) {
   const cap = rankInfo(rank).motivationCap;
-  s.motivation = Math.max(0, Math.min(cap, s.motivation + n));
+  const scaled = n > 0 ? n * (traitMult(s, 'moodGain') || 1) : n;
+  s.motivation = Math.max(0, Math.min(cap, s.motivation + scaled));
 }
 
 /* Candidates for the hiring screen. Higher company rank surfaces better people

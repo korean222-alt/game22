@@ -8,12 +8,14 @@
    JSON and nothing needs a migration layer yet. */
 
 import {
-  JOBS, PLATFORMS, MONETIZE, GENRES, STATS, rankInfo, RANK_UP_FANS, ITEMS,
-  STARTING_JOBS,
+  JOBS, PLATFORMS, MONETIZE, GENRES, CONTENTS, STATS, rankInfo, RANK_UP_FANS, ITEMS,
+  STARTING_JOBS, RESEARCH, researchCost, CONTRACTS, contractPay, MARKETING,
+  marketingCost, floorCost, comboScore,
 } from './data.js';
 import {
   makeStaff, rollCandidates, proposalPower, giveItem, promote, canPromote,
   reincarnate, canReincarnate, addMotivation, abilities, power, role, seedIds, itemCost,
+  trainStamina, gainExp, expToNext,
 } from './staff.js';
 import {
   generateProposal, startProject, battleTurn, chooseCard, finishProject, debug,
@@ -21,6 +23,7 @@ import {
 } from './project.js';
 import {
   releaseGame, tickRelease, weeklyCosts, checkRankUp, cashCap, coinsFromRelease,
+  researchFromProject,
 } from './economy.js';
 import { mulberry32 } from '../core/math.js';
 
@@ -52,6 +55,14 @@ export class Game {
       platformKnowledge: 0,
       totalEarned: 0,
       shipped: 0,
+      // Rank permits floors; money buys them. maxFloors is the ceiling.
+      maxFloors: info.floors,
+      researchPts: 0,
+      research: {},                 // { [researchId]: level }
+      trends: null,                 // { genreId, contentId, setAt }
+      discovered: {},               // combo log: "genre|content" -> best score
+      contract: null,               // { id, weeksLeft, pay, research }
+      marketingId: 'none',
     };
     this.staff = [];
     this.proposals = [];
@@ -68,6 +79,7 @@ export class Game {
       this.staff.push(makeStaff(this.rnd, job, { talent: 0.95 + this.rnd() * 0.3, level: 3 }));
     }
     this.rollCandidates();
+    this.rollTrends();
     this.note('오늘부터 사장님입니다. 기획서를 뽑고 개발을 시작하세요.');
   }
 
@@ -78,6 +90,24 @@ export class Game {
   }
 
   dateLabel() { const c = this.company; return `${c.year}년차 ${c.month}월 ${c.week}주`; }
+
+  /* Everything company-wide that modifies a project. Assembled in one place so
+     the battle, the completion and the release can never disagree about which
+     research levels or trends were in force. */
+  ctx(extra = {}) {
+    return {
+      research: this.company.research,
+      trends: this.company.trends,
+      ...extra,
+    };
+  }
+
+  roleOf(staffer) { return role(staffer); }
+
+  teamOf(project) {
+    if (!project) return [];
+    return project.team.map((id) => this.staff.find((s) => s.id === id)).filter(Boolean);
+  }
   info() { return rankInfo(this.company.rank); }
   staffById() { return new Map(this.staff.map((s) => [s.id, s])); }
   managed() { return this.releases.filter((r) => r.managing); }
@@ -158,12 +188,13 @@ export class Game {
     // A gift costs stamina as well as money. Without that, growth is limited
     // only by cash and the whole company maxes out in a handful of weeks —
     // spending stamina here means training genuinely competes with shipping.
-    if (this.company.stamina < 1) return { ok: false, why: '스태미나 부족' };
+    const stam = trainStamina(s);
+    if (this.company.stamina < stam) return { ok: false, why: `스태미나 ${stam} 필요` };
     const cost = itemCost(s, item);
     if (!this.spend(cost)) return { ok: false, why: '자금 부족' };
-    this.company.stamina -= 1;
+    this.company.stamina -= stam;
     const r = giveItem(s, itemId, this.company.rank);
-    if (!r.ok) { this.company.money += cost; this.company.stamina += 1; return r; }
+    if (!r.ok) { this.company.money += cost; this.company.stamina += stam; return r; }
     this.note(`${s.name}에게 ${item.ko} 지급 → Lv.${s.level}`, 'good');
     this.emit('staff', null);
     return r;
@@ -211,7 +242,8 @@ export class Game {
       const p = proposalPower(s, this.floorRoleOf(s));
       if (p > best) { best = p; author = s; }
     }
-    const pr = generateProposal(this.rnd, author, this.totalPlanPower(), this.company.rank);
+    const pr = generateProposal(this.rnd, author, this.totalPlanPower(), this.company.rank,
+      this.company.research);
     this.proposals.unshift(pr);
     if (this.proposals.length > 8) this.proposals.pop();
     const g = GENRES.find((x) => x.id === pr.genreId);
@@ -254,7 +286,7 @@ export class Game {
     if (this.company.stamina < cost) return { ok: false, why: '스태미나 부족. 다음 주로 넘기세요.' };
     this.company.stamina -= cost;
 
-    const r = battleTurn(p, this.staffById(), this.rnd);
+    const r = battleTurn(p, this.staffById(), this.rnd, this.ctx());
     this.emit('battle', { project: p, events: r.events });
 
     if (p.hp <= 0 && !p.pendingCards) this._completeProject();
@@ -278,15 +310,36 @@ export class Game {
 
   _completeProject() {
     const p = this.project;
-    const res = finishProject(p, this.staffById(), this.rnd);
+    const res = finishProject(p, this.staffById(), this.rnd, this.ctx());
     if (res.author) addMotivation(res.author, 1, this.company.rank);
+
+    // Research earned, and the combo written into the discovery log.
+    const rp = researchFromProject(p);
+    this.company.researchPts += rp;
+    if (p.contentId) {
+      const key = `${p.genreId}|${p.contentId}`;
+      const score = comboScore(p.genreId, p.contentId);
+      const prev = this.company.discovered[key];
+      if (!prev || score > prev.score || p.criticTotal > prev.critic) {
+        this.company.discovered[key] = {
+          score, critic: Math.max(p.criticTotal, prev ? prev.critic : 0), title: p.title,
+        };
+      }
+    }
+    // Everyone who worked on it learns from it. A bigger, better-received game
+    // teaches more, so the team that ships ambitious work grows fastest.
+    const xp = Math.round(20 + p.hpMax / 300 + p.criticTotal * 2);
     for (const id of p.team) {
       const s = this.staff.find((x) => x.id === id);
-      if (s) s.gamesShipped += 1;
+      if (!s) continue;
+      s.gamesShipped += 1;
+      const up = gainExp(s, xp);
+      if (up) this.note(`${s.name} 경험치 상승 → Lv.${s.level}`, 'good');
     }
     this.project = null;
     this.finished = p;
-    this.note(`「${p.title}」 완성! 평론가 합계 ${p.criticTotal}점, 버그 ${p.bugs}개`,
+    this.company.marketingId = 'none';
+    this.note(`「${p.title}」 완성! 평론가 합계 ${p.criticTotal}점, 버그 ${p.bugs}개 · 연구 +${rp}`,
       p.hallOfFame ? 'good' : 'info');
     if (p.hallOfFame) this.note('명예의 전당 등재! 이제 속편을 만들 수 있다.', 'good');
     this.emit('finished', p);
@@ -310,7 +363,13 @@ export class Game {
     if (active.length >= this.info().managedCap) {
       return { ok: false, why: `동시 운영은 ${this.info().managedCap}작품까지. 하나를 서비스 종료하세요.` };
     }
-    const { release, fansGained } = releaseGame(p, this.company, this.rnd);
+    const mk = MARKETING.find((x) => x.id === this.company.marketingId) || MARKETING[0];
+    const mkCost = marketingCost(mk, p.devCost);
+    if (mkCost > 0 && !this.spend(mkCost)) {
+      return { ok: false, why: `홍보비 부족 (₩${mkCost.toLocaleString()})` };
+    }
+    const { release, fansGained } = releaseGame(p, this.company, this.rnd,
+      this.ctx({ marketingId: mk.id, team: this.teamOf(p) }));
     this.releases.unshift(release);
     this.company.fans += fansGained;
     this.company.coins += coinsFromRelease(release);
@@ -320,7 +379,9 @@ export class Game {
       criticTotal: p.criticTotal, users: release.users, at: this.dateLabel(),
     });
     this.finished = null;
-    this.note(`「${release.title}」 출시! 초기 유저 ${release.users.toLocaleString()}명, 팬 +${fansGained.toLocaleString()}`, 'good');
+    const mkNote = mk.id === 'none' ? '' : ` · ${mk.ko} ₩${mkCost.toLocaleString()}`;
+    const trendNote = release.trendHit ? ' · 유행을 탔다!' : '';
+    this.note(`「${release.title}」 출시! 초기 유저 ${release.users.toLocaleString()}명, 팬 +${fansGained.toLocaleString()}${mkNote}${trendNote}`, 'good');
     this.emit('release', release);
     this._maybeRankUp();
     return { ok: true, release };
@@ -348,6 +409,104 @@ export class Game {
     }
   }
 
+  /* ---------- 사무실 ----------
+     Rank permits a floor; money buys it. Making expansion a purchase rather
+     than an automatic unlock turns "should I grow?" into a real decision
+     against payroll, because every floor keeps charging upkeep afterwards. */
+  nextFloorCost() { return floorCost(this.company.floors + 1); }
+
+  canBuyFloor() {
+    const c = this.company;
+    if (c.floors >= (c.maxFloors || 1)) {
+      return { ok: false, why: `랭크 ${1 + c.floors * 4} 부터 다음 층을 쓸 수 있다` };
+    }
+    if (c.floors >= 5) return { ok: false, why: '최고층까지 확장했다' };
+    if (c.money < this.nextFloorCost()) return { ok: false, why: '자금 부족' };
+    return { ok: true };
+  }
+
+  buyFloor() {
+    const chk = this.canBuyFloor();
+    if (!chk.ok) return chk;
+    const cost = this.nextFloorCost();
+    this.spend(cost);
+    this.company.floors += 1;
+    this.note(`${this.company.floors}층 입주 완료. 주간 유지비가 늘어난다.`, 'good');
+    this.emit('floors', this.company.floors);
+    this.emit('staff', null);
+    return { ok: true, floors: this.company.floors };
+  }
+
+  /* ---------- 연구 ---------- */
+  researchLevel(id) { return this.company.research[id] || 0; }
+
+  researchPrice(id) { return researchCost(id, this.researchLevel(id)); }
+
+  doResearch(id) {
+    const def = RESEARCH.find((r) => r.id === id);
+    if (!def) return { ok: false };
+    const lvl = this.researchLevel(id);
+    if (lvl >= def.max) return { ok: false, why: '최대 단계' };
+    const price = this.researchPrice(id);
+    if (this.company.researchPts < price) return { ok: false, why: '연구 포인트 부족' };
+    this.company.researchPts -= price;
+    this.company.research[id] = lvl + 1;
+    this.note(`${def.ko} ${lvl + 1}단계 달성`, 'good');
+    this.emit('research', id);
+    return { ok: true, level: lvl + 1 };
+  }
+
+  /* ---------- 계약 일감 ----------
+     The design doc's rule that a player must never be permanently stuck at
+     zero. Contracts are dull, safe and always available. */
+  availableContracts() { return CONTRACTS; }
+
+  contractPayFor(id) {
+    const c = CONTRACTS.find((x) => x.id === id);
+    return c ? contractPay(c, this.company.rank) : 0;
+  }
+
+  takeContract(id) {
+    const c = CONTRACTS.find((x) => x.id === id);
+    if (!c) return { ok: false };
+    if (this.company.contract) return { ok: false, why: '이미 계약을 진행 중' };
+    if (this.company.stamina < c.stamina) return { ok: false, why: '스태미나 부족' };
+    this.company.stamina -= c.stamina;
+    const pay = contractPay(c, this.company.rank);
+    this.company.contract = { id, ko: c.ko, weeksLeft: c.weeks, pay, research: c.research };
+    this.note(`${c.ko} 수주. ${c.weeks}주 뒤 ₩${pay.toLocaleString()} 입금.`);
+    this.emit('contract', this.company.contract);
+    return { ok: true };
+  }
+
+  /* ---------- 홍보 ---------- */
+  setMarketing(id) {
+    if (!MARKETING.find((m) => m.id === id)) return { ok: false };
+    this.company.marketingId = id;
+    this.emit('finished', this.finished);
+    return { ok: true };
+  }
+
+  marketingPrice(id) {
+    const mk = MARKETING.find((m) => m.id === id);
+    if (!mk || !this.finished) return 0;
+    return marketingCost(mk, this.finished.devCost);
+  }
+
+  /* ---------- 시장 유행 ----------
+     One genre and one content run hot per quarter. Rotating it is what stops a
+     single discovered combo from being the answer forever. */
+  rollTrends() {
+    const g = GENRES[Math.floor(this.rnd() * GENRES.length)];
+    const c = CONTENTS[Math.floor(this.rnd() * CONTENTS.length)];
+    this.company.trends = {
+      genreId: g.id, genreKo: g.ko,
+      contentId: c.id, contentKo: c.ko,
+      setAt: `${this.company.year}-${this.company.month}`,
+    };
+    this.emit('trends', this.company.trends);
+  }
+
   /* ---------- the week clock ---------- */
   nextWeek() {
     const c = this.company;
@@ -357,9 +516,26 @@ export class Game {
     this.earn(income);
     c.money -= costs;
 
+    // Contract work settles before the week rolls over.
+    if (c.contract) {
+      c.contract.weeksLeft -= 1;
+      if (c.contract.weeksLeft <= 0) {
+        this.earn(c.contract.pay);
+        c.researchPts += c.contract.research;
+        this.note(`${c.contract.ko} 납품 완료. ₩${c.contract.pay.toLocaleString()} · 연구 +${c.contract.research}`, 'good');
+        c.contract = null;
+        this.emit('contract', null);
+      }
+    }
+
     c.week += 1;
     if (c.week > 4) { c.week = 1; c.month += 1; }
     if (c.month > 12) { c.month = 1; c.year += 1; }
+    // A new quarter, a new fashion.
+    if (c.week === 1 && (c.month - 1) % 3 === 0) {
+      this.rollTrends();
+      this.note(`시장 유행이 바뀌었다: ${c.trends.genreKo} · ${c.trends.contentKo}`);
+    }
 
     c.stamina = c.staminaMax;
 
@@ -372,11 +548,14 @@ export class Game {
     }
 
     if (c.money < 0) {
-      this.note(`자금이 마이너스입니다 (₩${c.money.toLocaleString()}). 운영비를 줄이세요.`, 'bad');
-      if (c.money < -200000) {
-        // The series' safety net: the sponsor covers you, but only so often.
-        c.money += 300000;
-        this.note('스폰서가 비상금을 지원했다. 다음은 없다.', 'bad');
+      this.note(`자금이 마이너스입니다 (₩${c.money.toLocaleString()}). 계약 일감으로 급한 불을 끄세요.`, 'bad');
+      if (c.money < -120000) {
+        // The safety net the design doc asks for: a studio is never PERMANENTLY
+        // stuck at zero. It is deliberately not free money — the roster's
+        // morale takes the hit, so repeated rescues visibly cost you output.
+        c.money = 40000;
+        for (const s of this.staff) addMotivation(s, -2, c.rank);
+        this.note('스폰서가 급한 불을 꺼줬다. 직원들의 의욕이 떨어졌다.', 'bad');
       }
     }
     if (income > 0) this.note(`주간 정산: 매출 ₩${income.toLocaleString()} / 비용 ₩${costs.toLocaleString()}`);
@@ -416,6 +595,16 @@ export class Game {
       g.project = d.project; g.finished = d.finished; g.releases = d.releases;
       g.candidates = d.candidates || []; g.history = d.history || [];
       g.log = [];
+      // Saves written before these systems existed load with sane defaults
+      // rather than crashing on a missing field.
+      const c = g.company;
+      c.research = c.research || {};
+      c.researchPts = c.researchPts || 0;
+      c.maxFloors = c.maxFloors || rankInfo(c.rank).floors;
+      c.discovered = c.discovered || {};
+      c.marketingId = c.marketingId || 'none';
+      c.contract = c.contract || null;
+      if (!c.trends) g.rollTrends();
       // Ids must not collide with anything the save already used.
       seedIds(Math.max(0, ...g.staff.map((s) => s.id), ...g.candidates.map((s) => s.id)) + 1);
       seedProjectIds(Date.now() % 100000);
@@ -432,4 +621,8 @@ export class Game {
   }
 }
 
-export { STATS, JOBS, GENRES, PLATFORMS, MONETIZE, ITEMS, abilities, power, role, rankInfo, RANK_UP_FANS, itemCost };
+export {
+  STATS, JOBS, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, RESEARCH, CONTRACTS, MARKETING,
+  abilities, power, role, rankInfo, RANK_UP_FANS, itemCost, trainStamina, floorCost,
+  expToNext,
+};

@@ -5,9 +5,15 @@
    can run at once, per the original — deciding which one to shut down to make
    room is a real choice once you have three earners. */
 
-import { PLATFORMS, MONETIZE, STATS, rankInfo, RANK_UP_FANS } from './data.js';
+import {
+  PLATFORMS, MONETIZE, STATS, rankInfo, RANK_UP_FANS, MARKETING,
+  researchEffect, TREND_BONUS, TREND_PENALTY, FLOOR_UPKEEP, floorCost,
+} from './data.js';
+import { traitMult } from './staff.js';
 
-export function releaseGame(project, company, rnd) {
+/* `ctx` carries what the company knows and has spent: research levels, the
+   quarter's trends, the marketing package bought, and the team (for 스타 개발자). */
+export function releaseGame(project, company, rnd, ctx = {}) {
   const platform = PLATFORMS.find((p) => p.id === project.platformId);
   const money = MONETIZE.find((m) => m.id === project.monetizeId);
   const q = project.quality;
@@ -18,17 +24,33 @@ export function releaseGame(project, company, rnd) {
   const bugPenalty = Math.max(0.35, 1 - project.bugs * 0.014);
   // Capped: an unbounded fanbase multiplier feeds itself — more users means
   // more fans means more users — and the curve leaves the chart by year two.
-  const fanBoost = Math.min(6, 1 + Math.log2(1 + company.fans / 3000) * 0.55);
+  const fanBoost = Math.min(9, 1 + Math.log2(1 + company.fans / 3000) * 0.55);
   const sequelBoost = 1 + (project.seriesN - 1) * 0.28;
   const hofBoost = project.hallOfFame ? 1.35 : 1;
 
+  const res = researchEffect(ctx.research);
+  const mk = MARKETING.find((x) => x.id === (ctx.marketingId || 'none')) || MARKETING[0];
+
+  // The quarter's hot genre and hot content. The doc asks for a reason a known
+  // good combo is not always the right answer; this is it.
+  const trends = ctx.trends || {};
+  let trendMult = 1;
+  if (trends.genreId) trendMult *= trends.genreId === project.genreId ? TREND_BONUS : TREND_PENALTY;
+  if (trends.contentId) trendMult *= trends.contentId === project.contentId ? TREND_BONUS : 1;
+  trendMult = Math.max(0.7, Math.min(2.4, trendMult));
+
+  // 스타 개발자 on the team lifts the launch.
+  let starMult = 1;
+  for (const s of ctx.team || []) starMult *= traitMult(s, 'fans');
+
   const users = Math.max(400, Math.round(
-    pull * 95 * platform.fans * money.users * bugPenalty * fanBoost * sequelBoost * hofBoost
+    pull * 26 * platform.fans * money.users * bugPenalty * fanBoost * sequelBoost * hofBoost
+    * res.users * mk.users * trendMult * starMult
     * (0.85 + rnd() * 0.3)
   ));
 
   // Retention decides how slowly users leave; usability softens the bug drag.
-  const decay = Math.min(0.988, money.decay + Math.min(0.050, q.retention / 2000));
+  const decay = Math.min(0.990, money.decay + Math.min(0.050, q.retention / 2000) + res.decay);
 
   const arpu = money.arpu * (1 + q.social / 260) * platform.share * (0.9 + rnd() * 0.2);
 
@@ -53,11 +75,13 @@ export function releaseGame(project, company, rnd) {
     weeks: 0,
     earned: 0,
     managing: true,
+    marketingId: mk.id,
+    trendHit: trendMult > 1.1,
   };
 
   // Fans the launch wins the company, which raises the floor on every future
   // release and is what actually drives rank.
-  const fansGained = Math.round(users * 0.25 * (project.hallOfFame ? 1.5 : 1));
+  const fansGained = Math.round(users * 0.11 * (project.hallOfFame ? 1.5 : 1) * mk.fans * starMult);
   return { release: rel, fansGained };
 }
 
@@ -73,17 +97,33 @@ export function tickRelease(rel, rnd) {
   return income;
 }
 
+/* Research earned by finishing a project. Bigger, better-reviewed games teach
+   the company more, which is what makes research a reward for ambition. */
+export function researchFromProject(project) {
+  const size = Math.log2(1 + project.hpMax / 1200);
+  const grade = 0.6 + project.proposal.grade * 0.2;
+  return Math.max(2, Math.round(size * grade * 5));
+}
+
 export function coinsFromRelease(rel) {
   // Coins are the premium currency; a strong launch pays a handful.
   return Math.max(1, Math.round(rel.criticTotal / 4 + (rel.hallOfFame ? 6 : 0)));
 }
 
-/* Weekly running cost: salaries plus a per-floor overhead. */
+/* Weekly running cost: payroll plus a per-floor overhead.
+
+   The ground floor is rent-free — it is the room you started in — so a garage
+   studio's only bill is its people. Every floor you BUY keeps charging you
+   whether or not anyone sits on it, which is what makes expansion a decision
+   rather than a button. Payroll is the early game's whole pressure: it scales
+   with headcount, so a hire is a standing commitment, not a one-off fee. */
 export function weeklyCosts(company, staff) {
   const salaries = staff.reduce((a, s) => a + s.salary, 0);
-  const overhead = company.floors * 2400;
-  return Math.round(salaries * 0.20 + overhead);
+  const overhead = Math.max(0, company.floors - 1) * FLOOR_UPKEEP;
+  return Math.round(salaries * 0.60 + overhead);
 }
+
+export { floorCost };
 
 export function checkRankUp(company) {
   const need = RANK_UP_FANS(company.rank);
@@ -91,8 +131,9 @@ export function checkRankUp(company) {
   company.rank += 1;
   const info = rankInfo(company.rank);
   company.staminaMax = info.staminaMax;
-  const unlockedFloor = info.floors > company.floors;
-  if (unlockedFloor) company.floors = info.floors;
+  // Rank raises the ceiling; the player still has to buy the space.
+  const unlockedFloor = info.floors > (company.maxFloors || 1);
+  company.maxFloors = info.floors;
   return { rank: company.rank, info, unlockedFloor };
 }
 
