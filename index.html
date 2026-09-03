@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>소셜게임 스토리 3D</title>
+<link rel="stylesheet" href="./src/ui/style.css">
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="ov"></div>
+
+<div id="boot">
+  <div class="sp"></div>
+  <div class="bt">사무실을 짓는 중…</div>
+  <div class="bs" id="bootStep">렌더러 준비</div>
+</div>
+
+<!-- ══ top HUD: 랭크 · 스태미나 · 자금 · 코인 · 날짜 ══ -->
+<div id="hud" class="card">
+  <div class="hz"><span class="hk">RANK</span><b id="hRank">1</b></div>
+  <div class="hz"><span class="hk">STAMINA</span><b id="hStam">8</b><i id="hStamMax">/8</i></div>
+  <div class="hz money"><span class="hi">💵</span><b id="hMoney">0</b></div>
+  <div class="hz coins"><span class="hi">🪙</span><b id="hCoins">0</b></div>
+  <div class="hz"><span class="hk">팬</span><b id="hFans">0</b></div>
+  <div class="hz date" id="hDate">1년차 1월 1주</div>
+</div>
+
+<div id="brand" class="card">
+  <div class="k">SOCIAL DEV STORY</div>
+  <h1>소셜게임 스토리 <em>3D</em></h1>
+  <div class="s" id="coName">스튜디오 게임22</div>
+</div>
+
+<!-- ══ floor selector ══ -->
+<div id="floors"></div>
+
+<!-- ══ left side panel ══ -->
+<div id="side" class="card">
+  <div id="tabs">
+    <div class="tab on" data-tab="company">회사</div>
+    <div class="tab" data-tab="staff">직원</div>
+    <div class="tab" data-tab="dev">개발</div>
+    <div class="tab" data-tab="live">운영</div>
+    <div class="tab" data-tab="log">기록</div>
+  </div>
+  <div id="panel"></div>
+</div>
+
+<!-- ══ development battle bar ══ -->
+<div id="battle" class="card">
+  <div class="bhead">
+    <span class="bt2" id="bTitle">—</span>
+    <span class="bmeta" id="bMeta"></span>
+  </div>
+  <div class="hpwrap"><div class="hpbar" id="bHp"></div><span class="hptx" id="bHpTx"></span></div>
+  <div class="brow">
+    <button class="btn primary" id="bTurn">개발 진행 <kbd>Space</kbd></button>
+    <button class="btn" id="bAuto">자동</button>
+    <span class="bcost" id="bCost"></span>
+  </div>
+</div>
+
+<!-- ══ modal: idea cards, release, rank up ══ -->
+<div id="modal">
+  <div class="mc card">
+    <div class="mtag" id="mTag">아이디어</div>
+    <h3 id="mTitle">—</h3>
+    <div id="mBody"></div>
+    <div id="mOpts"></div>
+    <div class="mok" id="mOk">확인</div>
+  </div>
+</div>
+
+<div id="toast" class="card"></div>
+<div id="hint">드래그 회전 · 휠 줌 · <kbd>Q</kbd><kbd>E</kbd> 층 이동 · <kbd>Space</kbd> 개발 진행 · <kbd>Tab</kbd> 벽 투시</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

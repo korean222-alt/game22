@@ -1,0 +1,11 @@
+{
+  "name": "social-dev-story-3d",
+  "version": "0.1.0",
+  "description": "소셜게임 스토리 3D — a WebGL2 remake of Kairosoft's Social Dev Story",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "check": "node --check src/main.js"
+  }
+}
