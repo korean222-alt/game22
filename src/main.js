@@ -19,6 +19,10 @@ import './world/palette.js';                  // registers the hex -> material m
 import { buildOffice, BUILDING, FLOOR_PLANS, STOREY } from './world/office.js';
 import { Game } from './game/state.js';
 import { UI } from './ui/hud.js';
+import {
+  TIERS, detectTier, isTouch, isMobile, viewportSize, trackViewport,
+  suppressBrowserGestures, goFullscreen,
+} from './ui/device.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('gl');
@@ -123,7 +127,7 @@ class View {
   /* ---- camera / floor ---- */
   setFloor(f) {
     this.floor = clamp(f, 0, this.floorCount - 1);
-    cam.lookAt(BUILDING.x1 / 2, this.floor * STOREY + 4.5, BUILDING.z1 / 2);
+    cam.lookAt(BUILDING.x1 / 2, this.floor * STOREY + 6, BUILDING.z1 / 2);
     renderer.fitLight([BUILDING.x1 / 2, this.floor * STOREY + 5, BUILDING.z1 / 2], 62);
   }
 
@@ -141,7 +145,7 @@ class View {
     const d = s && this.deskOf(s);
     if (!d) return;
     if (d.floor !== this.floor) { this.setFloor(d.floor); ui.renderFloors(); }
-    cam.lookAt(d.seatX, d.floor * STOREY + 4.5, d.seatZ);
+    cam.lookAt(d.seatX, d.floor * STOREY + 5, d.seatZ);
     cam.goalDist = Math.min(cam.goalDist, 28);
   }
 
@@ -306,19 +310,40 @@ const STAT_LABEL = {
 
 /* ══════════════════════════════════════ boot ══════════════════════════════ */
 
-let renderer, cam, view, ui, game;
+let renderer, cam, view, ui, game, tier = 'high', quality = TIERS.high;
 
 async function boot() {
   bootStep('렌더러 준비');
-  initGL(canvas);
+  const gl = initGL(canvas);
+
+  // Settings scale to the device rather than being fixed at "looks best on a
+  // laptop": a phone GPU running the desktop tier drops to single figures.
+  tier = detectTier(gl);
+  quality = TIERS[tier];
+  document.body.classList.toggle('touch', isTouch());
+  document.body.dataset.tier = tier;
+
   renderer = new Renderer(canvas, {
-    shadowSize: 2048,
+    shadowSize: quality.shadowSize,
+    bloomLevels: quality.bloomLevels,
     storey: STOREY,
     exposure: 1.06,
     bloomAmount: 0.05,
     bloomThreshold: 1.15,
+    grain: quality.grain,
+    aberration: quality.aberration,
+    vignette: quality.vignette,
   });
   cam = new OrbitCamera();
+  if (isMobile()) {
+    // A phone in landscape is a wide, short window. Looking down more steeply
+    // fills it with floor plate instead of sky, and a slightly wider lens keeps
+    // the whole storey in frame without pushing the camera so far back that the
+    // staff become specks.
+    cam.fov = 0.60;
+    cam.el = 0.88;
+    cam.goalDist = 82;
+  }
 
   game = Game.load() || new Game();
   view = new View(game);
@@ -334,8 +359,8 @@ async function boot() {
   window.__cam = cam;
 
   wirePointer();
-  resize();
-  window.addEventListener('resize', resize);
+  suppressBrowserGestures(canvas);
+  trackViewport(resize);
 
   $('boot').classList.add('gone');
   setTimeout(() => $('boot').remove(), 600);
@@ -351,16 +376,23 @@ async function boot() {
 }
 
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
-  const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+  if (!renderer) return;
+  const vp = viewportSize();
+  // Capping the device pixel ratio is the single biggest performance lever on a
+  // phone: a 3x screen is nine times the fragments of a 1x one for a difference
+  // most people cannot see at arm's length.
+  const dpr = Math.min(window.devicePixelRatio || 1, quality.dprCap);
+  const w = Math.max(1, Math.round(vp.w * dpr));
+  const h = Math.max(1, Math.round(vp.h * dpr));
+  if (canvas.width === w && canvas.height === h) return;
   canvas.width = w; canvas.height = h;
   renderer.resize(w, h);
 }
 
 function tick(dt) {
   view.update(dt);
-  cam.update(dt, canvas.clientWidth / Math.max(1, canvas.clientHeight));
+  const vp = viewportSize();
+  cam.update(dt, vp.w / Math.max(1, vp.h));
 
   // Hide every floor above the one being inspected, and the current floor's own
   // ceiling with it, so the dollhouse view can see in. The threshold sits just
@@ -376,35 +408,80 @@ function tick(dt) {
     time: view.time,
   }, (L, pass) => view.draw(L, pass));
 
-  view.drawOverlays(canvas.clientWidth, canvas.clientHeight);
+  view.drawOverlays(vp.w, vp.h);
 }
 
+/* One pointer orbits. Two pinch to zoom and drag to pan. Pointer Events cover
+   mouse, pen and touch with the same code, and pointer capture keeps a drag
+   alive when the finger slides over the HUD. */
 function wirePointer() {
-  let down = false, lx = 0, ly = 0;
-  canvas.addEventListener('pointerdown', (e) => {
-    down = true; lx = e.clientX; ly = e.clientY;
-    canvas.classList.add('drag');
-    canvas.setPointerCapture(e.pointerId);
-  });
-  canvas.addEventListener('pointermove', (e) => {
-    if (!down) return;
-    cam.orbit(e.clientX - lx, e.clientY - ly);
-    lx = e.clientX; ly = e.clientY;
-  });
-  const up = (e) => {
-    down = false;
-    canvas.classList.remove('drag');
-    if (e.pointerId !== undefined && canvas.hasPointerCapture?.(e.pointerId)) {
-      canvas.releasePointerCapture(e.pointerId);
-    }
+  const pts = new Map();
+  let pinch = 0, mid = null;
+  const BOUNDS = { x0: -18, x1: 82, z0: -16, z1: 60 };
+
+  const gather = () => {
+    const a = [...pts.values()];
+    if (a.length < 2) return null;
+    const dx = a[0].x - a[1].x, dy = a[0].y - a[1].y;
+    return { d: Math.hypot(dx, dy), x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2 };
   };
-  canvas.addEventListener('pointerup', up);
-  canvas.addEventListener('pointercancel', up);
+
+  canvas.addEventListener('pointerdown', (e) => {
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* already gone */ }
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    canvas.classList.add('drag');
+    const g = gather();
+    if (g) { pinch = g.d; mid = g; }
+    // The first touch anywhere is the gesture browsers need to grant
+    // fullscreen and an orientation lock.
+    firstGesture();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    const prev = pts.get(e.pointerId);
+    if (!prev) return;
+    const nx = e.clientX, ny = e.clientY;
+    if (pts.size === 1) cam.orbit(nx - prev.x, ny - prev.y);
+    pts.set(e.pointerId, { x: nx, y: ny });
+
+    if (pts.size >= 2) {
+      const g = gather();
+      if (g) {
+        if (pinch > 0 && g.d > 0) cam.zoom((pinch - g.d) * 2.0);
+        if (mid) cam.pan(g.x - mid.x, g.y - mid.y, BOUNDS);
+        pinch = g.d; mid = g;
+      }
+    }
+  });
+
+  const release = (e) => {
+    pts.delete(e.pointerId);
+    if (pts.size < 2) { pinch = 0; mid = null; }
+    if (!pts.size) canvas.classList.remove('drag');
+    try {
+      if (canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) {
+        canvas.releasePointerCapture(e.pointerId);
+      }
+    } catch (err) { /* ignore */ }
+  };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     cam.zoom(e.deltaY);
   }, { passive: false });
 }
+
+/* Browsers only grant fullscreen and orientation lock from inside a user
+   gesture, and only once asked. Ask on the first interaction, then stop. */
+let gestureUsed = false;
+function firstGesture() {
+  if (gestureUsed) return;
+  gestureUsed = true;
+  if (isTouch()) goFullscreen();
+}
+window.addEventListener('pointerdown', firstGesture, { once: true, capture: true });
 
 boot().catch((err) => {
   console.error(err);

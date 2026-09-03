@@ -1,0 +1,21 @@
+{
+  "name": "소셜게임 스토리 3D",
+  "short_name": "소셜게임 3D",
+  "description": "사장이 되어 소셜게임 회사를 키우는 3D 경영 시뮬레이션. 기획서를 뽑고, 아이디어와 싸워 게임을 만들고, 출시해서 유저를 모으세요.",
+  "lang": "ko",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "id": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone", "minimal-ui"],
+  "orientation": "landscape",
+  "background_color": "#15171c",
+  "theme_color": "#15171c",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

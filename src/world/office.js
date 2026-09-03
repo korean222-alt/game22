@@ -192,9 +192,10 @@ function buildSite(m, floors) {
   m.mat = 0;
   m.noSolid = false;
 
-  // Exterior piers between the glazing. These are cuttable like walls: from a
-  // low camera they would otherwise fence off the floor you are inspecting.
-  m.flag = 1;
+  // Exterior piers between the glazing. Flag 3, not 1: they are thin enough to
+  // see between, so putting them in the wall cut only speckles the facade with
+  // dither without revealing anything.
+  m.flag = 3;
   m.mat = MAT.WALL;
   for (let x = -2; x <= 66; x += 8) {
     m.box(x, top / 2, -1.6, 2.2, top, 2.2, P.extWall);

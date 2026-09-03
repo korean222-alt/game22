@@ -12,6 +12,7 @@ import {
 import { abilities, power, role, itemCost } from '../game/staff.js';
 import { turnCost } from '../game/project.js';
 import { FLOOR_PLANS } from '../world/office.js';
+import { isTouch, isFullscreen, goFullscreen, exitFullscreen } from './device.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => {
@@ -36,10 +37,15 @@ export class UI {
     this.auto = false;
     this.modalOnOk = null;
 
+    // On a phone the panel and the office cannot share the width, so the panel
+    // starts collapsed and the office is what you see first.
+    if (isTouch() && window.innerWidth < 900) document.body.classList.add('panel-hidden');
+
     this._wireTabs();
     this._wireBattle();
     this._wireModal();
     this._wireKeys();
+    this._wireShell();
 
     game.on((type, payload) => this._onGameEvent(type, payload));
     this.renderAll();
@@ -54,6 +60,7 @@ export class UI {
         this.tab = t.dataset.tab;
         this.renderPanel();
       };
+      t.style.touchAction = 'manipulation';
     }
   }
 
@@ -64,6 +71,35 @@ export class UI {
       $('bAuto').classList.toggle('primary', this.auto);
       if (this.auto) this._autoTick();
     };
+  }
+
+  /* The panel toggle and the fullscreen button. Both only appear on touch or
+     on a short screen; on a desktop the panel simply stays open. */
+  _wireShell() {
+    const menu = $('menuBtn');
+    if (menu) {
+      menu.onclick = () => this.togglePanel();
+      menu.style.touchAction = 'manipulation';
+    }
+    const fs = $('fsBtn');
+    if (fs) {
+      fs.onclick = () => { if (isFullscreen()) exitFullscreen(); else goFullscreen(); };
+      fs.style.touchAction = 'manipulation';
+    }
+  }
+
+  togglePanel(force) {
+    const b = document.body;
+    const hide = force === undefined ? !b.classList.contains('panel-hidden') : force;
+    b.classList.toggle('panel-hidden', hide);
+  }
+
+  /* Open the panel on a given tab — how a phone player reaches a screen when
+     the panel is collapsed. */
+  openTab(name) {
+    const t = document.querySelector(`#tabs .tab[data-tab="${name}"]`);
+    if (t) t.click();
+    this.togglePanel(false);
   }
 
   _wireModal() {
@@ -170,8 +206,13 @@ export class UI {
 
   renderBattle() {
     const g = this.g, bar = $('battle'), p = g.project;
-    if (!p) { bar.classList.remove('show'); return; }
+    if (!p) {
+      bar.classList.remove('show');
+      document.body.classList.remove('in-battle');
+      return;
+    }
     bar.classList.add('show');
+    document.body.classList.add('in-battle');
     const gen = GENRES.find((x) => x.id === p.genreId);
     $('bTitle').textContent = `「${p.title}」`;
     const bits = [gen.ko, `★${p.proposal.grade}`, `${p.turn}턴`];
@@ -187,7 +228,7 @@ export class UI {
     $('bHp').style.width = pct + '%';
     $('bHpTx').textContent = `${num(p.hp)} / ${num(p.hpMax)}`;
     const cost = turnCost(p);
-    $('bCost').textContent = `스태미나 -${cost} (보유 ${g.company.stamina})`;
+    $('bCost').innerHTML = `스태미나 <b style="color:var(--warn)">-${cost}</b><br>보유 ${g.company.stamina}`;
     $('bTurn').disabled = g.company.stamina < cost || !!p.pendingCards;
   }
 

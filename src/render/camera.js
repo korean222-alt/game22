@@ -32,6 +32,21 @@ export class OrbitCamera {
     this.goalDist = clamp(this.goalDist * (1 + delta * 0.0013), this.minD, this.maxD);
   }
 
+  /* Two-finger drag: grab the floor and slide it. The screen-space right and
+     up vectors are derived from the azimuth, so panning stays aligned with the
+     view however the camera has been orbited. Bounds keep the office on
+     screen — losing the building behind you on a phone is unrecoverable. */
+  pan(dx, dy, bounds) {
+    const s = this.dist * 0.0017;
+    const ca = Math.cos(this.az), sa = Math.sin(this.az);
+    this.gx += (-dx * ca - dy * sa) * s;
+    this.gz += (dx * sa - dy * ca) * s;
+    if (bounds) {
+      this.gx = clamp(this.gx, bounds.x0, bounds.x1);
+      this.gz = clamp(this.gz, bounds.z0, bounds.z1);
+    }
+  }
+
   update(dt, asp) {
     // Frame-rate independent damping: the 1-exp form keeps the same feel at
     // 30fps and 144fps, which a raw lerp(a,b,0.1) does not.

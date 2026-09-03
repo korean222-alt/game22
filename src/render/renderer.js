@@ -21,13 +21,16 @@ const SCENE_UNIFORMS = [
   'uStorey', 'uEye', 'uRes', 'uGlassMode', 'uTime', 'uExposure',
 ];
 
-const BLOOM_LEVELS = 5;
+const BLOOM_LEVELS_DEFAULT = 5;
 
 export class Renderer {
   constructor(canvas, opts = {}) {
     const gl = this.gl = getGL();
     this.canvas = canvas;
     this.shadowSize = opts.shadowSize || 2048;
+    // Fewer mips means a tighter bloom skirt but a materially cheaper frame,
+    // which is the trade a phone GPU wants.
+    this.bloomLevels = opts.bloomLevels || BLOOM_LEVELS_DEFAULT;
     this.storey = opts.storey || 13;
 
     this.pScene = program(VS_COMMON, FS_SCENE);
@@ -148,7 +151,7 @@ export class Renderer {
 
     T.bloom = [];
     let bw = Math.max(1, w >> 1), bh = Math.max(1, h >> 1);
-    for (let i = 0; i < BLOOM_LEVELS && bw > 4 && bh > 4; i++) {
+    for (let i = 0; i < this.bloomLevels && bw > 4 && bh > 4; i++) {
       T.bloom.push(this._mkTarget(bw, bh, true));
       bw = Math.max(1, bw >> 1); bh = Math.max(1, bh >> 1);
     }
