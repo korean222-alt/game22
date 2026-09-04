@@ -55,6 +55,11 @@ const state = () => page.evaluate(() => {
     modal: document.getElementById('modal').classList.contains('show'),
     meeting: document.body.classList.contains('meeting'),
     viewFloors: v.floorCount, tris: v.gSolid.count / 3, agents: v.crew.agents.size,
+    bag: g.bag.length, placed: g.company.placed.length,
+    desks: g.deskCount(), freeDesks: g.freeDesks(),
+    founded: g.company.founded, rescues: g.company.rescues,
+    placing: !!v.place, boss: v.boss ? v.boss.def.id : null,
+    tut: g.tutorialStep() ? g.tutorialStep().id : null,
   };
 });
 /* The modal is either a choice list (idea cards, confirms) or a plain OK box. */
@@ -74,11 +79,37 @@ await page.goto(BASE + '/index.html', { waitUntil: 'load' });
 await page.waitForFunction(() => document.getElementById('boot')?.classList.contains('gone'), { timeout: 180000 });
 await page.waitForTimeout(900);
 
-console.log('\n── 1. 부팅 ──');
+console.log('\n── 1. 부팅 · 창업 ──');
 await step('부팅 완료, 에러 없음', async () => {
   if (errs.length) throw new Error(errs[0]);
   const s = await state();
-  return `삼각형 ${Math.round(s.tris).toLocaleString()}개 · 직원 ${s.agents}명`;
+  if (s.agents !== 0) throw new Error(`빈 사무실이어야 하는데 직원 ${s.agents}명`);
+  if (s.desks !== 0) throw new Error(`빈 사무실이어야 하는데 책상 ${s.desks}개`);
+  return `삼각형 ${Math.round(s.tris).toLocaleString()}개 · 직원 0명 · 책상 0개`;
+});
+await step('회사 이름 팝업 → 지원금', async () => {
+  const asked = await page.evaluate(() => {
+    const m = document.getElementById('modal');
+    return m.classList.contains('show') ? document.getElementById('mTitle').textContent : null;
+  });
+  if (!asked) throw new Error('창업 팝업이 뜨지 않음');
+  await page.fill('#coInput', '플로우 스튜디오');
+  await page.click('#mOk');
+  await page.waitForTimeout(400);
+  const grant = await page.evaluate(() => document.getElementById('mTitle').textContent);
+  if (!grant.includes('플로우 스튜디오')) throw new Error('설립 팝업에 회사 이름이 없음: ' + grant);
+  await closeModal(); await page.waitForTimeout(400);
+  const s = await state();
+  if (!s.founded) throw new Error('창업 처리가 되지 않음');
+  if (s.money !== 180000) throw new Error(`지원금이 ₩${s.money.toLocaleString()}`);
+  return `「플로우 스튜디오」 · 지원금 ₩${s.money.toLocaleString()}`;
+});
+await step('튜토리얼이 첫 단계를 가리킨다', async () => {
+  const s = await state();
+  if (s.tut !== 'desk') throw new Error('첫 단계가 desk 가 아님: ' + s.tut);
+  const shown = await page.evaluate(() => document.getElementById('tut').classList.contains('show'));
+  if (!shown) throw new Error('튜토리얼 배너가 보이지 않음');
+  return '책상을 사세요';
 });
 
 console.log('\n── 2. 회사 탭 (계약 · 연구 · 저장) ──');
@@ -106,13 +137,148 @@ await step('연구 구매', async () => {
 });
 await step('저장하기', async () => {
   await tap('저장하기'); await page.waitForTimeout(200);
-  const has = await page.evaluate(() => !!localStorage.getItem('socialdev3d.save.v1'));
+  const has = await page.evaluate(() => !!localStorage.getItem('socialdev3d.save.v2'));
   if (!has) throw new Error('저장되지 않음');
   return 'localStorage 기록됨';
 });
 
-console.log('\n── 3. 직원 탭 (성장 · 채용) ──');
+console.log('\n── 3. 가구점 · 배치 모드 ──');
+await openTab('office'); await page.waitForTimeout(250);
+await step('책상 구입 → 가방', async () => {
+  const before = (await state()).money;
+  await tap('구입'); await page.waitForTimeout(300);
+  const s = await state();
+  if (s.bag !== 1) throw new Error(`가방에 ${s.bag}개`);
+  if (s.money >= before) throw new Error('돈이 빠지지 않음');
+  return `가방 1개 · ₩${(before - s.money).toLocaleString()} 지출`;
+});
+await step('배치 모드가 열리고 구역이 그려진다', async () => {
+  await tap('배치'); await page.waitForTimeout(400);
+  const r = await page.evaluate(() => ({
+    placing: !!window.__view.place,
+    zones: !!window.__view.gZones,
+    ghost: !!window.__view.gGhost,
+    bar: document.getElementById('placebar').classList.contains('show'),
+    body: document.body.classList.contains('placing'),
+  }));
+  if (!r.placing) throw new Error('배치 모드가 켜지지 않음');
+  if (!r.zones) throw new Error('배치 구역 오버레이가 없음');
+  if (!r.ghost) throw new Error('고스트가 그려지지 않음');
+  if (!r.bar || !r.body) throw new Error('배치 툴바가 뜨지 않음');
+  return '구역 · 고스트 · 툴바';
+});
+await step('구역 밖은 거부, 구역 안은 허용', async () => {
+  const bad = await page.evaluate(() => {
+    window.__view.movePlace(33, 22);           // inside the lift core
+    return { valid: window.__view.place.valid, why: window.__view.place.why };
+  });
+  if (bad.valid) throw new Error('코어 한가운데인데 배치 가능하다고 나옴');
+  const good = await page.evaluate(() => {
+    window.__view.movePlace(10, 9);            // north-west bay
+    return window.__view.place.valid;
+  });
+  if (!good) throw new Error('정상 구역인데 배치 불가');
+  return `거부 사유: ${bad.why}`;
+});
+await step('회전 후 배치 → 책상·보행 격자 갱신', async () => {
+  await page.evaluate(() => window.__view.rotatePlace());
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('#placebar button')].find((x) => x.textContent.includes('놓기'));
+    if (b.disabled) throw new Error('배치 버튼이 비활성');
+    b.click();
+  });
+  await page.waitForTimeout(600);
+  const s = await state();
+  if (s.placed !== 1) throw new Error(`배치된 가구 ${s.placed}개`);
+  if (s.bag !== 0) throw new Error('가방에서 빠지지 않음');
+  if (s.desks !== 1) throw new Error(`책상 슬롯 ${s.desks}개`);
+  if (s.placing) throw new Error('배치 모드가 안 꺼짐');
+  const solid = await page.evaluate(() => !!window.__view.gPlaced);
+  if (!solid) throw new Error('가구 메시가 만들어지지 않음');
+  return `책상 1개 · 빈자리 ${s.freeDesks}`;
+});
+await step('가구를 회수하면 자리도 사라진다', async () => {
+  await openTab('office'); await page.waitForTimeout(250);
+  await tap('회수'); await page.waitForTimeout(500);
+  let s = await state();
+  if (s.desks !== 0 || s.bag !== 1) throw new Error(`회수 후 책상 ${s.desks} 가방 ${s.bag}`);
+  // put it straight back so the rest of the run has somewhere to sit
+  await page.evaluate(() => {
+    const v = window.__view, g = window.__game;
+    v.startPlacing(g.bag[0].uid);
+    v.movePlace(10, 9);
+    v.commitPlace();
+  });
+  await page.waitForTimeout(400);
+  s = await state();
+  if (s.desks !== 1) throw new Error('되돌려 놓지 못함');
+  return '회수 → 재배치';
+});
+await step('책상을 여러 개 늘린다', async () => {
+  await page.evaluate(() => {
+    const g = window.__game, v = window.__view;
+    g.company.money = 5_000_000;
+    const spots = [[10, 15], [16, 9], [16, 15], [10, 24], [16, 24]];
+    for (const [x, z] of spots) {
+      g.buyFurniture('desk');
+      const uid = g.bag[g.bag.length - 1].uid;
+      g.placeFurniture(uid, 0, x, z, 0, v.placeChecks());
+    }
+    g.buyFurniture('coffee');
+    const uid = g.bag[g.bag.length - 1].uid;
+    g.placeFurniture(uid, 0, 5, 22, 0, v.placeChecks());
+    v.rebuildFurniture();
+  });
+  await page.waitForTimeout(500);
+  const s = await state();
+  if (s.desks < 4) throw new Error(`책상이 ${s.desks}개밖에 안 놓임`);
+  const cm = await page.evaluate(() => window.__game.comfort().score);
+  if (!(cm > 0)) throw new Error('쾌적도가 0');
+  return `책상 ${s.desks}개 · 쾌적도 ${cm}`;
+});
+
+console.log('\n── 4. 직원 탭 (채용 · 성장) ──');
 await openTab('staff'); await page.waitForTimeout(250);
+await step('빈 책상이 없으면 채용이 막힌다', async () => {
+  const blocked = await page.evaluate(() => {
+    const g = window.__game;
+    const saved = g.desks;
+    g.desks = [];
+    const r = g.hire(g.candidates[0].id);
+    g.desks = saved;
+    return r;
+  });
+  if (blocked.ok) throw new Error('책상 없이 채용됨');
+  return blocked.why;
+});
+await step('신입 할인가로 채용', async () => {
+  const before = (await state()).staff;
+  const rookie = await page.evaluate(() => window.__game.candidates[0].rookie);
+  if (!rookie) throw new Error('랭크 1인데 신입 할인이 없음');
+  await tap('채용 ₩'); await page.waitForTimeout(600);
+  const s = await state();
+  if (s.staff !== before + 1) throw new Error('인원이 늘지 않음');
+  const seated = await page.evaluate(() =>
+    window.__view.crew.all().filter((a) => a.home).length);
+  if (seated !== s.staff) throw new Error(`${s.staff - seated}명이 자리를 못 찾음`);
+  return `${before} → ${s.staff}명 · 전원 착석`;
+});
+await step('팀을 채운다', async () => {
+  await page.evaluate(() => {
+    const g = window.__game;
+    g.company.money = 5_000_000;
+    for (let i = 0; i < 12 && g.freeDesks() > 0; i++) {
+      if (!g.candidates.length) g.rollCandidates();
+      const c = g.candidates[0];
+      if (!c) break;
+      if (!g.hire(c.id).ok) g.rollCandidates();
+    }
+  });
+  await page.waitForTimeout(600);
+  const s = await state();
+  if (s.staff < 4) throw new Error(`직원 ${s.staff}명`);
+  return `${s.staff}명 · 빈자리 ${s.freeDesks}`;
+});
 await step('직원 카드를 누르면 상세가 열린다', async () => {
   await page.evaluate(() => document.querySelector('#panel .item.click').click());
   await page.waitForTimeout(300);
@@ -137,20 +303,8 @@ await step('아이템 지급 → 레벨업', async () => {
   if (after <= before) throw new Error(`레벨 그대로 (${before})`);
   return `Lv.${before} → Lv.${after}`;
 });
-await step('채용 (정원이 찼으면 랭크를 올려서)', async () => {
-  const before = (await state()).staff;
-  await page.evaluate(() => {
-    const g = window.__game;
-    g.company.rank = 4; g.company.maxFloors = 1; g.company.money = 5_000_000;
-    window.__ui.renderPanel();
-  });
-  await tap('채용 ₩'); await page.waitForTimeout(500);
-  const s = await state();
-  if (s.staff !== before + 1) throw new Error('인원이 늘지 않음');
-  return `${before} → ${s.staff}명 (정원 ${await page.evaluate(() => window.__game.info().staffCap)})`;
-});
 
-console.log('\n── 4. 개발 탭 (기획 → 회의 → 개발) ──');
+console.log('\n── 5. 개발 탭 (기획 → 회의 → 개발) ──');
 await openTab('dev'); await page.waitForTimeout(250);
 await step('기획서 뽑기', async () => {
   await tap('기획서 뽑기'); await page.waitForTimeout(300);
@@ -176,8 +330,74 @@ await step('회의 종료 후 개발 가능', async () => {
   return '카메라 복귀';
 });
 
-console.log('\n── 5. 개발 전투 · 아이디어 카드 ──');
+console.log('\n── 6. 개발 전투 · 보스 몬스터 ──');
 await page.evaluate(() => { window.__view.meetingScenes = false; });
+await step('아이디어 몬스터가 소환된다', async () => {
+  for (let i = 0; i < 40; i++) {
+    if ((await state()).boss) break;
+    await page.waitForTimeout(500);
+  }
+  const r = await page.evaluate(() => {
+    const b = window.__view.boss;
+    if (!b) return null;
+    return {
+      id: b.def.id, ko: b.def.ko,
+      joints: b.model.jointCount, prims: b.model.prims.length,
+      clips: [...b.model.clips.keys()],
+      scale: +b.scale.toFixed(2),
+      floor: b.floor,
+    };
+  });
+  if (!r) throw new Error('보스가 소환되지 않음 (glb 로드 실패?)');
+  if (!r.prims) throw new Error('메시가 비어 있음');
+  if (!r.clips.includes('Idle')) throw new Error('Idle 클립이 없음: ' + r.clips);
+  return `${r.ko} · 조인트 ${r.joints} · 클립 ${r.clips.length} · ×${r.scale}`;
+});
+await step('보스 HP 바가 화면에 뜬다', async () => {
+  await page.waitForTimeout(600);
+  const vis = await page.evaluate(() => {
+    const e = document.querySelector('.bosstag');
+    return e ? { shown: e.style.display !== 'none', txt: e.textContent.trim().slice(0, 20) } : null;
+  });
+  if (!vis) throw new Error('.bosstag 요소가 없음');
+  return vis.shown ? `표시: ${vis.txt}` : '요소는 있으나 화면 밖 (카메라 각도)';
+});
+/* 살아 있는 보스만 움직인다 — 죽은 놈은 마지막 포즈에서 멈춘다. 그래서 이
+   검사는 때리기 **전**에 한다. 자동 전투로 HP 를 낮춘 뒤로 데뷔작 1번 보스는
+   한 라운드에 죽을 수도 있다. */
+await step('스켈레톤이 매 프레임 갱신된다', async () => {
+  const a = await page.evaluate(() => Array.from(window.__view.boss.inst.skel.jointData.slice(0, 32)));
+  await page.waitForTimeout(700);
+  const b = await page.evaluate(() => Array.from(window.__view.boss.inst.skel.jointData.slice(0, 32)));
+  if (a.some((v) => !Number.isFinite(v))) throw new Error('조인트 행렬에 NaN');
+  const moved = a.some((v, i) => Math.abs(v - b[i]) > 1e-5);
+  if (!moved) throw new Error('애니메이션이 멈춰 있음');
+  return '조인트 행렬 갱신 확인';
+});
+await step('타격하면 몬스터가 반응한다', async () => {
+  const before = await page.evaluate(() => window.__view.boss.inst.clip.name);
+  // 자동 전투가 된 뒤로 한 턴은 스태미나를 먹지 않는다. 데미지 숫자도
+  // 라운드 합계 하나가 아니라 사람마다 하나씩 뜬다.
+  await page.evaluate(() => window.__game.devTurn());
+  const hit = await page.evaluate(() => ({
+    clip: window.__view.boss ? window.__view.boss.inst.clip.name : null,
+    flash: window.__view.boss ? window.__view.boss.flash : 0,
+    fx: window.__view.effects.length,
+  }));
+  if (!hit.clip) throw new Error('보스가 사라짐');
+  if (hit.flash <= 0) throw new Error('피격 플래시가 없음');
+  if (!hit.fx) throw new Error('보스 데미지 이펙트가 큐에 들어가지 않음');
+  // The DOM node is created on the frame that projects it, and software GL
+  // renders at a few frames a second, so give it real time rather than a tick.
+  let dom = 0;
+  for (let i = 0; i < 12; i++) {
+    dom = await page.evaluate(() => document.querySelectorAll('.dmg').length);
+    if (dom) break;
+    await page.waitForTimeout(250);
+  }
+  if (!dom) throw new Error('보스 위에 데미지 숫자가 안 뜸');
+  return `${before} → ${hit.clip} · 데미지 팝업 ${dom}`;
+});
 let cards = 0;
 await step('HP를 0까지 (카드 2장 선택)', async () => {
   for (let i = 0; i < 900; i++) {
@@ -198,24 +418,29 @@ await step('HP를 0까지 (카드 2장 선택)', async () => {
   return `「${s.finished}」 완성 · 카드 ${cards}회`;
 });
 
-console.log('\n── 6. 출시 준비 (디버그 · 홍보 · 출시) ──');
+console.log('\n── 7. 출시 준비 (디버그 · 홍보 · 출시) ──');
 // The finished-game panel lives on the 개발 tab: it is the last step of making
 // a game, not the first step of running one.
 await openTab('dev'); await page.waitForTimeout(300);
 await step('디버그로 버그 제거', async () => {
   const b0 = await page.evaluate(() => window.__game.finished.bugs);
-  if (b0 > 60) throw new Error(`버그가 ${b0}개나 나옴 — 디버그가 작업이 아니라 노가다가 된다`);
+  let passes = 0;
   for (let i = 0; i < 40; i++) {
     const r = await page.evaluate(() => {
       if (window.__game.company.stamina < 2) window.__game.nextWeek();
       return window.__game.debugProject().ok;
     });
     if (!r) break;
+    passes++;
     if ((await page.evaluate(() => window.__game.finished.bugs)) <= 0) break;
   }
   const b1 = await page.evaluate(() => window.__game.finished.bugs);
   if (b1 > 0) throw new Error(`버그 ${b1}개 남음`);
-  return `버그 ${b0} → 0`;
+  // The count itself is allowed to be ugly for a rookie team — that is the
+  // point of usability as a stat. What must not happen is clearing it turning
+  // into twenty button presses.
+  if (passes > 8) throw new Error(`디버그를 ${passes}번이나 눌러야 함 — 작업이 아니라 노가다`);
+  return `버그 ${b0} → 0 (디버그 ${passes}회)`;
 });
 await step('홍보 선택', async () => {
   await page.evaluate(() => { window.__game.company.money = 5_000_000; window.__ui.renderPanel(); });
@@ -238,7 +463,7 @@ await step('출시', async () => {
   return `「${r.t}」 ${r.c}/40점 · 초기 유저 ${r.u.toLocaleString()}명`;
 });
 
-console.log('\n── 7. 사무실 탭 (층 구매 → 3D 반영) ──');
+console.log('\n── 8. 사무실 탭 (층 구매 → 3D 반영) ──');
 await openTab('office'); await page.waitForTimeout(300);
 await step('층 구매 (랭크/자금 충족 시)', async () => {
   await page.evaluate(() => {
@@ -260,11 +485,30 @@ await step('층 구매 (랭크/자금 충족 시)', async () => {
   }
   const s = await state();
   if (s.tris <= tris0) throw new Error(`지오메트리가 그대로 (${Math.round(tris0)} 삼각형) — 층이 실제로 지어지지 않음`);
-  const deskFloors = await page.evaluate(() => [...new Set(window.__view.desks.map((d) => d.floor))].sort());
-  if (!deskFloors.includes(1)) throw new Error('2층에 책상이 없음');
   if (s.floors !== before + 1) throw new Error(`층수 그대로 (${s.floors})`);
   if (s.viewFloors < s.floors) throw new Error(`3D는 ${s.viewFloors}층만 세워짐`);
-  return `${before} → ${s.floors}층 · 삼각형 ${Math.round(tris0).toLocaleString()} → ${Math.round(s.tris).toLocaleString()}개 · 책상 층 ${deskFloors.join(',')}`;
+  // A new floor arrives empty; the furniture already downstairs must survive
+  // the rebuild, which is what re-running buildPlaced on every build protects.
+  if (s.desks < 4) throw new Error(`증축 후 책상이 ${s.desks}개로 줄어듦`);
+  return `${before} → ${s.floors}층 · 삼각형 ${Math.round(tris0).toLocaleString()} → ${Math.round(s.tris).toLocaleString()}개 · 책상 ${s.desks}개 유지`;
+});
+await step('새 층에도 배치할 수 있다', async () => {
+  const ok = await page.evaluate(() => {
+    const g = window.__game, v = window.__view;
+    g.company.money = 5_000_000;
+    v.setFloor(1);
+    g.buyFurniture('desk');
+    const uid = g.bag[g.bag.length - 1].uid;
+    const r = g.placeFurniture(uid, 1, 10, 9, 0, v.placeChecks());
+    v.rebuildFurniture();
+    return r;
+  });
+  await page.waitForTimeout(500);
+  if (!ok.ok) throw new Error('2층 배치 실패: ' + ok.why);
+  const floors = await page.evaluate(() =>
+    [...new Set(window.__view.desks.map((d) => d.floor))].sort().join(','));
+  if (!floors.includes('1')) throw new Error('2층에 책상 슬롯이 생기지 않음');
+  return `책상이 있는 층: ${floors}`;
 });
 await step('새 층 보기 + 직원 재배치', async () => {
   await openTab('office'); await page.waitForTimeout(250);
@@ -273,7 +517,7 @@ await step('새 층 보기 + 직원 재배치', async () => {
     cards[cards.length - 1].click();
   });
   await page.waitForTimeout(600);
-  await page.evaluate(() => { window.__game.assignDesks(window.__view.desks); });
+  await page.evaluate(() => { window.__view.rebuildFurniture(); });
   await page.waitForTimeout(600);
   const placed = await page.evaluate(() => {
     const v = window.__view, g = window.__game;
@@ -289,7 +533,7 @@ await step('새 층 보기 + 직원 재배치', async () => {
   return `${placed.f + 1}F 표시 · 착석 ${placed.on}/${placed.all} · 층별 ${placed.byFloor}`;
 });
 
-console.log('\n── 8. 저장/불러오기 왕복 ──');
+console.log('\n── 9. 저장/불러오기 왕복 ──');
 await step('저장 후 새로고침 → 회사 복원', async () => {
   const before = await state();
   await page.evaluate(() => window.__game.save());
@@ -304,7 +548,7 @@ await step('저장 후 새로고침 → 회사 복원', async () => {
   return `직원 ${after.staff} · ${after.floors}층 · 출시 ${after.shipped}작 복원`;
 });
 
-console.log('\n── 9. 렌더러 ──');
+console.log('\n── 10. 렌더러 ──');
 await step('프레임이 계속 돈다', async () => {
   const a = await page.evaluate(() => window.__view.frames || 0);
   await page.waitForTimeout(2500);

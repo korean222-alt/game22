@@ -293,6 +293,51 @@ export function rankInfo(rank) {
    before the second Christmas. */
 export const RANK_UP_FANS = (rank) => Math.round(900 * Math.pow(2.2, rank - 1));
 
+/* ---------- 창업 지원금 ----------
+   A studio now opens with no staff and no furniture, so the opening move is
+   spending this on desks and the people to sit at them. Sized against the
+   opening costs rather than picked round: three basic desks (₩27,000), three
+   rookie hires (about ₩20,000), a feature-phone project (₩25,000) and a couple
+   of months of payroll still leaves room to make the office liveable — and not
+   so much room that the first decision is free. */
+export const STARTUP_GRANT = 180000;
+
+/* ---------- 긴급 지원금 ----------
+   The design rule is that a player is never permanently stuck. A studio that
+   runs its balance negative gets rescued rather than deleted — but each rescue
+   is smaller than the last and costs the roster's morale, so living on them is
+   visibly a losing way to play. The floor means there is always a next chance.
+
+   Contracts remain the cheap way out: they cost stamina, not pride. */
+export const RESCUE_FIRST = 120000;
+export const RESCUE_DECAY = 0.72;
+export const RESCUE_FLOOR = 30000;
+
+/* `need` is what it actually costs this studio to get moving again — the
+   cheapest project it could start plus a month of running costs. Without it the
+   grants shrink below the price of a game and the studio ends up permanently
+   solvent and permanently unable to do anything, which is the same dead end as
+   bankruptcy with extra steps. The headless sloppy-play run is what caught it. */
+export function rescueAmount(count, need = 0) {
+  const decayed = Math.max(RESCUE_FLOOR, RESCUE_FIRST * Math.pow(RESCUE_DECAY, count));
+  return Math.round(Math.max(decayed, need) / 1000) * 1000;
+}
+
+/* Morale is the price. It rises with each rescue: the first is a lifeline, the
+   fourth is the staff reading about the company in the news. */
+export function rescueMorale(count) { return -(1 + Math.min(3, count)); }
+
+/* ---------- 초봉 할인 ----------
+   Rank 1-2 applicants are graduates: cheaper to hire and cheaper to keep, so a
+   studio with a grant and no staff can actually field a team on day one. The
+   discount disappears as the company becomes somewhere people want to work. */
+export function hireDiscount(rank) {
+  if (rank <= 1) return 0.40;
+  if (rank === 2) return 0.60;
+  if (rank === 3) return 0.80;
+  return 1;
+}
+
 /* ---------- items ---------- */
 /* `level` is how many levels the gift is worth; the price is derived from the
    recipient's current level rather than being flat, so late-career growth is
@@ -422,8 +467,8 @@ export const FLOOR_UPKEEP = 9000;
    설계 원칙 때문이다. 회복은 세 갈래: 주간 휴식, 상점 음식, 휴게실 회복. */
 export const HP = {
   base: 56, perLevel: 3.2, talent: 26, perReborn: 12,
-  turnCost: 0.030,        // 한 턴에 쓰는 최대 체력 비율 (한 풀로 ~33턴)
-  weekly: 0.70,           // 다음 주로 넘길 때 회복되는 비율
+  turnCost: 0.040,        // 한 번 때릴 때 쓰는 최대 체력 비율 (한 풀로 25타)
+  weekly: 0.78,           // 다음 주로 넘길 때 회복되는 비율
   tired: 0.40,            // 이 아래로 떨어지면 '지침'
   minMult: 0.50,          // 체력 0에서의 데미지 배율 (0이 되면 게임이 멈춘다)
   attackEvery: 4,         // 보스가 반격하는 주기(턴)
@@ -473,25 +518,65 @@ export function bossFor(genreId) {
 /* 보스의 반격. `hp` 는 대상 직원 최대 체력에 대한 비율, `bugs` 는 이 공격이
    완성작에 남기는 버그 수다. 3턴마다 하나가 나오고, 페이즈가 바뀔 때는
    반드시 큰 것이 나온다. */
+/* 수치를 한 번 내렸다. 예전 값은 "턴을 눌러야 진행되는" 전투를 전제로 잡혀
+   있었다. 자동 전투에서는 보스가 자기 게이지로 훨씬 자주 치므로, 같은 숫자를
+   두면 데뷔작 한 판에 팀이 두세 번 쓰러진다 — 실제로 그랬다. */
 export const BOSS_MOVES = [
-  { id: 'spec', ko: '사양 변경', hp: 0.07, bugs: 1, targets: 2, line: '기획이 또 바뀌었다!' },
-  { id: 'bug', ko: '버그 폭주', hp: 0.05, bugs: 2, targets: 1, line: '재현이 안 되는 버그다!' },
-  { id: 'deadline', ko: '납기 압박', hp: 0.09, bugs: 0, targets: 3, line: '출시일이 앞당겨졌다!' },
-  { id: 'crash', ko: '컴퓨터 응답 없음', hp: 0.08, bugs: 1, targets: 1, line: '저장을 안 했다…' },
-  { id: 'review', ko: '리뷰 폭격', hp: 0.06, bugs: 1, targets: 2, line: '내부 평가가 최악이다!' },
+  { id: 'spec', ko: '사양 변경', hp: 0.045, bugs: 1, targets: 2, line: '기획이 또 바뀌었다!' },
+  { id: 'bug', ko: '버그 폭주', hp: 0.033, bugs: 2, targets: 1, line: '재현이 안 되는 버그다!' },
+  { id: 'deadline', ko: '납기 압박', hp: 0.058, bugs: 0, targets: 2, line: '출시일이 앞당겨졌다!' },
+  { id: 'crash', ko: '컴퓨터 응답 없음', hp: 0.052, bugs: 1, targets: 1, line: '저장을 안 했다…' },
+  { id: 'review', ko: '리뷰 폭격', hp: 0.040, bugs: 1, targets: 2, line: '내부 평가가 최악이다!' },
 ];
 export const BOSS_RAGE = { id: 'rage', ko: '격노', hp: 0.13, bugs: 2, targets: 4, line: '아이디어가 형태를 바꾼다!' };
 
-/* 페이즈. HP 비율이 이 아래로 내려가면 페이즈가 오르고, 아이디어 카드가
-   나오며, 잠깐 약점이 드러난다. */
-export const BOSS_PHASES = [
-  { at: 1.00, ko: '1페이즈', dmg: 1.00 },
-  { at: 0.66, ko: '2페이즈', dmg: 1.10 },
-  { at: 0.33, ko: '최종 페이즈', dmg: 1.22 },
+/* ---------- 3연전 ----------
+   보스는 하나가 세 번 변신하는 게 아니라 **세 마리**다. 장르를 정하면 장르
+   보스가 나오고, 그 놈을 잡으면 게임 내용을 고르고, 고른 조합이 두 번째
+   보스가 되고, 마지막으로 마감이 온다. 각자 자기 체력 바를 갖는다 —
+   한 프로젝트에 바가 하나뿐이면 "얼마나 남았나" 밖에 안 보이지만, 셋이면
+   "지금 어디까지 왔나" 가 보인다.
+
+   dmg 는 그 스테이지의 방어력이다(데미지가 그만큼 나눠진다). species 는
+   world/boss.js 가 불러올 3D 모델. */
+export const BOSS_STAGES = [
+  { ko: '장르 보스', species: 'cat', dmg: 1.00, share: 0.24, atk: 7.6, card: 'content' },
+  { ko: '조합 보스', species: 'orc', dmg: 1.08, share: 0.32, atk: 5.6, card: 'method' },
+  { ko: '마감 보스', species: 'demon', dmg: 1.16, share: 0.44, atk: 4.4, card: null },
 ];
-export const WEAK_TURNS = 2;      // 페이즈 전환 직후 약점이 드러나는 턴 수
+
+/* 이름이 바뀐 뒤로도 예전 저장 파일과 UI 가 phase 를 읽는다. 스테이지
+   인덱스를 그대로 페이즈로 쓴다. */
+export const BOSS_PHASES = BOSS_STAGES.map((s, i) => ({
+  at: 1 - i * 0.33, ko: s.ko, dmg: s.dmg,
+}));
+export const WEAK_TURNS = 3;      // 스테이지가 넘어간 직후 약점이 드러나는 타격 수
 export const WEAK_MULT = 1.45;    // 그 동안의 데미지 배율
-export const FOCUS_STAMINA = 2;   // 집중 개발이 추가로 쓰는 스태미나
+
+/* ---------- 자동 전투 ----------
+   스태미나는 **게임을 만드는 데** 쓴다. 기획서를 뽑고, 개발에 착수하고,
+   디버그하고, 교육하는 자리다. 보스는 스태미나로 때리는 게 아니라 직원들이
+   자기 체력으로 때린다 — 그래서 배틀에는 버튼이 없다. 각자 게이지가 차면
+   알아서 친다.
+
+   `strikeSec` 는 한 사람이 한 번 치는 데 걸리는 시간이다. 팀이 넷이면
+   초당 세 번쯤 숫자가 뜨고, 그 정도가 눈으로 따라갈 수 있는 상한이었다. */
+export const RAID = {
+  strikeSec: 1.30,     // 한 사람의 공격 주기(초) — 체력이 낮으면 느려진다
+  slowest: 1.9,        // 지친 사람의 주기 배율 상한
+  rounds: 26,          // ★1 · 피처폰 · 기준 장르 데뷔작의 라운드 수
+  minRounds: 22,
+  maxRounds: 62,
+  downSec: 7.0,        // 쓰러진 직원이 다시 일어서기까지(초)
+  speeds: [1, 2, 4],   // 배속 버튼
+};
+
+/* 개발 착수에 드는 스태미나. 야심이 클수록 비싸다 — 이것이 "게임을 만들 때
+   쓰는 스태미나" 의 본체이고, 배틀 중에는 한 점도 들지 않는다. */
+export function devStamina(platform, grade, seriesN = 1) {
+  const p = platform ? platform.rank : 0;
+  return Math.max(2, Math.round(2 + p * 0.22 + (grade - 1) * 0.7 + (seriesN - 1) * 0.5));
+}
 
 /* ---------- 상점 ----------
    가방에 넣어두고 필요할 때 쓴다. 음식은 체력, 음료는 회사 스태미나,

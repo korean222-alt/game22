@@ -242,9 +242,34 @@ h4.sec:first-child{margin-top:0}
 
 .sb{display:flex;align-items:center;gap:6px;margin:4px 0;font-size:10.5px}
 .sb .lb{width:44px;color:var(--dim);flex:none}
-.sb .bar{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.10);overflow:hidden}
-.sb .fill{height:100%;border-radius:3px;background:var(--sky);transition:width .5s cubic-bezier(.2,.8,.2,1)}
-.sb .vv{width:30px;text-align:right;font-variant-numeric:tabular-nums;flex:none}
+/* `overflow:hidden` on the track would clip the previous-release marker, so
+   the fill rounds its own corners instead of being masked by the track. */
+.sb .bar{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.10);position:relative}
+.sb .fill{
+  position:absolute;left:0;top:0;height:100%;border-radius:3px;background:var(--sky);
+  transition:width .5s cubic-bezier(.2,.8,.2,1);
+}
+.sb .vv{width:38px;text-align:right;font-variant-numeric:tabular-nums;flex:none}
+/* the ability the battle actually multiplies by, and the experience track */
+.sb.drive .fill{background:var(--gold)}
+.sb.drive .lb{color:var(--gold)}
+.sb.exp .fill{background:var(--good)}
+/* where the previous release scored on this axis */
+.sb .mk{
+  position:absolute;top:-3px;width:2px;height:12px;border-radius:1px;
+  background:rgba(255,255,255,.55);transform:translateX(-1px);
+}
+.hint{font-weight:400;color:var(--dim);font-size:9.5px;letter-spacing:0}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+.brow2{display:flex;gap:6px;margin-top:7px}
+.brow2 .btn{flex:1}
+/* text input, used by the company-name box */
+.tin{
+  width:100%;padding:11px 12px;border-radius:10px;font-size:15px;font-family:inherit;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:var(--txt);
+  -webkit-user-select:text;user-select:text;
+}
+.tin:focus{outline:none;border-color:var(--gold);background:rgba(232,176,85,.10)}
 
 /* ── battle bar ──
    Anchored to the band right of the panel, so opening or closing the panel
@@ -327,13 +352,60 @@ h4.sec:first-child{margin-top:0}
    토스트가 HP 바를 덮는다. */
 body.in-battle #toast{bottom:calc(var(--sab) + var(--gap) + 188px)}
 @media (max-height:470px){ body.in-battle #toast{bottom:calc(var(--sab) + var(--gap) + 168px)} }
+/* 아레나에서는 화면 한복판이 보스의 자리다. 알림은 로그 리본이 받고,
+   토스트는 아래로 내려가 조작 밴드 바로 위에 선다. 이 규칙은 위의
+   in-battle 규칙(미디어 쿼리 포함)보다 뒤에, 더 구체적으로 서야 한다 —
+   top 과 bottom 이 동시에 잡히면 상자가 화면 절반으로 늘어난다. */
+body.arena #toast,body.arena.in-battle #toast{
+  top:auto;bottom:calc(var(--sab) + var(--gap) + 118px);
+  left:calc(var(--sal) + var(--gap));right:calc(var(--sar) + var(--gap));
+}
 
 #hint{
   position:fixed;bottom:calc(var(--sab) + 10px);right:calc(var(--sar) + var(--rail-w) + var(--gap) + 4px);
   z-index:9;font-size:9.5px;color:rgba(30,32,36,.55);
   text-shadow:0 1px 0 rgba(255,255,255,.4);pointer-events:none;
 }
-body.in-battle #hint{display:none}
+body.in-battle #hint,body.placing #hint{display:none}
+
+/* ── tutorial line ──
+   One instruction at a time, above the panel. It never blocks anything: the
+   step it names comes from committed state, so a player who works ahead simply
+   finds it has moved on. */
+#tut{
+  position:fixed;
+  left:calc(var(--sal) + var(--panel-cur) + var(--gap)*2);
+  top:calc(var(--sat) + var(--hud-h) + var(--gap)*2);
+  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  margin:0 auto;max-width:430px;z-index:12;padding:10px 13px;
+  display:none;
+  transition:left .26s cubic-bezier(.2,.85,.25,1);
+}
+#tut.show{display:block}
+#tut .tt{font-size:12.5px;font-weight:800;color:var(--gold);margin-bottom:3px}
+#tut .tb{font-size:10.5px;color:var(--dim);line-height:1.55}
+#tut .trow{display:flex;gap:6px;margin-top:8px}
+body.placing #tut,body.in-battle #tut{display:none}
+
+/* ── placement toolbar ──
+   Takes the battle bar's slot: the two never run at once, and it is the one
+   place on screen a thumb reaches while the other hand drags the floor. */
+#placebar{
+  position:fixed;
+  left:calc(var(--sal) + var(--gap));
+  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  bottom:calc(var(--sab) + var(--gap));
+  margin:0 auto;max-width:520px;z-index:14;padding:9px 12px;
+  display:none;align-items:center;gap:8px;
+}
+#placebar.show{display:flex}
+#placebar .btn{flex:0 0 auto}
+.pinfo{display:flex;flex-direction:column;gap:2px;margin-right:auto;min-width:0}
+.pinfo b{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pinfo .ok{font-size:10px;color:var(--good)}
+.pinfo .no{font-size:10px;color:var(--bad)}
+/* the panel is closed while placing, so the toolbar owns the bottom edge */
+body.placing #toast{bottom:calc(var(--sab) + var(--gap) + 62px)}
 
 /* ── world-space overlays ── */
 .nm{
@@ -374,6 +446,32 @@ body.in-battle #hint{display:none}
 }
 .dmg.crit{font-size:21px;color:var(--gold)}
 .dmg .sk{display:block;font-size:9px;font-weight:700;opacity:.85;text-align:center;margin-top:-2px}
+/* the turn's total, floated off the monster rather than off a desk */
+.dmg.big{font-size:26px;color:#ffd6c0;letter-spacing:-.5px}
+.dmg.big.crit{font-size:31px;color:var(--gold)}
+
+/* ── the boss monster's plate ── */
+.bosstag{
+  position:absolute;transform:translate(-50%,-100%);pointer-events:none;
+  min-width:112px;text-align:center;
+}
+.bosstag .bn{
+  font-size:11px;font-weight:800;color:#ffe4c8;letter-spacing:.5px;
+  text-shadow:0 1px 4px rgba(0,0,0,.85);
+}
+.bosstag .bbar{
+  height:5px;border-radius:3px;margin:3px auto 0;width:104px;
+  background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.22);overflow:hidden;
+}
+.bosstag .bbar i{
+  display:block;height:100%;background:linear-gradient(90deg,#d0644c,#e8b055);
+  transition:width .45s cubic-bezier(.2,.8,.2,1);
+}
+.bosstag .btaunt{
+  margin-top:5px;display:inline-block;max-width:190px;
+  background:rgba(22,14,14,.92);border:1px solid rgba(208,100,76,.55);
+  border-radius:9px;padding:4px 8px;font-size:10px;color:#f0d0c4;line-height:1.4;
+}
 @keyframes fly{
   0%{opacity:0;transform:translate(-50%,-50%) scale(.5)}
   18%{opacity:1;transform:translate(-50%,-50%) scale(1.15)}
@@ -516,6 +614,142 @@ body.meeting::after{
 }
 body.busy #busy{display:block}
 
+/* ── 세일즈 태스크 ── */
+.task{display:flex;align-items:center;gap:7px;padding:6px 8px;margin-bottom:4px;border-radius:8px;
+  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.07);font-size:11px}
+.task .tk{width:14px;height:14px;border-radius:4px;flex:none;background:rgba(255,255,255,.10);
+  display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--good)}
+.task .tt{flex:1;min-width:0}
+.task .tr{flex:none;color:var(--gold);font-weight:700;font-size:10px}
+.task.done{opacity:.5}
+.task.done .tk{background:rgba(113,192,122,.24)}
+.task.done .tr{color:var(--good)}
+
+/* ── 출시 결과 한 줄 평 ──
+   The doc's point that a flop must be information, not a hidden multiplier:
+   each line names one thing that moved the launch. */
+.verd{font-size:11px;padding:5px 9px;border-radius:7px;margin:4px 0;line-height:1.4;
+  background:rgba(255,255,255,.05);border-left:3px solid rgba(255,255,255,.18)}
+.verd.great{background:rgba(232,176,85,.14);border-left-color:var(--gold);color:#f3dfb6}
+.verd.good{background:rgba(113,192,122,.12);border-left-color:var(--good);color:#cfe6d1}
+.verd.bad{background:rgba(208,100,76,.13);border-left-color:var(--bad);color:#eec3b8}
+
+/* ── 홈 화면에 추가 안내 ──
+   Shown once, over everything, before the first game. It is deliberately not
+   the normal modal: it has to be readable while the office is still booting
+   behind it, and it owns its own dismiss buttons. */
+#a2hs{
+  position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;
+  padding:calc(var(--sat) + 10px) calc(var(--sar) + 12px) calc(var(--sab) + 10px) calc(var(--sal) + 12px);
+  background:rgba(8,9,12,.78);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+}
+#a2hs.show{display:flex}
+#a2hs .a2c{
+  width:min(430px,100%);max-height:100%;overflow:auto;padding:16px 18px;border-radius:14px;
+}
+.a2tag{font-size:8.5px;letter-spacing:2.2px;text-transform:uppercase;color:var(--gold);font-weight:700}
+#a2hs h3{margin:4px 0 6px;font-size:16px}
+.a2p{margin:0 0 10px;font-size:11.5px;line-height:1.6;color:var(--dim)}
+.a2tabs{display:flex;gap:6px;margin-bottom:9px}
+.a2tab{
+  flex:1;padding:8px 6px;border-radius:9px;font:inherit;font-size:11px;font-weight:700;
+  background:rgba(255,255,255,.06);border:1px solid var(--edge);color:var(--dim);cursor:pointer;
+}
+.a2tab.on{background:rgba(232,176,85,.16);border-color:rgba(232,176,85,.55);color:var(--gold)}
+.a2steps{margin:0;padding-left:19px;font-size:11.5px;line-height:1.85;color:#dcd8ce}
+.a2steps b{color:var(--txt)}
+.a2ic{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;
+  border-radius:4px;background:rgba(111,176,220,.22);color:var(--sky);font-size:10px;vertical-align:-3px}
+.a2row{display:flex;gap:7px;margin-top:13px}
+.a2row .btn{flex:1;margin:0}
+@media (max-height:470px){
+  #a2hs .a2c{padding:12px 14px}
+  #a2hs h3{font-size:14px}
+  .a2p{font-size:10.5px;margin-bottom:7px}
+  .a2steps{font-size:10.5px;line-height:1.6}
+}
+
+/* ── 1인칭 시점 ──
+   The management UI gets out of the way entirely: down here you are a person in
+   an office, not a spreadsheet. Only the HUD and the floor rail stay, because
+   both still mean something while walking around. */
+/* .iconbtn hides by default and the shell reveals #menuBtn/#fsBtn only on a
+   touch or compact layout. First person is a feature, not a mobile
+   affordance, so this one is always on screen — and it sits in the band right
+   of the panel, like the battle bar, so an open panel never covers it. */
+/* Sits directly above the fullscreen button in the bottom-left stack rather
+   than in the band right of the panel. It was following --panel-cur, so on a
+   phone with the panel open it slid under the panel and looked deleted. */
+#fpBtn{
+  display:flex !important;font-size:17px;
+  bottom:calc(var(--sab) + 8px + 46px);
+  left:calc(var(--sal) + 8px);
+}
+/* 개발 중에도 사무실은 사무실이다. 예전에는 body.in-battle 에서도 숨겼는데,
+   개발이 게임 시간의 대부분이라 버튼이 "사라진" 것처럼 보였다. 이제 전투는
+   아레나라는 자기 화면을 가지므로, 여기서 숨길 이유는 배치 모드뿐이다. */
+body.arena #fpBtn,body.placing #fpBtn{display:none !important}
+/* Walking, the corner belongs to the movement stick and 시점 나가기 already
+   does the job, so the toggle steps aside. */
+body.fp #fpBtn{display:none}
+body.fp #side{transform:translateX(calc(-100% - var(--sal) - var(--gap) - 4px));opacity:0;pointer-events:none}
+body.fp #battle{transform:translateY(150%)}
+body.fp #menuBtn,body.fp #brand,body.fp #hint{opacity:0;pointer-events:none}
+
+#fpui{position:fixed;inset:0;z-index:12;display:none;pointer-events:none}
+body.fp #fpui{display:block}
+
+#fpStick{
+  position:absolute;left:calc(var(--sal) + 16px);bottom:calc(var(--sab) + 16px);
+  width:112px;height:112px;border-radius:50%;pointer-events:auto;touch-action:none;
+  background:rgba(16,18,23,.42);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+}
+#fpStick .knob{
+  position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;
+  border-radius:50%;background:rgba(232,176,85,.34);border:1px solid rgba(232,176,85,.55);
+  transition:transform .05s linear;
+}
+#fpBtns{position:absolute;right:calc(var(--sar) + 16px);bottom:calc(var(--sab) + 16px);
+  display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:auto}
+.fpbtn{
+  padding:11px 16px;border-radius:11px;font:inherit;font-size:12px;font-weight:700;
+  background:var(--pan2);border:1px solid var(--edge);color:var(--txt);cursor:pointer;
+  min-height:42px;touch-action:manipulation;
+}
+.fpbtn.act{background:var(--gold);border-color:var(--gold);color:#241a08;min-width:118px}
+.fpbtn.act:disabled{opacity:.35}
+
+#fpReticle{
+  position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;
+  background:rgba(255,255,255,.55);box-shadow:0 0 0 1px rgba(0,0,0,.4);
+}
+#fpPrompt{
+  position:absolute;left:50%;top:calc(50% + 20px);transform:translateX(-50%);
+  font-size:11.5px;font-weight:700;color:#fff;background:rgba(16,18,23,.78);
+  padding:5px 12px;border-radius:8px;white-space:nowrap;opacity:0;transition:opacity .12s ease;
+  border:1px solid rgba(255,255,255,.14);
+}
+#fpPrompt.on{opacity:1}
+#fpSay{
+  position:absolute;left:50%;bottom:calc(var(--sab) + 152px);transform:translateX(-50%);
+  max-width:min(460px,80vw);text-align:center;font-size:12.5px;line-height:1.5;
+  color:#fff;background:rgba(16,18,23,.86);border:1px solid rgba(232,176,85,.35);
+  padding:9px 15px;border-radius:11px;opacity:0;transition:opacity .18s ease;
+}
+#fpSay.on{opacity:1}
+#fpHelp{
+  position:absolute;left:50%;top:calc(var(--sat) + var(--hud-h) + 16px);transform:translateX(-50%);
+  font-size:10px;color:rgba(255,255,255,.62);background:rgba(16,18,23,.62);
+  padding:4px 11px;border-radius:8px;white-space:nowrap;
+}
+body.touch #fpHelp{display:none}
+@media (max-height:470px){
+  #fpStick{width:92px;height:92px}
+  #fpStick .knob{width:38px;height:38px;margin:-19px 0 0 -19px}
+  .fpbtn{padding:9px 13px;font-size:11.5px;min-height:38px}
+  #fpSay{bottom:calc(var(--sab) + 124px);font-size:11.5px}
+}
 /* ═══════════════════════════════════════════════════════════════════════════
    보스전 · 진행 패널 · 상점 · 도감 · 1인칭
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -537,18 +771,6 @@ body.busy #busy{display:block}
 .bossline .bphase.weak{background:rgba(232,176,85,.26);color:var(--gold);animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
 
-/* ── 집중 개발: 타이밍 바 ── */
-#bFocus{display:none;margin-top:8px}
-#bFocus.on{display:block}
-.ftrack{
-  position:relative;height:16px;border-radius:8px;overflow:hidden;
-  background:rgba(255,255,255,.08);border:1px solid var(--edge);
-}
-.fzone{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,rgba(232,176,85,.35),rgba(232,176,85,.75));}
-.fmark{position:absolute;top:-2px;bottom:-2px;width:4px;border-radius:2px;background:#fff;box-shadow:0 0 8px rgba(255,255,255,.8)}
-.fhint{font-size:9.5px;color:var(--dim);margin-top:3px;text-align:center}
-.fhint b{color:var(--gold)}
-
 /* ── 도우미 트레이: 배틀 중에 가방 속 소모품을 바로 쓴다 ── */
 #tray{display:flex;gap:5px;margin-top:8px;overflow-x:auto;scrollbar-width:none}
 #tray::-webkit-scrollbar{display:none}
@@ -563,6 +785,188 @@ body.busy #busy{display:block}
 .tray-i .n{font-size:8.5px;color:var(--dim);font-weight:800;margin-top:1px}
 .tray-i.off{opacity:.35}
 
+/* ══════════════════════ 보스 아레나 ══════════════════════
+   개발에 착수하면 화면이 통째로 전투가 된다. 위에 보스의 체력, 아래에 팀,
+   가운데는 3D 사무실 그대로 — 액션 RPG 의 배치다. 버튼으로 때리는 자리는
+   없다. 직원들이 알아서 치고, 플레이어가 하는 일은 밥을 먹이고 지켜보는
+   것이다. 그래서 하단 밴드에는 도우미와 배속만 있다. */
+#arena{
+  position:fixed;inset:0;z-index:14;display:none;
+  pointer-events:none;   /* 3D 는 계속 돌려야 한다 — 자식만 입력을 받는다 */
+  font-variant-numeric:tabular-nums;
+}
+body.arena #arena{display:block}
+/* 아레나에서는 경영 UI 가 전부 비켜선다. */
+body.arena #side,body.arena #battle,body.arena #prog,body.arena #brand,
+body.arena #floors,body.arena #hint,body.arena #tut,body.arena #menuBtn,
+body.arena #fpBtn{display:none !important}
+/* 3D 위에 뜨는 작은 보스 이름표는 위의 큰 체력 바와 같은 말을 두 번 한다. */
+body.arena .bosstag{display:none !important}
+
+/* ── 상단: 보스 ── */
+#arena .ahead{
+  position:absolute;left:calc(var(--sal) + var(--gap));right:calc(var(--sar) + var(--gap));
+  top:calc(var(--sat) + var(--gap));margin:0 auto;max-width:660px;
+  padding:8px 12px 9px;border-radius:14px;pointer-events:auto;
+  background:linear-gradient(180deg,rgba(14,16,21,.90),rgba(14,16,21,.70));
+  border:1px solid rgba(255,255,255,.10);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  box-shadow:0 10px 30px rgba(0,0,0,.45);
+}
+#arena .atop{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+#arena .apips{display:flex;gap:4px;flex:none}
+#arena .apip{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.16);
+  border:1px solid rgba(255,255,255,.22)}
+#arena .apip.on{background:var(--gold);border-color:var(--gold);box-shadow:0 0 8px rgba(232,176,85,.7)}
+#arena .apip.dead{background:rgba(232,176,85,.30);border-color:rgba(232,176,85,.35);box-shadow:none}
+#arena .atitle{font-size:11px;font-weight:800;color:var(--dim);flex:1;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#arena .aturn{font-size:10px;color:var(--dim);flex:none}
+#arena .aname{display:flex;align-items:baseline;gap:7px;margin-bottom:5px}
+#arena .aico{font-size:19px;line-height:1;flex:none}
+#arena .aname b{font-size:16px;font-weight:900;letter-spacing:-.2px}
+#arena .atag{font-size:9.5px;font-weight:800;color:#15171c;background:var(--gold);
+  padding:1px 6px;border-radius:999px;flex:none}
+#arena .aweak{display:none;font-size:10px;font-weight:900;color:#ffe08a}
+#arena.weak .aweak{display:inline;animation:apulse .7s ease-in-out infinite}
+@keyframes apulse{0%,100%{opacity:1}50%{opacity:.35}}
+#arena .ahp{position:relative;height:19px;border-radius:999px;overflow:hidden;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.09)}
+#arena .ahpf{height:100%;width:100%;border-radius:999px;
+  background:linear-gradient(90deg,#ff5a5a,#ff9a4a);
+  transition:width .18s linear;box-shadow:0 0 14px rgba(255,90,90,.45) inset}
+#arena .ahptx{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:10.5px;font-weight:800;text-shadow:0 1px 3px rgba(0,0,0,.85)}
+#arena .atot{height:4px;border-radius:999px;margin-top:5px;overflow:hidden;
+  background:rgba(255,255,255,.07)}
+#arena .atotf{height:100%;width:0;background:linear-gradient(90deg,var(--gold),#ffe6a0);
+  transition:width .25s ease}
+#arena .atotk{font-size:8.5px;color:var(--dim);text-align:right;margin-top:2px}
+
+/* ── 로그 리본 ── */
+#aLog{
+  position:absolute;left:calc(var(--sal) + var(--gap));
+  top:calc(var(--sat) + var(--gap) + 118px);
+  width:min(230px,34vw);display:flex;flex-direction:column;gap:3px;pointer-events:none;
+}
+#aLog .l{
+  font-size:10px;line-height:1.35;padding:3px 8px;border-radius:8px;align-self:flex-start;
+  background:rgba(14,16,21,.72);border:1px solid rgba(255,255,255,.07);
+  animation:aslide .22s ease;max-width:100%;
+}
+#aLog .l.good{color:#8affd8;border-color:rgba(138,255,216,.24)}
+#aLog .l.bad{color:#ff9a9a;border-color:rgba(255,154,154,.24)}
+#aLog .l.big{font-size:11.5px;font-weight:900;color:var(--gold);border-color:rgba(232,176,85,.35)}
+@keyframes aslide{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+
+/* 스테이지 격파 · 등장 순간의 화면 전체 플래시 */
+#aFlash{position:absolute;inset:0;pointer-events:none;opacity:0}
+#aFlash.on{animation:aflash .55s ease}
+@keyframes aflash{
+  0%{opacity:0}
+  18%{opacity:.55;background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.85),transparent 62%)}
+  100%{opacity:0}
+}
+
+/* 팀 전원 탈진 — 아레나를 나가지 않고 해결하는 자리 */
+#aRest{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  pointer-events:auto;background:rgba(8,9,12,.62);
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+body.arena.rest #aRest{display:flex}
+#aRest .arc{max-width:340px;padding:14px 16px;text-align:center}
+#aRest .art{font-size:15px;font-weight:900;color:var(--warn);margin-bottom:5px}
+#aRest .arp{font-size:11.5px;line-height:1.6;color:var(--dim);margin-bottom:9px}
+#aRestTray{display:flex;gap:5px;justify-content:center;flex-wrap:wrap;margin-bottom:9px}
+#aRest .arow{display:flex;gap:6px;justify-content:center}
+
+/* ── 하단: 파티 ── */
+#arena .afoot{
+  position:absolute;left:0;right:0;bottom:0;padding:0 calc(var(--sar) + var(--gap)) calc(var(--sab) + 8px) calc(var(--sal) + var(--gap));
+  pointer-events:auto;
+  background:linear-gradient(0deg,rgba(10,12,16,.92) 42%,rgba(10,12,16,0));
+}
+#aParty{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-bottom:5px}
+.apc{
+  width:118px;padding:5px 7px 6px;border-radius:10px;
+  background:rgba(22,25,32,.88);border:1px solid rgba(255,255,255,.09);
+  transition:transform .12s ease,border-color .2s ease;
+}
+.apc.act{transform:translateY(-3px);border-color:rgba(232,176,85,.55)}
+.apc.down{opacity:.45;filter:grayscale(.7)}
+.apc .apn{display:flex;align-items:baseline;gap:4px;font-size:10.5px;font-weight:800;
+  overflow:hidden;white-space:nowrap}
+.apc .apn i{font-size:8.5px;font-style:normal;color:var(--dim);font-weight:700}
+.apc .aph{height:6px;border-radius:999px;margin-top:3px;overflow:hidden;background:rgba(255,255,255,.08)}
+.apc .aphf{height:100%;background:linear-gradient(90deg,#4ade80,#a3e635);transition:width .18s linear}
+.apc.tired .aphf{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+.apc.down .aphf{background:#6b7280}
+.apc .apa{height:3px;border-radius:999px;margin-top:3px;overflow:hidden;background:rgba(255,255,255,.06)}
+.apc .apaf{height:100%;background:rgba(120,190,255,.8)}
+.apc .apx{font-size:8.5px;color:var(--dim);margin-top:2px;height:11px;overflow:hidden}
+#arena .arow{display:flex;gap:6px;justify-content:center;margin-top:4px}
+#aTray{display:flex;gap:5px;justify-content:center;flex-wrap:wrap;min-height:0}
+#aTray .tray-i{pointer-events:auto}
+
+@media (max-width:760px){
+  #arena .ahead{padding:6px 10px 7px;border-radius:12px}
+  #arena .aname b{font-size:14px}
+  #arena .ahp{height:16px}
+  .apc{width:96px;padding:4px 6px 5px}
+  .apc .apx{display:none}
+  #aLog{width:min(180px,30vw);top:calc(var(--sat) + var(--gap) + 104px)}
+  #aLog .l{font-size:9px}
+}
+/* 가로 폰의 흔한 높이가 414px 다. 여기서 로그를 지워 버리면 정작 노리는
+   기기에서만 안 보인다 — 지우는 대신 줄인다. */
+@media (max-height:430px){
+  #aLog{top:calc(var(--sat) + var(--gap) + 96px);gap:2px}
+  #aLog .l{font-size:8.5px;padding:2px 6px}
+  #aLog .l:nth-child(n+4){display:none}
+}
+@media (max-height:340px){
+  #aLog{display:none}
+}
+
+/* ── 판매 현황 패널 ──
+   출시한 게임이 식어가는 모양을 옆에 띄워 둔다. 개발 중에는 진행 패널이
+   같은 자리를 쓰므로 그때는 비켜선다. */
+#sales{
+  position:fixed;z-index:10;display:none;
+  top:calc(var(--sat) + var(--hud-h) + var(--gap) + 4px);
+  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  width:172px;padding:8px 9px;font-size:10.5px;line-height:1.4;
+  max-height:calc(var(--vh) - var(--sat) - var(--hud-h) - 120px);
+  overflow-y:auto;overflow-x:hidden;
+  touch-action:pan-y;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+}
+#sales::-webkit-scrollbar{width:4px}
+#sales::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:2px}
+body.has-sales #sales{display:block}
+body.in-battle #sales,body.arena #sales,body.meeting #sales,
+body.fp #sales,body.placing #sales{display:none !important}
+.sgh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px}
+.sgh b{font-size:11px;font-weight:800}
+.sgh span{font-size:9px;color:var(--dim)}
+.sgc{padding:5px 0;border-top:1px solid rgba(255,255,255,.07)}
+.sgc:first-child{border-top:0}
+.sgc .sgt{font-size:10px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sgc .sgn{font-size:9px;color:var(--dim);display:flex;justify-content:space-between;gap:4px}
+.sgc .sgv{font-size:12px;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums}
+.sgc .sgd{font-size:8.5px;color:var(--warn)}
+/* 주차별 매출 막대. 왼쪽이 출시 주, 오른쪽이 이번 주. */
+.spark{display:flex;align-items:flex-end;gap:1px;height:26px;margin-top:3px}
+.spark i{flex:1;min-width:2px;border-radius:1px 1px 0 0;background:rgba(232,176,85,.55)}
+.spark i.now{background:var(--gold)}
+.sgend{font-size:8.5px;color:var(--dim);margin-top:2px}
+
+/* 합성 팝업: 장르 ✚ 내용 ➜ 조합 보스 */
+.fuse{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.fuse .fz{padding:4px 10px;border-radius:9px;font-size:12px;font-weight:800;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10)}
+.fuse .fz.gold{background:rgba(232,176,85,.16);border-color:rgba(232,176,85,.40);color:var(--gold)}
+.fuse .fx{font-size:12px;color:var(--dim)}
+
 /* ── 진행 상황 패널 ──
    개발 중에만 뜬다. 층 버튼 왼쪽, HUD 아래. 폭을 고정하는 이유는 숫자가
    커질 때 패널이 들썩이면 눈이 따라가지 못하기 때문이다. */
@@ -572,12 +976,18 @@ body.busy #busy{display:block}
   right:calc(var(--sar) + var(--rail-w) + var(--gap));
   width:158px;padding:8px 9px;
   font-size:10.5px;line-height:1.4;
-  /* 배틀 바 위에서 끝나야 한다. 둘이 겹치면 점수판과 조작이 서로를 가린다. */
+  /* 배틀 바 위에서 끝나야 한다. 둘이 겹치면 점수판과 조작이 서로를 가린다.
+     잘라내지 말고 스크롤시킨다 — overflow:hidden 이었을 때는 팀 체력이
+     화면 밖으로 밀려나 아예 볼 방법이 없었다. */
   max-height:calc(var(--vh) - var(--sat) - var(--hud-h) - 200px);
-  overflow:hidden;
+  overflow-y:auto;overflow-x:hidden;
+  touch-action:pan-y;overscroll-behavior:contain;pointer-events:auto;
+  -webkit-overflow-scrolling:touch;
 }
+#prog::-webkit-scrollbar{width:4px}
+#prog::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:2px}
 body.in-battle #prog{display:block}
-body.meeting #prog,body.fp #prog{display:none}
+body.meeting #prog{display:none}
 .pgh{display:flex;justify-content:space-between;align-items:baseline;gap:5px;margin-bottom:5px}
 .pgh b{font-size:11px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pgh span{font-size:9px;color:var(--dim);flex:none}
@@ -683,137 +1093,4 @@ body.meeting #prog,body.fp #prog{display:none}
 .dexc.miss{opacity:.34}
 .dexc.miss .i{filter:grayscale(1)}
 
-/* 가까이 있는 직원 이름표는 1인칭에서 더 크게 — 걷다가 누구인지 알아야 한다 */
-body.fp .nm{font-size:11px;padding:2px 8px}
 
-/* ── 세일즈 태스크 ── */
-.task{display:flex;align-items:center;gap:7px;padding:6px 8px;margin-bottom:4px;border-radius:8px;
-  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.07);font-size:11px}
-.task .tk{width:14px;height:14px;border-radius:4px;flex:none;background:rgba(255,255,255,.10);
-  display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--good)}
-.task .tt{flex:1;min-width:0}
-.task .tr{flex:none;color:var(--gold);font-weight:700;font-size:10px}
-.task.done{opacity:.5}
-.task.done .tk{background:rgba(113,192,122,.24)}
-.task.done .tr{color:var(--good)}
-
-/* ── 출시 결과 한 줄 평 ──
-   The doc's point that a flop must be information, not a hidden multiplier:
-   each line names one thing that moved the launch. */
-.verd{font-size:11px;padding:5px 9px;border-radius:7px;margin:4px 0;line-height:1.4;
-  background:rgba(255,255,255,.05);border-left:3px solid rgba(255,255,255,.18)}
-.verd.great{background:rgba(232,176,85,.14);border-left-color:var(--gold);color:#f3dfb6}
-.verd.good{background:rgba(113,192,122,.12);border-left-color:var(--good);color:#cfe6d1}
-.verd.bad{background:rgba(208,100,76,.13);border-left-color:var(--bad);color:#eec3b8}
-
-/* ── 홈 화면에 추가 안내 ──
-   Shown once, over everything, before the first game. It is deliberately not
-   the normal modal: it has to be readable while the office is still booting
-   behind it, and it owns its own dismiss buttons. */
-#a2hs{
-  position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;
-  padding:calc(var(--sat) + 10px) calc(var(--sar) + 12px) calc(var(--sab) + 10px) calc(var(--sal) + 12px);
-  background:rgba(8,9,12,.78);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
-}
-#a2hs.show{display:flex}
-#a2hs .a2c{
-  width:min(430px,100%);max-height:100%;overflow:auto;padding:16px 18px;border-radius:14px;
-}
-.a2tag{font-size:8.5px;letter-spacing:2.2px;text-transform:uppercase;color:var(--gold);font-weight:700}
-#a2hs h3{margin:4px 0 6px;font-size:16px}
-.a2p{margin:0 0 10px;font-size:11.5px;line-height:1.6;color:var(--dim)}
-.a2tabs{display:flex;gap:6px;margin-bottom:9px}
-.a2tab{
-  flex:1;padding:8px 6px;border-radius:9px;font:inherit;font-size:11px;font-weight:700;
-  background:rgba(255,255,255,.06);border:1px solid var(--edge);color:var(--dim);cursor:pointer;
-}
-.a2tab.on{background:rgba(232,176,85,.16);border-color:rgba(232,176,85,.55);color:var(--gold)}
-.a2steps{margin:0;padding-left:19px;font-size:11.5px;line-height:1.85;color:#dcd8ce}
-.a2steps b{color:var(--txt)}
-.a2ic{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;
-  border-radius:4px;background:rgba(111,176,220,.22);color:var(--sky);font-size:10px;vertical-align:-3px}
-.a2row{display:flex;gap:7px;margin-top:13px}
-.a2row .btn{flex:1;margin:0}
-@media (max-height:470px){
-  #a2hs .a2c{padding:12px 14px}
-  #a2hs h3{font-size:14px}
-  .a2p{font-size:10.5px;margin-bottom:7px}
-  .a2steps{font-size:10.5px;line-height:1.6}
-}
-
-/* ── 1인칭 시점 ──
-   The management UI gets out of the way entirely: down here you are a person in
-   an office, not a spreadsheet. Only the HUD and the floor rail stay, because
-   both still mean something while walking around. */
-/* .iconbtn hides by default and the shell reveals #menuBtn/#fsBtn only on a
-   touch or compact layout. First person is a feature, not a mobile
-   affordance, so this one is always on screen — and it sits in the band right
-   of the panel, like the battle bar, so an open panel never covers it. */
-#fpBtn{
-  display:flex;font-size:17px;
-  bottom:calc(var(--sab) + var(--gap));
-  left:calc(var(--sal) + var(--panel-cur) + var(--gap)*2);
-  transition:left .26s cubic-bezier(.2,.85,.25,1);
-}
-body.in-battle #fpBtn{bottom:calc(var(--sab) + var(--gap) + 96px)}
-/* Walking, the corner belongs to the movement stick and 시점 나가기 already
-   does the job, so the toggle steps aside. */
-body.fp #fpBtn{display:none}
-body.fp #side{transform:translateX(calc(-100% - var(--sal) - var(--gap) - 4px));opacity:0;pointer-events:none}
-body.fp #battle{transform:translateY(150%)}
-body.fp #menuBtn,body.fp #brand,body.fp #hint{opacity:0;pointer-events:none}
-
-#fpui{position:fixed;inset:0;z-index:12;display:none;pointer-events:none}
-body.fp #fpui{display:block}
-
-#fpStick{
-  position:absolute;left:calc(var(--sal) + 16px);bottom:calc(var(--sab) + 16px);
-  width:112px;height:112px;border-radius:50%;pointer-events:auto;touch-action:none;
-  background:rgba(16,18,23,.42);border:1px solid rgba(255,255,255,.14);
-  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
-}
-#fpStick .knob{
-  position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;
-  border-radius:50%;background:rgba(232,176,85,.34);border:1px solid rgba(232,176,85,.55);
-  transition:transform .05s linear;
-}
-#fpBtns{position:absolute;right:calc(var(--sar) + 16px);bottom:calc(var(--sab) + 16px);
-  display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:auto}
-.fpbtn{
-  padding:11px 16px;border-radius:11px;font:inherit;font-size:12px;font-weight:700;
-  background:var(--pan2);border:1px solid var(--edge);color:var(--txt);cursor:pointer;
-  min-height:42px;touch-action:manipulation;
-}
-.fpbtn.act{background:var(--gold);border-color:var(--gold);color:#241a08;min-width:118px}
-.fpbtn.act:disabled{opacity:.35}
-
-#fpReticle{
-  position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;
-  background:rgba(255,255,255,.55);box-shadow:0 0 0 1px rgba(0,0,0,.4);
-}
-#fpPrompt{
-  position:absolute;left:50%;top:calc(50% + 20px);transform:translateX(-50%);
-  font-size:11.5px;font-weight:700;color:#fff;background:rgba(16,18,23,.78);
-  padding:5px 12px;border-radius:8px;white-space:nowrap;opacity:0;transition:opacity .12s ease;
-  border:1px solid rgba(255,255,255,.14);
-}
-#fpPrompt.on{opacity:1}
-#fpSay{
-  position:absolute;left:50%;bottom:calc(var(--sab) + 152px);transform:translateX(-50%);
-  max-width:min(460px,80vw);text-align:center;font-size:12.5px;line-height:1.5;
-  color:#fff;background:rgba(16,18,23,.86);border:1px solid rgba(232,176,85,.35);
-  padding:9px 15px;border-radius:11px;opacity:0;transition:opacity .18s ease;
-}
-#fpSay.on{opacity:1}
-#fpHelp{
-  position:absolute;left:50%;top:calc(var(--sat) + var(--hud-h) + 16px);transform:translateX(-50%);
-  font-size:10px;color:rgba(255,255,255,.62);background:rgba(16,18,23,.62);
-  padding:4px 11px;border-radius:8px;white-space:nowrap;
-}
-body.touch #fpHelp{display:none}
-@media (max-height:470px){
-  #fpStick{width:92px;height:92px}
-  #fpStick .knob{width:38px;height:38px;margin:-19px 0 0 -19px}
-  .fpbtn{padding:9px 13px;font-size:11.5px;min-height:38px}
-  #fpSay{bottom:calc(var(--sab) + 124px);font-size:11.5px}
-}

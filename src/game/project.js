@@ -14,11 +14,12 @@
 import {
   GENRES, CONTENTS, METHODS, PLATFORMS, MONETIZE, STATS,
   comboScore, TITLE_WORDS_A, TITLE_WORDS_B, researchEffect, TRAITS,
-  bossFor, BOSS_MOVES, BOSS_RAGE, BOSS_PHASES, WEAK_TURNS, WEAK_MULT, HP,
+  bossFor, BOSS_MOVES, BOSS_STAGES, WEAK_TURNS, WEAK_MULT, HP, RAID,
+  devStamina,
 } from './data.js';
 import { JOBS, JOB_ABILITY } from './data.js';
 import {
-  power, ability, motivationMult, traitMult, traitAdd, hasTrait, traitsOf,
+  power, basePower, ability, motivationMult, traitMult, traitAdd, hasTrait, traitsOf,
   gearAxis, drainHp, hpRatio, syncHp,
 } from './staff.js';
 
@@ -41,12 +42,58 @@ const pick = (rnd, arr) => arr[Math.floor(rnd() * arr.length)];
    which is several years of gifts away. */
 const QCAP = 999;
 const QSCALE = 560;
-const CBASE = 2.2;
-const CSPAN = 7.8;
-const CSCALE = 330;
+/* ---------- 평론 곡선 ----------
+   한 겹짜리 포화 곡선으로는 두 요구를 동시에 못 맞춘다. 좁게 잡으면(150)
+   데뷔작은 살아나지만 성숙한 스튜디오가 2년차에 38/40 을 찍고, 넓게
+   잡으면(330) 후반은 맞는데 데뷔작이 몇 년이고 4/40 이다. 창업 멤버 없이
+   빈 사무실에서 시작하게 되면서 이 폭이 실제로 문제가 됐다.
+
+   그래서 **두 겹**으로 쌓는다. 빠른 항(S1=45)이 초반 몇십 점에서 훅 오르고,
+   느린 항(S2=430)이 남은 평생을 담당한다.
+
+     평균 품질    5 → 12/40   (데뷔작, 버그를 다 잡았을 때)
+                 30 → 16/40
+                100 → 23/40
+                250 → 29/40
+                400 → 32/40   (명예의 전당 문턱 — 보통 6년차)
+                561 → 35/40   (10년차 상위권)
+
+   바닥(CBASE)이 2.6 인 이유는 버그 페널티가 최대 2.2 이기 때문이다. 여기서
+   더 낮추면 데뷔작이 디버그를 다 해도 1점씩 4점에 붙박인다. */
+const CBASE = 2.6;
+const CFAST = 2.4, CFAST_S = 45;
+const CSLOW = 5.0, CSLOW_S = 430;
 
 export function randomTitle(rnd) {
   return pick(rnd, TITLE_WORDS_A) + ' ' + pick(rnd, TITLE_WORDS_B);
+}
+
+/* One staffer's per-turn contribution on one axis, mapped onto the 1-999 band.
+   Exported because the development panel draws the same projection mid-fight:
+   a bar during development and the same bar on the results screen have to mean
+   the same thing, and they only do if there is one curve. */
+export function qualityCurve(x) {
+  return Math.max(1, Math.min(QCAP, Math.round(QCAP * (1 - Math.exp(-x / QSCALE)))));
+}
+
+/* What the five axes would score if the project finished on this turn.
+
+   Exported under both names: two branches independently found the same broken
+   graph and fixed it, and `projectedQuality` is what the other one's UI calls. */
+/* 분모는 **개별 타격 횟수**다. 예전에는 turn × 인원이었고, 그것은 전원이
+   한 턴에 정확히 한 번씩 친다는 가정 위에 서 있었다. 자동 전투에서는 빠른
+   사람이 더 자주 치므로 그 가정이 깨진다 — 실제로 몇 번 쳤는지를 세면
+   같은 곡선이 그대로 성립한다. */
+export function strikeCount(project) {
+  if (project.strikes) return Math.max(1, project.strikes);
+  return Math.max(1, (project.turn || 1) * Math.max(1, project.team.length));
+}
+
+export function projectQuality(project) {
+  const n = strikeCount(project);
+  const out = {};
+  for (const st of STATS) out[st] = qualityCurve(project.raw[st] / n);
+  return out;
 }
 
 /* ---------- proposals ----------
@@ -71,44 +118,142 @@ export function generateProposal(rnd, author, totalPlanPower, rank, research) {
 }
 
 /* ---------- starting a project ---------- */
+
+/* The idea's hit points. Exported because the setup screen previews which
+   monster you are about to face, and that has to be the same number the fight
+   actually uses — a preview computed from its own copy of this formula is a
+   preview that lies the moment either is touched. */
+/* ---------- 아이디어의 체력 ----------
+   예전에는 플랫폼과 장르만 보고 절대값을 뽑았다. 창업 직후 직원이 없는
+   시작으로 바꾸자 그 식이 무너졌다 — 레벨 1 세 명이 한 턴에 20 씩 때리는데
+   데뷔작의 HP 가 8,000 이면 296턴이다. 실제로 그랬다.
+
+   그래서 기준을 바꿨다. HP 는 **몇 번 때리면 끝나는가** 로 정한다. 팀이
+   강해지면 HP 도 같이 커지므로 게임 하나에 드는 시간은 늘 비슷하고, 강한
+   팀이 사는 것은 속도가 아니라 **품질**이다 — 원작이 그랬던 것처럼.
+
+   야심(플랫폼·등급·시리즈·장르)은 라운드 수를 늘린다: 피처폰 데뷔가 20
+   라운드, 콘솔 대작이 50 라운드 언저리. 그 이상은 자동 전투라 해도 지루하다. */
+export function raidRounds({ genreId, platformId, grade, seriesN = 1 }) {
+  const genre = GENRES.find((g) => g.id === genreId);
+  const platform = PLATFORMS.find((p) => p.id === platformId);
+  if (!genre || !platform) return RAID.rounds;
+  const platMult = Math.pow(platform.hp / 0.62, 0.34);
+  const genreMult = Math.pow(genre.hp, 0.55);
+  const gradeMult = 0.9 + grade * 0.1;
+  const seriesMult = 1 + (seriesN - 1) * 0.12;
+  const r = RAID.rounds * platMult * genreMult * gradeMult * seriesMult;
+  return Math.round(Math.max(RAID.minRounds, Math.min(RAID.maxRounds, r)));
+}
+
+/* 팀 전체가 한 라운드에 넣는 데미지의 기대값. 크리티컬과 방식/조합 배율의
+   평균을 대충 얹은 값이다 — 정확할 필요는 없고, 자릿수만 맞으면 된다. */
+export function expectedRoundDamage(team) {
+  let sum = 0;
+  for (const s of team) sum += basePower(s);
+  // 크리티컬(약 12% × 2.2배)과 중반부터 붙는 조합/방식 배율의 평균.
+  return Math.max(1, sum * 1.14 * 1.12);
+}
+
+/* 세 마리분의 총 체력과 그 배분. */
+export function raidPlan({ genreId, platformId, grade, seriesN = 1, team }) {
+  const rounds = raidRounds({ genreId, platformId, grade, seriesN });
+  const total = Math.max(60, Math.round(expectedRoundDamage(team) * rounds));
+  const stages = BOSS_STAGES.map((st, i) => ({
+    index: i,
+    ko: st.ko,
+    species: st.species,
+    dmg: st.dmg,
+    atk: st.atk,
+    card: st.card,
+    hpMax: Math.max(20, Math.round(total * st.share)),
+  }));
+  return { rounds, total, stages };
+}
+
+/* 예전 이름. 설정 화면의 "예상 규모" 와 저장 파일 호환을 위해 남긴다. */
+export function ideaHp({ genreId, platformId, grade, seriesN = 1, rank = 1, team = null }) {
+  if (team && team.length) {
+    return raidPlan({ genreId, platformId, grade, seriesN, team }).total;
+  }
+  const genre = GENRES.find((g) => g.id === genreId);
+  const platform = PLATFORMS.find((p) => p.id === platformId);
+  if (!genre || !platform) return 0;
+  // 팀을 모르면 라운드 수 × 표준 한 명분으로 어림한다.
+  return Math.round(raidRounds({ genreId, platformId, grade, seriesN }) * 26 * Math.max(1, rank * 0.5 + 1.5));
+}
+
+/* ---------- 야심의 절대 크기 ----------
+   보스의 체력은 이제 팀의 세기를 따라간다. 그래서 체력을 "이 게임이 얼마나
+   큰 물건인가" 의 척도로 쓸 수 없다 — 약한 팀이 만든 콘솔 게임이 강한 팀이
+   만든 피처폰 게임보다 작은 물건이 되어 버린다. 시장 규모·경험치·버그 수는
+   팀과 무관한 이 값을 본다. (예전 ideaHp 의 식 그대로다.) */
+export function projectScale({ genreId, platformId, grade, seriesN = 1, rank = 1 }) {
+  const genre = GENRES.find((g) => g.id === genreId);
+  const platform = PLATFORMS.find((p) => p.id === platformId);
+  if (!genre || !platform) return 1000;
+  const seriesMult = 1 + (seriesN - 1) * 0.55;
+  const gradeMult = 0.75 + grade * 0.25;
+  const rankScale = 1 + (Math.max(1, rank) - 1) * 0.11;
+  return Math.round(8600 * genre.hp * platform.hp * seriesMult * gradeMult * rankScale);
+}
+
+/* 개발 착수에 드는 스태미나. 배틀은 공짜다 — 스태미나는 여기서만 나간다. */
+export function devStaminaCost({ platformId, grade, seriesN = 1 }) {
+  const platform = PLATFORMS.find((p) => p.id === platformId);
+  return devStamina(platform, grade || 1, seriesN);
+}
+
 export function startProject({ proposal, platformId, monetizeId, team, rank, seriesOf }) {
   const genre = GENRES.find((g) => g.id === proposal.genreId);
   const platform = PLATFORMS.find((p) => p.id === platformId);
-  const money = MONETIZE.find((m) => m.id === monetizeId);
   const seriesN = seriesOf ? seriesOf.seriesN + 1 : 1;
 
-  // Sequels are worth more but cost more to make, exactly as the original
-  // scales HP, damage and stamina with series length.
   const seriesMult = 1 + (seriesN - 1) * 0.55;
   const gradeMult = 0.75 + proposal.grade * 0.25;
-  // Big enough that a project spans several weeks of stamina rather than one
-  // sitting: a release should be an event, not a weekly chore. Rank is in the
-  // product because a studio's damage per turn compounds far faster than the
-  // platform ladder raises HP — without it, a mature company finishes a game
-  // every week and the calendar stops meaning anything.
-  const rankScale = 1 + (Math.max(1, rank) - 1) * 0.11;
-  const hp = Math.round(8600 * genre.hp * platform.hp * seriesMult * gradeMult * rankScale);
+  const plan = raidPlan({
+    genreId: proposal.genreId, platformId, grade: proposal.grade, seriesN, team,
+  });
 
   const boss = bossFor(genre.id);
+  const stages = plan.stages.map((st) => ({ ...st, hp: st.hpMax, ko: st.ko }));
+  // 1번 보스의 이름은 장르가 준다. 2번은 내용 카드를 고를 때, 3번은 방식
+  // 카드를 고를 때 이름이 붙는다 — 아직 정하지 않은 것을 미리 보여줄 수는 없다.
+  stages[0].name = boss.ko;
+  stages[1].name = '???';
+  stages[2].name = '마감 데몬';
+
   return {
     id: 'gp' + (_pid++),
     title: proposal.title,
     proposal,
     genreId: genre.id,
-    // 개발은 보스전이다. 아이디어에 이름과 형태와 페이즈가 붙는다.
+    // 개발은 보스전이다. 세 마리를 차례로 잡는다.
     boss: { id: genre.id, ko: boss.ko, shape: boss.shape, col: boss.col, accent: boss.accent },
-    phase: 0,
-    weak: 0,                     // 페이즈 전환 직후 약점이 드러난 턴 수
+    stages,
+    stage: 0,
+    phase: 0,                    // = stage. 예전 UI/연출이 읽는 이름.
+    weak: 0,                     // 스테이지가 넘어간 직후 약점이 드러난 타격 수
     bugExtra: 0,                 // 보스의 반격이 남긴 버그
     critBonus: 0,                // 네잎클로버 같은 도구가 얹는 번뜩임 확률
-    lastGain: null,              // 직전 턴에 오른 품질 (진행 패널의 +표시)
+    lastGain: null,              // 직전 라운드에 오른 품질 (진행 패널의 +표시)
     lastDamage: 0,
     attacks: 0,
     platformId, monetizeId,
     seriesN, seriesRoot: seriesOf ? (seriesOf.seriesRoot || seriesOf.id) : null,
     team: team.map((s) => s.id),
-    hpMax: hp, hp,
+    // hp/hpMax 는 **지금 상대하는 보스**의 것이다. 전체 진행은 clearedHp 로 센다.
+    hpMax: stages[0].hpMax, hp: stages[0].hpMax,
+    totalHp: plan.total, clearedHp: 0, rounds: plan.rounds,
+    scale: projectScale({
+      genreId: genre.id, platformId, grade: proposal.grade, seriesN, rank,
+    }),
     turn: 0,
+    strikes: 0,                  // 개별 타격 횟수 — 품질의 분모
+    atb: {},                     // staffId -> 0..1 게이지
+    down: {},                    // staffId -> 남은 기절 시간(초)
+    bossAtb: 0,
+    elapsed: 0,                  // 전투 경과 시간(초)
     staminaSpent: 0,
     contentId: null,
     methodId: null,
@@ -118,147 +263,314 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
     log: [],
     done: false,
     devCost: Math.round(platform.cost * gradeMult * seriesMult),
+    devStamina: devStaminaCost({ platformId, grade: proposal.grade, seriesN }),
     startedRank: rank,
   };
 }
 
-/* Stamina a single turn costs. Longer series are heavier, per the original. */
-export function turnCost(project) {
-  return 1 + Math.floor((project.seriesN - 1) / 2);
+/* 저장 파일이 예전 판(스테이지가 없던 시절)이면 여기서 한 마리짜리
+   스테이지로 감싸 준다. 세이브를 깨지 않는 값이 가장 싸다. */
+export function ensureStages(project) {
+  if (!project || project.stages) return project;
+  project.stages = [{
+    index: 0, ko: '아이디어', species: 'orc', dmg: 1, atk: 4.6, card: null,
+    name: project.boss ? project.boss.ko : '아이디어',
+    hpMax: project.hpMax, hp: project.hp,
+  }];
+  project.stage = 0;
+  project.totalHp = project.hpMax;
+  if (!project.scale) project.scale = project.hpMax;
+  project.clearedHp = 0;
+  project.strikes = Math.max(1, (project.turn || 1) * Math.max(1, project.team.length));
+  project.atb = {}; project.down = {}; project.bossAtb = 0; project.elapsed = 0;
+  return project;
 }
 
-/* ---------- one battle turn ---------- */
-export function battleTurn(project, staffById, rnd, ctx = {}) {
-  if (project.done) return { events: [], finished: true };
-  if (project.pendingCards) return { events: [], blocked: 'card' };
+export function currentStage(project) {
+  ensureStages(project);
+  return project.stages[Math.min(project.stage || 0, project.stages.length - 1)];
+}
 
+/* 전체 진행률 0..1 — 세 마리를 합쳐 하나의 막대로 볼 때 쓴다. */
+export function raidProgress(project) {
+  ensureStages(project);
+  const total = project.totalHp || project.hpMax || 1;
+  return Math.max(0, Math.min(1, ((project.clearedHp || 0) + (project.hpMax - project.hp)) / total));
+}
+
+/* 예전에는 한 턴이 스태미나를 먹었다. 이제 배틀은 공짜다 — 스태미나는
+   개발에 착수하는 순간 한 번 나가고, 싸움은 직원들의 체력으로 한다.
+   0 을 돌려주는 함수로 남겨 둔 이유는 저장 파일과 옛 호출부 때문이다. */
+export function turnCost() { return 0; }
+
+/* ---------- 배틀의 상태 ----------
+   한 사람이 지금 칠 수 있는가. 체력이 0 이면 쓰러진 것으로 보고 잠깐 쉰다 —
+   완전히 빠지는 게 아니라 몇 초 뒤 다시 일어선다. 팀 전체가 동시에 쓰러지면
+   그 주에는 더 못 싸우고, 주간 회복이 이들을 일으킨다. */
+export function canFight(s) {
+  if (!s) return false;
+  syncHp(s);
+  return s.hp > 0;
+}
+
+export function teamDown(project, staffById) {
+  const pool = project.team.map((id) => staffById.get(id)).filter(Boolean);
+  if (!pool.length) return true;
+  return pool.every((s) => !canFight(s));
+}
+
+/* 한 사람의 공격 주기. 지치면 느려진다 — 밥을 사주면 눈에 띄게 빨라지는
+   자리이고, 그래서 상점이 배틀 중에 의미를 갖는다. */
+export function strikePeriod(s) {
+  const r = hpRatio(s);
+  const slow = 1 + (RAID.slowest - 1) * (1 - Math.min(1, r / HP.tired));
+  const speed = 1 + (traitAdd(s, 'speed') || 0);
+  return RAID.strikeSec * Math.max(1, slow) / Math.max(0.5, speed);
+}
+
+/* ---------- 한 사람의 한 방 ----------
+   예전 battleTurn 안에 있던 팀 루프의 몸통이다. 자동 전투에서는 각자
+   자기 게이지로 치므로, 한 사람분을 따로 부를 수 있어야 한다. */
+export function staffStrike(project, s, rnd, ctx = {}) {
   const genre = GENRES.find((g) => g.id === project.genreId);
   const content = project.contentId ? CONTENTS.find((c) => c.id === project.contentId) : null;
   const method = project.methodId ? METHODS.find((m) => m.id === project.methodId) : null;
+  const stage = currentStage(project);
 
   const combo = content ? comboScore(project.genreId, project.contentId) : 1.0;
   const res = researchEffect(ctx.research);
-  // 페이즈가 오를수록 아이디어는 단단해지고, 페이즈가 막 바뀐 직후에는
-  // 잠깐 약점이 드러난다. 집중 개발(ctx.focus)은 타이밍으로 사는 배율이다.
-  const phaseMult = 1 / (BOSS_PHASES[project.phase || 0] || BOSS_PHASES[0]).dmg;
+  const phaseMult = 1 / (stage.dmg || 1);
   const weakMult = (project.weak || 0) > 0 ? WEAK_MULT : 1;
-  const focus = ctx.focus ? Math.max(0.6, Math.min(2.4, ctx.focus)) : 1;
-  const dmgMult = (method ? method.dmg : 1) * (0.85 + combo * 0.15) * res.dmg
-    * phaseMult * weakMult * focus;
+  const dmgMult = (method ? method.dmg : 1) * (0.85 + combo * 0.15) * res.dmg * phaseMult * weakMult;
   const qMult = (method ? method.quality : 1) * combo;
   const variance = method && method.variance ? method.variance : 0.15;
-  // A 분위기 메이커 on the team holds everyone else's motivation up.
-  let teamMood = 0;
-  for (const id of project.team) {
-    const s = staffById.get(id);
-    if (s) teamMood += traitAdd(s, 'teamMood');
+
+  const job = JOBS[s.job];
+  const base = power(s);
+  const teamMood = ctx.teamMood || 0;
+
+  const critChance = 0.06 + Math.min(0.30, (s.motivation + teamMood * 2) * 0.006)
+    + traitAdd(s, 'crit') + (project.critBonus || 0);
+  const crit = rnd() < critChance;
+  const roll = 1 - variance + rnd() * variance * 2;
+  const fan = hasTrait(s, 'genreFan') && s.favGenre === project.genreId
+    ? (TRAITS.genreFan.genreBonus || 1) : 1;
+  let dmg = base * dmgMult * roll * traitMult(s, 'dmg') * fan;
+  if (crit) { dmg *= 2.2; project.crits += 1; }
+  dmg = Math.max(1, Math.round(dmg));
+
+  const gains = {};
+  let gained = null;
+  for (const [stat, w] of Object.entries(job.contrib)) {
+    const bias = (genre.bias[stat] || 1) * (content ? (content.bias[stat] || 1) : 1)
+      * (method && method.focus ? (method.focus[stat] || 1) : 1);
+    const add = base * w * qMult * bias * roll * (crit ? 1.8 : 1)
+      * traitMult(s, 'quality') * fan * gearAxis(s, stat);
+    project.raw[stat] += add;
+    gains[stat] = (gains[stat] || 0) + add;
+    if (!gained || add > gained.amount) gained = { stat, amount: add };
   }
 
-  project.turn += 1;
-  if (project.weak > 0) project.weak -= 1;
-  const events = [];
-  const gains = {};
-  let total = 0;
+  // 개발은 사람을 갈아 넣는다. 한 방마다 체력이 빠지고, 빠지면 느려진다.
+  const spent = drainHp(s, Math.max(1, s.hpMax * HP.turnCost));
 
+  project.strikes = (project.strikes || 0) + 1;
+  if (project.weak > 0) project.weak -= 1;
+  applyDamage(project, dmg);
+  project.lastGain = gains;
+  project.lastDamage = dmg;
+
+  return {
+    kind: crit ? 'crit' : 'hit',
+    staffId: s.id, name: s.name, job: job.ko,
+    damage: dmg, stat: gained ? gained.stat : null,
+    hpSpent: spent, hp: s.hp, hpMax: s.hpMax,
+    bossHp: project.hp, bossHpMax: project.hpMax,
+  };
+}
+
+function applyDamage(project, dmg) {
+  project.hp = Math.max(0, project.hp - dmg);
+  const st = currentStage(project);
+  if (st) st.hp = project.hp;
+}
+
+/* ---------- 스테이지 넘김 ----------
+   보스가 죽으면 카드가 나온다. 카드를 고르면 다음 놈이 나온다. 예전에는
+   보스를 잡아도 아무 일이 없거나 프로젝트가 통째로 리셋됐다 — 죽음과
+   다음 스테이지 사이에 아무 상태도 없었기 때문이다. 이제 pendingCards 가
+   그 사이를 지키고, advanceStage 가 명시적으로 다음 놈을 세운다. */
+export function stageCleared(project, rnd) {
+  ensureStages(project);
+  const st = currentStage(project);
+  const events = [{
+    kind: 'stageClear', stage: project.stage || 0, ko: st.ko,
+    name: st.name || st.ko, last: (project.stage || 0) >= project.stages.length - 1,
+  }];
+  project.clearedHp = (project.clearedHp || 0) + st.hpMax;
+
+  if (st.card === 'content' && !project.contentId) {
+    project.pendingCards = { kind: 'content', options: rollContentCards(rnd, project.genreId) };
+    events.push({ kind: 'card', cardKind: 'content' });
+  } else if (st.card === 'method' && !project.methodId) {
+    project.pendingCards = { kind: 'method', options: rollMethodCards(rnd) };
+    events.push({ kind: 'card', cardKind: 'method' });
+  } else if ((project.stage || 0) < project.stages.length - 1) {
+    advanceStage(project);
+    events.push({ kind: 'stageStart', stage: project.stage, name: currentStage(project).name });
+  } else {
+    events.push({ kind: 'complete' });
+  }
+  return events;
+}
+
+/* 다음 보스를 세운다. 카드가 이름을 정해 주므로 카드를 고른 뒤에 부른다. */
+export function advanceStage(project) {
+  ensureStages(project);
+  if ((project.stage || 0) >= project.stages.length - 1) return false;
+  project.stage = (project.stage || 0) + 1;
+  project.phase = project.stage;
+  const st = currentStage(project);
+  st.name = stageName(project, project.stage);
+  project.hpMax = st.hpMax;
+  project.hp = st.hpMax;
+  st.hp = st.hpMax;
+  project.weak = WEAK_TURNS;   // 새 보스가 나온 직후에는 잠깐 빈틈이 있다
+  project.bossAtb = 0;
+  return true;
+}
+
+/* 스테이지 이름. 2번 보스는 고른 조합이, 3번은 마감이 이름을 준다. */
+export function stageName(project, i) {
+  if (i === 0) return bossFor(project.genreId).ko;
+  if (i === 1) {
+    const c = project.contentId ? CONTENTS.find((x) => x.id === project.contentId) : null;
+    const g = GENRES.find((x) => x.id === project.genreId);
+    if (!c) return '조합 보스';
+    return `${c.ko} ${g ? g.ko : ''} 융합체`.trim();
+  }
+  const m = project.methodId ? METHODS.find((x) => x.id === project.methodId) : null;
+  return m ? `마감 데몬 · ${m.ko}` : '마감 데몬';
+}
+
+/* ---------- 실시간 자동 전투 ----------
+   dt 를 받아서 게이지를 돌린다. 순수 함수다 — DOM 도 시계도 모른다. 그래서
+   tools 의 시뮬레이터가 브라우저 없이 같은 전투를 돌릴 수 있다.
+
+   반환: { events, dead } — dead 면 이번 tick 에 보스가 죽었다. */
+export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
+  ensureStages(project);
+  const out = { events: [], dead: false, idle: false };
+  if (project.done || project.pendingCards || project.hp <= 0) { out.idle = true; return out; }
+
+  const step = Math.min(0.25, Math.max(0, dt));
+  project.elapsed = (project.elapsed || 0) + step;
+
+  let teamMood = 0;
+  const pool = [];
   for (const id of project.team) {
     const s = staffById.get(id);
     if (!s) continue;
-    const job = JOBS[s.job];
-    const base = power(s);
+    syncHp(s);
+    teamMood += traitAdd(s, 'teamMood');
+    pool.push(s);
+  }
+  if (!pool.length) { out.idle = true; return out; }
+  const c2 = { ...ctx, teamMood };
 
-    // Motivation buys crit chance as well as raw power, so a motivated team
-    // does not merely work faster, it produces better games.
-    const critChance = 0.06 + Math.min(0.30, (s.motivation + teamMood * 2) * 0.006)
-      + traitAdd(s, 'crit') + (project.critBonus || 0) + (focus > 1.3 ? 0.10 : 0);
-    const crit = rnd() < critChance;
-    const roll = 1 - variance + rnd() * variance * 2;
-    // 장르 덕후 only fires on the one genre they actually love. The multiplier
-    // is read from the trait table rather than repeated here, so the number the
-    // roster screen shows is the number the battle uses.
-    const fan = hasTrait(s, 'genreFan') && s.favGenre === project.genreId
-      ? (TRAITS.genreFan.genreBonus || 1) : 1;
-    let dmg = base * dmgMult * roll * traitMult(s, 'dmg') * fan;
-    if (crit) { dmg *= 2.2; project.crits += 1; }
-    dmg = Math.max(1, Math.round(dmg));
-    total += dmg;
-
-    // Quality accrues along this job's contribution axes.
-    let gained = null;
-    for (const [stat, w] of Object.entries(job.contrib)) {
-      const bias = (genre.bias[stat] || 1) * (content ? (content.bias[stat] || 1) : 1)
-        * (method && method.focus ? (method.focus[stat] || 1) : 1);
-      // 장비가 여기에 들어간다. 사운드 담당이 피아노를 들고 있으면 그 사람이
-      // 밀어 올리는 화제성·임팩트가 실제로 더 크게 오른다.
-      const add = base * w * qMult * bias * roll * (crit ? 1.8 : 1)
-        * traitMult(s, 'quality') * fan * gearAxis(s, stat);
-      project.raw[stat] += add;
-      gains[stat] = (gains[stat] || 0) + add;
-      if (!gained || add > gained.amount) gained = { stat, amount: add };
+  // ---- 직원들의 게이지 ----
+  let anyUp = false;
+  for (const s of pool) {
+    const downLeft = project.down[s.id] || 0;
+    if (downLeft > 0) {
+      project.down[s.id] = Math.max(0, downLeft - step);
+      if (project.down[s.id] === 0 && s.hp > 0) {
+        out.events.push({ kind: 'revive', staffId: s.id, name: s.name });
+      }
+      continue;
     }
+    if (s.hp <= 0) {
+      // 쓰러졌다. 체력이 조금이라도 차면 다시 일어선다.
+      project.down[s.id] = RAID.downSec;
+      out.events.push({ kind: 'down', staffId: s.id, name: s.name });
+      continue;
+    }
+    anyUp = true;
+    const period = strikePeriod(s);
+    project.atb[s.id] = (project.atb[s.id] || 0) + step / period;
+    while ((project.atb[s.id] || 0) >= 1 && project.hp > 0) {
+      project.atb[s.id] -= 1;
+      out.events.push(staffStrike(project, s, rnd, c2));
+      // 한 사람이 한 번 칠 때마다 라운드 카운터도 조금씩 돈다.
+      project.turn = Math.max(1, Math.round(project.strikes / Math.max(1, pool.length)));
+      if (project.hp <= 0) break;
+    }
+  }
+  if (!anyUp) out.idle = true;
 
-    // 개발은 사람을 갈아 넣는다. 체력이 빠지면 power() 가 알아서 줄어들고,
-    // 그래서 밥을 사주는 일이 실제 전력 관리가 된다.
-    const spent = drainHp(s, Math.max(1, s.hpMax * HP.turnCost * (focus > 1 ? 1.35 : 1)));
-
-    events.push({
-      kind: crit ? 'crit' : 'hit',
-      staffId: s.id, name: s.name, job: job.ko,
-      damage: dmg, stat: gained ? gained.stat : null,
-      hpSpent: spent, hp: s.hp, hpMax: s.hpMax,
-    });
+  // ---- 보스의 게이지 ----
+  if (project.hp > 0) {
+    const st = currentStage(project);
+    project.bossAtb = (project.bossAtb || 0) + step / (st.atk || 4.6);
+    if (project.bossAtb >= 1) {
+      project.bossAtb -= 1;
+      const move = BOSS_MOVES[Math.floor(rnd() * BOSS_MOVES.length)];
+      out.events.push(bossAttack(project, staffById, rnd, move));
+    }
   }
 
-  project.hp = Math.max(0, project.hp - total);
-  project.staminaSpent += turnCost(project) + (focus > 1 ? 0 : 0);
-  project.lastGain = gains;
+  // ---- 죽음 ----
+  if (project.hp <= 0) {
+    out.dead = true;
+    project.log.push({ turn: project.turn, damage: project.lastDamage, hp: 0 });
+    for (const ev of stageCleared(project, rnd)) out.events.push(ev);
+  }
+  return out;
+}
+
+/* ---------- 한 라운드 ----------
+   팀 전원이 한 번씩 친다. 자동 전투가 표준이 된 뒤로 UI 는 이걸 부르지
+   않지만, 밸런스 시뮬레이터와 "빨리 감기" 는 이 단위로 돈다. */
+export function battleTurn(project, staffById, rnd, ctx = {}) {
+  ensureStages(project);
+  if (project.done) return { events: [], finished: true };
+  if (project.pendingCards) return { events: [], blocked: 'card' };
+
+  let teamMood = 0;
+  const pool = [];
+  for (const id of project.team) {
+    const s = staffById.get(id);
+    if (!s) continue;
+    syncHp(s);
+    teamMood += traitAdd(s, 'teamMood');
+    pool.push(s);
+  }
+  const c2 = { ...ctx, teamMood };
+
+  const events = [];
+  let total = 0;
+  for (const s of pool) {
+    if (project.hp <= 0) break;
+    if (s.hp <= 0) continue;
+    const ev = staffStrike(project, s, rnd, c2);
+    total += ev.damage;
+    events.push(ev);
+  }
+  project.turn = Math.max(1, Math.round(project.strikes / Math.max(1, pool.length)));
   project.lastDamage = total;
   project.log.push({ turn: project.turn, damage: total, hp: project.hp });
 
-  // ---- 페이즈 전환: 아이디어가 형태를 바꾸고 크게 반격한다 ----
-  const fracNow = project.hp / project.hpMax;
-  let nextPhase = project.phase || 0;
-  for (let i = BOSS_PHASES.length - 1; i > 0; i--) {
-    if (fracNow <= BOSS_PHASES[i].at) { nextPhase = Math.max(nextPhase, i); break; }
-  }
-  if (project.hp > 0 && nextPhase > (project.phase || 0)) {
-    project.phase = nextPhase;
-    project.weak = WEAK_TURNS;
-    events.push({
-      kind: 'phase', phase: nextPhase, ko: BOSS_PHASES[nextPhase].ko,
-      boss: project.boss ? project.boss.ko : '아이디어',
-    });
-    events.push(bossAttack(project, staffById, rnd, BOSS_RAGE));
-  } else if (project.hp > 0 && project.turn % HP.attackEvery === 0) {
-    // 네 턴마다 한 번. 개발이 일방적인 두들김이 되지 않게 하는 장치다.
+  if (project.hp > 0 && project.turn % HP.attackEvery === 0) {
     const move = BOSS_MOVES[Math.floor(rnd() * BOSS_MOVES.length)];
     events.push(bossAttack(project, staffById, rnd, move));
   }
+  if (project.hp <= 0) for (const ev of stageCleared(project, rnd)) events.push(ev);
 
-  // Idea cards at the two thirds marks.
-  const frac = project.hp / project.hpMax;
-  if (!project.contentId && frac <= 0.66 && project.hp > 0) {
-    project.pendingCards = { kind: 'content', options: rollContentCards(rnd, project.genreId) };
-    events.push({ kind: 'card', cardKind: 'content' });
-  } else if (project.contentId && !project.methodId && frac <= 0.33 && project.hp > 0) {
-    project.pendingCards = { kind: 'method', options: rollMethodCards(rnd) };
-    events.push({ kind: 'card', cardKind: 'method' });
-  }
-
-  if (project.hp <= 0) {
-    // A project that reached 0 HP before its cards were offered still gets
-    // them; otherwise a very strong team would skip the choices entirely.
-    if (!project.contentId) {
-      project.pendingCards = { kind: 'content', options: rollContentCards(rnd, project.genreId) };
-      events.push({ kind: 'card', cardKind: 'content' });
-    } else if (!project.methodId) {
-      project.pendingCards = { kind: 'method', options: rollMethodCards(rnd) };
-      events.push({ kind: 'card', cardKind: 'method' });
-    } else {
-      events.push({ kind: 'complete' });
-    }
-  }
-
-  return { events, total, finished: project.hp <= 0 && !project.pendingCards };
+  return {
+    events, total,
+    finished: project.hp <= 0 && !project.pendingCards
+      && (project.stage || 0) >= project.stages.length - 1,
+  };
 }
 
 /* ---------- 보스의 반격 ----------
@@ -295,12 +607,10 @@ export function bossAttack(project, staffById, rnd, move) {
    보고 있던 수치와 결과가 다르면 그 패널은 장식이 되고, 같으면 "이번 턴에
    무엇이 올랐나"가 실제 판단 재료가 된다. */
 export function previewQuality(project) {
-  const turns = Math.max(1, project.turn);
-  const size = Math.max(1, project.team.length);
+  const n = strikeCount(project);
   const q = {};
   for (const st of STATS) {
-    const x = project.raw[st] / (turns * size);
-    q[st] = Math.max(0, Math.min(999, Math.round(QCAP * (1 - Math.exp(-x / QSCALE)))));
+    q[st] = Math.max(0, Math.min(999, qualityCurve(project.raw[st] / n)));
   }
   return q;
 }
@@ -328,7 +638,7 @@ function bugCount(project, quality, staffById, ctx = {}) {
   // 조작성이 조금 낮아졌고, 거기에 반격이 남기는 버그(bugExtra)까지 얹히니
   // 데뷔작이 60개를 넘겼다 — 디버그가 선택이 아니라 노가다가 되는 지점이다.
   // 기본 곡선을 그만큼 낮춰서 합계를 원래 자리로 되돌린다.
-  const scale = 7 + 10 * Math.log2(1 + project.hpMax / 4500);
+  const scale = 7 + 10 * Math.log2(1 + (project.scale || project.totalHp || project.hpMax) / 4500);
   let bugs = scale * (1.5 - Math.min(1.2, quality.usability / 70));
   if (project.methodId && method.bugCut) bugs *= 1 - method.bugCut;
   bugs *= res.bugs;
@@ -382,34 +692,31 @@ function rollMethodCards(rnd) {
 }
 
 export function chooseCard(project, optionId) {
+  ensureStages(project);
   if (!project.pendingCards) return { ok: false };
   const kind = project.pendingCards.kind;
   if (kind === 'content') project.contentId = optionId;
   else project.methodId = optionId;
   project.pendingCards = null;
-  // Reaching 0 HP with a card still pending left the project unfinished; now
-  // that it is answered, it may be complete.
-  const complete = project.hp <= 0 && project.contentId && project.methodId;
-  return { ok: true, kind, complete };
+
+  // 카드는 죽은 보스와 다음 보스 사이에 선다. 고르고 나면 다음 놈이 나온다.
+  // 이 두 줄이 없던 것이 "보스를 잡아도 아무 일도 안 일어난다" 의 정체였다.
+  const last = (project.stage || 0) >= project.stages.length - 1;
+  let started = null;
+  if (project.hp <= 0 && !last) {
+    advanceStage(project);
+    started = { stage: project.stage, name: currentStage(project).name };
+  }
+  const complete = project.hp <= 0 && last;
+  return { ok: true, kind, complete, started };
 }
 
-/* The 1-999 quality the project would score if it finished this second.
-
-   The in-development panel has to read from the SAME curve the result screen
+/* The in-development panel has to read from the SAME curve the result screen
    does. It used to apply an invented scale of its own, so the bars climbed on
    one ruler and landed on another — and because the result screen then divided
    a 999-band number by 4 to get a percentage, a debut game's 9 points rendered
    as an empty bar. One curve, one meaning, everywhere. */
-export function projectedQuality(project) {
-  const turns = Math.max(1, project.turn);
-  const size = Math.max(1, project.team.length);
-  const q = {};
-  for (const st of STATS) {
-    const x = project.raw[st] / (turns * size);
-    q[st] = Math.max(1, Math.min(999, Math.round(QCAP * (1 - Math.exp(-x / QSCALE)))));
-  }
-  return q;
-}
+export const projectedQuality = projectQuality;
 
 /* ---------- finishing ---------- */
 export function finishProject(project, staffById, rnd, ctx = {}) {
@@ -431,10 +738,9 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
   // magnitude over a career. A saturating curve pulls that into a 1-999 band
   // that reads the way the original's stats do: fast gains early, real effort
   // for the last stretch, and no single lever that runs away with the game.
-  const turns = Math.max(1, project.turn);
-  const size = Math.max(1, project.team.length);
-  const quality = projectedQuality(project);
-  project.rawPerSlot = STATS.reduce((a, st) => a + project.raw[st] / (turns * size), 0) / STATS.length;
+  const n = strikeCount(project);
+  const quality = projectQuality(project);
+  project.rawPerSlot = STATS.reduce((a, st) => a + project.raw[st] / n, 0) / STATS.length;
 
   const avg = STATS.reduce((a, s) => a + quality[s], 0) / STATS.length;
 
@@ -465,7 +771,9 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
   for (let i = 0; i < 4; i++) {
     const taste = STATS[i % STATS.length];
     const v = avg * 0.6 + quality[taste] * 0.4;
-    const curved = CBASE + CSPAN * (1 - Math.exp(-v / CSCALE));
+    const curved = CBASE
+      + CFAST * (1 - Math.exp(-v / CFAST_S))
+      + CSLOW * (1 - Math.exp(-v / CSLOW_S));
     project.criticBase.push(curved + (rnd() - 0.45) * 1.5);
   }
 
@@ -495,7 +803,7 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
 export function scoreCritics(project) {
   const base = project.criticBase;
   if (!base) return project.criticTotal || 0;
-  const pen = Math.min(2.6, (project.bugs || 0) * 0.11);
+  const pen = Math.min(2.2, (project.bugs || 0) * 0.11);
   project.critics = base.map((b) => Math.max(1, Math.min(10, Math.round(b - pen))));
   project.criticTotal = project.critics.reduce((a, b) => a + b, 0);
   project.hallOfFame = project.criticTotal >= 32;
@@ -503,17 +811,28 @@ export function scoreCritics(project) {
 }
 
 /* Spend stamina to remove bugs before release. Returns how many bugs went and
-   how many review points that bought back. */
+   how many review points that bought back.
+
+   Each pass clears a FRACTION of what is left as well as a flat amount from the
+   team's programmers. The flat term alone made debugging a chore exactly when
+   it hurt most: a rookie team ships a game with sixty bugs because its
+   usability is low, and at six bugs a pass that is ten stamina of button
+   pressing — not a decision, a tax on being new. The fraction keeps a cleanup
+   at roughly the same handful of passes whatever the count, while the flat term
+   still means a team with real programmers finishes sooner. */
+const DEBUG_FRACTION = 0.3;
+
 export function debug(project, staffById, rnd) {
   if (!project.done || project.bugs <= 0) return { fixed: 0, gained: 0 };
   const before = project.criticTotal;
-  let fixed = 0;
+  let flat = 0;
   for (const id of project.team) {
     const s = staffById.get(id);
     if (!s) continue;
-    if (JOB_ABILITY[s.job] === 'prog') fixed += 2 + Math.floor(ability(s, 'prog') / 12);
-    else fixed += 1;
+    if (JOB_ABILITY[s.job] === 'prog') flat += 2 + Math.floor(ability(s, 'prog') / 12);
+    else flat += 1;
   }
+  let fixed = Math.max(flat, Math.round(project.bugs * DEBUG_FRACTION));
   fixed = Math.max(1, Math.round(fixed * (0.7 + rnd() * 0.6)));
   fixed = Math.min(project.bugs, fixed);
   project.bugs -= fixed;

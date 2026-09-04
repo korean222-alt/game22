@@ -19,10 +19,17 @@ import { hex2rgb, matOf, MAT } from './color.js';
 export function MeshBuilder() {
   this.p = []; this.n = []; this.c = []; this.a = []; this.f = []; this.b = []; this.m = [];
   this.solids = [];
+  /* Solids that occlude light but must not block walking. Stair treads are the
+     case that forced the split: they are real geometry a body climbs OVER, and
+     feeding them to the walk grid walls off the stairwell — which is exactly
+     what happened, and why the core was unreachable. AO wants them; pathing
+     does not. */
+  this.softs = [];
   this.flag = 0;      // current flag applied to new vertices
   this.bone = 0;      // current bone index
   this.mat = 0;       // 0 = derive material from colour, else force this one
-  this.noSolid = false; // when true, geometry draws but never blocks a walker
+  this.noSolid = false; // when true, geometry draws but never blocks anything
+  this.noNav = false;   // when true, geometry occludes light but not movement
 }
 const MB = MeshBuilder.prototype;
 
@@ -95,7 +102,13 @@ MB.quad = function (p0, p1, p2, p3, col) {
 
 MB.solid = function (x0, y0, z0, x1, y1, z1) {
   if (this.noSolid) return;
-  this.solids.push(x0, y0, z0, x1, y1, z1);
+  (this.noNav ? this.softs : this.solids).push(x0, y0, z0, x1, y1, z1);
+};
+
+/* Everything that casts contact shadow, walkable or not. bakeAO wants this;
+   NavGrid deliberately wants only `solids`. */
+MB.allSolids = function () {
+  return this.softs.length ? this.solids.concat(this.softs) : this.solids;
 };
 
 /* axis-aligned box, centre + full extents */
@@ -237,7 +250,7 @@ MB.count = function () { return this.p.length / 3; };
 /* Merge another builder in, offsetting nothing — used to assemble a floor from
    independently generated rooms. Solids come along so AO and nav stay correct. */
 MB.append = function (other) {
-  for (const k of ['p', 'n', 'c', 'a', 'f', 'b', 'm', 'solids']) {
+  for (const k of ['p', 'n', 'c', 'a', 'f', 'b', 'm', 'solids', 'softs']) {
     const src = other[k], dst = this[k];
     for (let i = 0; i < src.length; i++) dst.push(src[i]);
   }

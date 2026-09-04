@@ -140,26 +140,11 @@ vec3 screenUI(vec2 uv, float seed, float time){
   return col;
 }`;
 
-export const FS_SCENE = `#version 300 es
-precision highp float;
-precision highp sampler2DShadow;
-in vec3 vN; in vec3 vC; in float vAO; in float vFlag; in vec3 vW; in vec4 vLS; in float vD;
-flat in float vMat; in vec2 vUV;
-
-uniform vec3 uSun, uSunCol, uSkyCol, uGndCol, uHorizCol, uFogCol, uEye;
-uniform float uAmb, uFogFar, uHL, uTime, uExposure, uFill;
-uniform vec2 uRes, uSTexel;
-uniform float uGlassMode;
-uniform sampler2DShadow uShadow;
-
-${FLOOR_FN}
-${CUT_FN}
-${NOISE}
-${SCREEN_UI}
-
-layout(location=0) out vec4 outColor;
-
-/* ---- shadowing: 12-tap Poisson, per-pixel rotated so banding becomes noise ---- */
+/* ---- shadowing: 12-tap Poisson, per-pixel rotated so banding becomes noise ----
+   Shared by the procedural scene shader and the skinned-monster one, so a
+   monster's contact shadow is filtered exactly like the office's. Both read
+   `vLS`, so whoever includes this must declare it. */
+const SHADOW_FN = `
 const vec2 POISSON[12] = vec2[12](
   vec2(-0.326,-0.406), vec2(-0.840,-0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621),
   vec2( 0.962,-0.195), vec2( 0.473,-0.480), vec2( 0.519, 0.767), vec2( 0.185,-0.893),
@@ -183,8 +168,10 @@ float shadowFactor(vec3 n){
     s += texture(uShadow, vec3(p.xy + o*uSTexel, p.z - bias));
   }
   return s / 12.0;
-}
+}`;
 
+/* ---- the BRDF and the analytic sky, shared by every lit shader ---- */
+const PBR_FN = `
 /* ---- surface-gradient bump: perturb N from a scalar height without tangents ---- */
 vec3 bumpNormal(vec3 N, vec3 P, float h, float scale){
   vec3 dpdx = dFdx(P), dpdy = dFdy(P);
@@ -230,7 +217,28 @@ vec3 skyColor(vec3 d, float rough){
   float sd = max(dot(d, -uSun), 0.0);
   c += uSunCol * pow(sd, mix(220.0, 4.0, rough)) * mix(2.4, 0.18, rough);
   return c;
-}
+}`;
+
+export const FS_SCENE = `#version 300 es
+precision highp float;
+precision highp sampler2DShadow;
+in vec3 vN; in vec3 vC; in float vAO; in float vFlag; in vec3 vW; in vec4 vLS; in float vD;
+flat in float vMat; in vec2 vUV;
+
+uniform vec3 uSun, uSunCol, uSkyCol, uGndCol, uHorizCol, uFogCol, uEye;
+uniform float uAmb, uFogFar, uHL, uTime, uExposure, uFill;
+uniform vec2 uRes, uSTexel;
+uniform float uGlassMode;
+uniform sampler2DShadow uShadow;
+
+${FLOOR_FN}
+${CUT_FN}
+${NOISE}
+${SCREEN_UI}
+${SHADOW_FN}
+${PBR_FN}
+
+layout(location=0) out vec4 outColor;
 
 struct Surf { vec3 albedo; float rough; float metal; vec3 emis; };
 
@@ -410,6 +418,140 @@ ${CUT_FN}
 out vec4 outColor;
 void main(){
   if(cutAway(vW, vFlag)) discard;
+  outColor = vec4(1.0);
+}`;
+
+/* ═══════════════════════ skinned glTF (the boss monsters) ═══════════════════
+
+   The office is procedural and rigid-skinned: one bone index per vertex, bones
+   in a uniform array. An imported character is neither — it wants four weighted
+   joints per vertex and, at 43 joints for the orc, more matrices than a uniform
+   array can be relied on to hold on a phone. So this path keeps the joints in a
+   float texture read with texelFetch, which has no size ceiling worth worrying
+   about and needs no filtering extension.
+
+   Colour comes from the pack's own atlas rather than a procedural material,
+   which is the whole reason these are separate programs and not a branch. */
+
+export const VS_SKIN = `#version 300 es
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNrm;
+layout(location=2) in vec2 aUV;
+layout(location=3) in vec4 aJoint;
+layout(location=4) in vec4 aWeight;
+uniform mat4 uVP, uLightVP, uModel;
+uniform sampler2D uJoints;      // one 4x1 texel row per joint matrix
+uniform float uSkinned;
+out vec3 vN; out vec3 vW; out vec2 vUV; out vec4 vLS; out float vD;
+
+mat4 jointAt(int i){
+  return mat4(texelFetch(uJoints, ivec2(0,i), 0), texelFetch(uJoints, ivec2(1,i), 0),
+              texelFetch(uJoints, ivec2(2,i), 0), texelFetch(uJoints, ivec2(3,i), 0));
+}
+
+void main(){
+  mat4 S = mat4(1.0);
+  if(uSkinned > 0.5){
+    S = jointAt(int(aJoint.x)) * aWeight.x + jointAt(int(aJoint.y)) * aWeight.y
+      + jointAt(int(aJoint.z)) * aWeight.z + jointAt(int(aJoint.w)) * aWeight.w;
+  }
+  mat4 M = uModel * S;
+  vec4 w = M * vec4(aPos, 1.0);
+  vec3 n = normalize(mat3(M) * aNrm);
+  vW = w.xyz; vN = n; vUV = aUV;
+  vLS = uLightVP * vec4(w.xyz + n*0.055, 1.0);
+  gl_Position = uVP * w;
+  vD = gl_Position.w;
+}`;
+
+/* Shared by both skinned passes: hide a monster standing on a floor the player
+   is not looking at, using the same dithered threshold the office uses so the
+   two dissolve together instead of one popping. */
+const SKIN_CUT = `
+uniform float uFloorY;
+float dither4s(){
+  const float B[16] = float[16](0.,8.,2.,10., 12.,4.,14.,6., 3.,11.,1.,9., 15.,7.,13.,5.);
+  ivec2 p = ivec2(gl_FragCoord.xy) & 3;
+  return (B[p.y*4+p.x] + 0.5) / 16.0;
+}
+bool skinCut(vec3 w){
+  if(uFloorY >= 900.0) return false;
+  return smoothstep(uFloorY, uFloorY + 0.7, w.y) > dither4s();
+}`;
+
+export const FS_SKIN = `#version 300 es
+precision highp float;
+precision highp sampler2DShadow;
+in vec3 vN; in vec3 vW; in vec2 vUV; in vec4 vLS; in float vD;
+
+uniform vec3 uSun, uSunCol, uSkyCol, uGndCol, uHorizCol, uFogCol, uEye;
+uniform float uAmb, uFogFar, uTime, uExposure;
+uniform vec2 uSTexel;
+uniform sampler2DShadow uShadow;
+uniform sampler2D uAlbedo;
+uniform vec3 uTint;             // damage flash / death fade, multiplied in
+uniform float uEmis;            // rim glow while the idea is "hot"
+uniform float uAlpha;
+
+${SKIN_CUT}
+${SHADOW_FN}
+${PBR_FN}
+
+out vec4 outColor;
+
+void main(){
+  if(skinCut(vW)) discard;
+
+  vec4 tex = texture(uAlbedo, vUV);
+  if(tex.a < 0.35) discard;                      // the packs use cutout alpha
+
+  vec3 N = normalize(vN);
+  if(!gl_FrontFacing) N = -N;                    // the packs are double sided
+  vec3 V = normalize(uEye - vW);
+
+  vec3 albedo = pow(tex.rgb, vec3(2.2)) * uTint;
+  float rough = 0.68, metal = 0.0;
+
+  float ndv = clamp(dot(N, V), 1e-4, 1.0);
+  float a = max(rough*rough, 0.0015);
+  vec3 f0 = mix(vec3(0.04), albedo, metal);
+  vec3 kd = albedo * (1.0 - metal);
+
+  vec3 L = -uSun;
+  float ndlRaw = dot(N, L);
+  // A little light wrap: these are stylised characters, and a hard terminator
+  // across a flat-shaded low-poly face reads as a modelling error.
+  float ndl = max((ndlRaw + 0.25) / 1.25, 0.0);
+  float sh = shadowFactor(N);
+  vec3 H = normalize(L + V);
+  vec3 spec = F_Schlick(f0, max(dot(V,H),0.0)) * D_GGX(max(dot(N,H),0.0), a)
+            * V_SmithGGX(ndv, max(ndlRaw,1e-4), a);
+  vec3 lit = (kd/3.14159265 + spec) * uSunCol * ndl * sh;
+
+  vec3 irr = mix(uGndCol, uSkyCol, N.y*0.5 + 0.5);
+  irr = mix(irr, uHorizCol, pow(1.0-abs(N.y), 3.0)*0.45);
+  lit += kd * irr * uAmb;
+  lit += skyColor(reflect(-V, N), rough) * envBRDF(f0, rough, ndv) * uAmb * 0.6;
+  lit += kd * vec3(0.96,0.98,1.0) * max(N.y, 0.0) * 0.085;
+
+  // Fresnel rim, driven by how much fight the idea has left in it.
+  lit += mix(vec3(1.0,0.42,0.22), vec3(0.45,0.72,1.0), 0.5) * pow(1.0-ndv, 2.6) * uEmis * 3.0;
+
+  float fogA = 1.0 - exp(-vD/uFogFar * 1.35);
+  lit = mix(lit, uFogCol, fogA*fogA*0.55);
+
+  outColor = vec4(lit * uExposure, uAlpha);
+}`;
+
+export const FS_SKIN_DEPTH = `#version 300 es
+precision highp float;
+in vec3 vN; in vec3 vW; in vec2 vUV; in vec4 vLS; in float vD;
+uniform sampler2D uAlbedo;
+${SKIN_CUT}
+out vec4 outColor;
+void main(){
+  if(skinCut(vW)) discard;
+  if(texture(uAlbedo, vUV).a < 0.35) discard;
   outColor = vec4(1.0);
 }`;
 

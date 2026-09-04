@@ -24,11 +24,11 @@ import { MAT } from '../core/color.js';
 import { mulberry32 } from '../core/math.js';
 import { P } from './palette.js';
 import {
-  wall, wallDoor, glassWall, doorway, floorField, slab, workstation, chairGuest, chairTask, confTable,
+  wall, wallDoor, glassWall, doorway, floorField, slab, chairGuest, chairTask, confTable,
   whiteboard, wallTV, signBoard, plantTall, trashBin, troffer, fileCab, shelfUnit,
-  serverRack, copier, waterCooler, vending, couch, cubeWall, stairs, rug,
+  serverRack, copier, waterCooler, vending, couch, stairs, rug,
   receptionDesk, counterRun, fridge, microwave, coffeeMaker, lockers, phoneBooth,
-  barCounter, stool, tableRound, pinBoard, supplyShelf, standDesk, plantBasket,
+  barCounter, stool, tableRound, pinBoard, supplyShelf, plantBasket,
   STOREY, FLOOR_Y, DESK_Y,
 } from './props.js';
 
@@ -260,7 +260,6 @@ function buildFloor(m, fi, plan, out) {
     fileCab(s, 62.0, 36, Math.PI, 4, 2.4);
     plantTall(s, 62.0, 41.0, 1.15);
     plantTall(s, 2.8, 17.5, 1.0);
-    if (fi >= 2) standDesk(s, 33, 30.0, Math.PI);
   });
   out.spots.push(
     { kind: 'printer', floor: fi, x: 45.0, z: 38.4, yaw: Math.PI },
@@ -272,57 +271,22 @@ function buildFloor(m, fi, plan, out) {
     out.rooms.push({ name: '서버실', x: 55, y: base + 8.0, z: 24, floor: fi });
   }
 
-  /* ---- desk field ----
-     Desks are placed in PODS separated by corridors, not as a continuous band.
-     A 5.4-wide desk every 6.6 units leaves a 1.2 gap, which the navigation
-     grid's body dilation closes — so a solid band of them is a wall, and the
-     floor becomes unwalkable. Aisles have to be designed in, not hoped for.
+  /* ---- the desk field is no longer generated ----
+     Desks used to be laid out here in pods. They are now bought and placed by
+     the player, which is why a new studio opens onto bare floor plate: the
+     first spending decision is how many people you can afford to seat.
 
-     Reserved circulation, in world units:
+     What the generator still owes the placement system is honest circulation.
+     These lanes are left permanently clear, and PLACE_ZONES below describes the
+     bays between them — the rectangles a desk is expected to land in:
        z 6.5–9.5   north walk lane, behind the window bar
-       z 16.5–20   cross corridor between the north and middle pods
-       z 27.5–31.5 cross corridor between the middle and south pods
+       z 16.5–20   cross corridor between the north and middle bays
+       z 27.5–31.5 cross corridor between the middle and south bays
        x 21–25.5   west spine        x 40–44.5  east spine (lift core to rooms)
-  */
-  // Chairs sit 2.6 behind the desk and are themselves obstacles, so a pod needs
-  // roughly 4 units of clear floor behind it. The strip directly north of the
-  // lift core has no room for that and is left as lobby.
-  const PODS = isGround ? [
-    { z: 11.0, ry: 0, xs: [7.5, 14.1] },
-    { z: 23.0, ry: Math.PI, xs: [7.5, 14.1] },
-    { z: 23.0, ry: Math.PI, xs: [48.0, 54.6] },
-    // No south pod on the ground floor: that half is reception, lounge and the
-    // print bay, and desks there would leave nowhere to walk.
-  ] : [
-    { z: 11.0, ry: 0, xs: [7.5, 14.1] },
-    { z: 11.0, ry: 0, xs: [28.5, 35.1] },
-    { z: 23.0, ry: Math.PI, xs: [7.5, 14.1] },
-    { z: 23.0, ry: Math.PI, xs: [48.0, 54.6] },
-    { z: 36.0, ry: Math.PI, xs: [25.0, 31.6] },
-    { z: 36.0, ry: Math.PI, xs: [48.0, 54.6] },
-  ];
 
-  let slot = 0;
-  for (const pod of PODS) {
-    for (const x of pod.xs) {
-      const variant = Math.floor(rnd() * 4);
-      const dual = rnd() > 0.45;
-      put((s) => workstation(s, x, pod.z, pod.ry, variant, dual));
-      out.desks.push({
-        id: `f${fi}s${slot++}`,
-        floor: fi, role: plan.role,
-        x, z: pod.z, ry: pod.ry,
-        // The chair sits 2.6 behind the desk; the rig faces the desk, so its
-        // yaw is the desk's rotation turned around.
-        seatX: x + 2.6 * Math.sin(pod.ry),
-        seatZ: pod.z + 2.6 * Math.cos(pod.ry),
-        yaw: pod.ry + Math.PI,
-        y: base,
-      });
-    }
-    // A low screen at the end of each pod, clear of the aisle.
-    put((s) => cubeWall(s, pod.xs[pod.xs.length - 1] + 3.6, pod.z, pod.ry, 3.0, 3.6));
-  }
+     Nothing enforces them. A player who walls off a corridor gets staff who
+     cut straight to their desk instead of walking, which is a fair price for
+     being allowed to arrange your own office. */
 
   /* ---- ceiling lights + the slab above ---- */
   for (let x = 6; x < 62; x += 10) {
@@ -392,6 +356,43 @@ function buildSite(m, floors) {
   }
   m.mat = 0;
   m.flag = 0;
+}
+
+/* ---------- where furniture may go ----------
+   The bays between the reserved circulation lanes, in world coordinates. The
+   placement UI draws these as the buildable area and refuses drops outside
+   them, so a player cannot park a desk inside the lift core, in a doorway, or
+   halfway through the meeting room glass — none of which the collision test
+   against the building's own solids would catch on its own, because a doorway
+   is empty space.
+
+   The ground floor loses its south bay: that half is reception and lounge. */
+export const PLACE_ZONES = {
+  ground: [
+    { x0: 3.0, z0: 4.0, x1: 20.5, z1: 16.0 },      // north-west bay
+    { x0: 45.5, z0: 17.5, x1: 62.5, z1: 27.0 },    // east bay, south of the meeting room
+    { x0: 3.0, z0: 20.5, x1: 20.5, z1: 27.0 },     // west bay
+  ],
+  upper: [
+    { x0: 3.0, z0: 4.0, x1: 20.5, z1: 16.0 },
+    { x0: 26.0, z0: 4.0, x1: 39.5, z1: 16.0 },
+    { x0: 3.0, z0: 20.5, x1: 20.5, z1: 27.0 },
+    { x0: 45.5, z0: 17.5, x1: 62.5, z1: 27.0 },
+    { x0: 21.0, z0: 32.0, x1: 39.5, z1: 42.0 },
+    { x0: 45.5, z0: 32.0, x1: 62.5, z1: 39.5 },
+  ],
+};
+
+export function placeZones(floor) {
+  return floor === 0 ? PLACE_ZONES.ground : PLACE_ZONES.upper;
+}
+
+/* Is this footprint entirely inside one bay? Split footprints are rejected on
+   purpose: a desk half in a corridor reads as a mistake either way. */
+export function inPlaceZone(floor, x, z, w, d) {
+  const hw = w / 2, hd = d / 2;
+  return placeZones(floor).some((r) =>
+    x - hw >= r.x0 - 0.01 && x + hw <= r.x1 + 0.01 && z - hd >= r.z0 - 0.01 && z + hd <= r.z1 + 0.01);
 }
 
 /* ---------- entry point ---------- */

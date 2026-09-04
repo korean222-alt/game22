@@ -4,9 +4,8 @@
 
    orbit  dollhouse view of the tower. The target is a point on the floor being
           inspected; azimuth and elevation orbit it and the wheel dollies in.
-   fp     first person, standing on a floor. `ui/firstperson.js` owns movement
-          and collision and writes `{x,y,z,yaw,pitch}` into `camera.fp` each
-          frame; this file only turns that into a view/projection matrix.
+   walk   first person, standing on a floor. The joystick drives `walkMove()`
+          and a drag drives `look()`.
 
    FACING CONVENTION (the same one the rigs use, on purpose)
      yaw y  ->  forward = (sin y, cos y) in world XZ.
@@ -33,10 +32,21 @@ export class OrbitCamera {
     /* First person is a MODE of this camera rather than a second camera, so
        everything downstream — the projection helpers the DOM overlay uses, the
        ray picker, the renderer's uniform block — keeps working untouched. When
-       `fp` is set it is { x, y, z, yaw, pitch } in world space. */
+       `fp` is set it is { x, y, z, yaw, pitch } in world space.
+
+       Two branches built a walk mode independently. This one won because the
+       rest of the camera did not have to learn about it; the other's helpers
+       (`forward`, `walkVector`, `look`) are kept below because the joystick
+       reads them, and they now operate on `fp`. */
     this.fp = null;
     this.fpFov = 1.15;
   }
+
+  /* ---- walk helpers, driven by whatever is holding the stick ---- */
+  get wx() { return this.fp ? this.fp.x : this.tx; }
+  get wy() { return this.fp ? this.fp.y : this.ty; }
+  get wz() { return this.fp ? this.fp.z : this.tz; }
+  get wyaw() { return this.fp ? this.fp.yaw : this.az; }
 
   lookAt(x, y, z) { this.gx = x; this.gy = y; this.gz = z; }
   snap() { this.tx = this.gx; this.ty = this.gy; this.tz = this.gz; this.dist = this.goalDist; }

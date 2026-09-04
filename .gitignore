@@ -1,2 +1,12 @@
-/*.png
 node_modules/
+.claude/worktrees/
+
+# Test-harness output. The Playwright tools write PNGs beside the repo by
+# default; point OUT= somewhere else if you want to keep them.
+/*.png
+flow-final.png
+meet-*.png
+probe.png
+shot-*.png
+battle-*.png
+raid.png

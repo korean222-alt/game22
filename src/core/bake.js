@@ -30,7 +30,8 @@ function boundsOf(solids, pad) {
 }
 
 export function bakeAO(mb, strength = 0.72, cell = 1.0) {
-  const S = mb.solids;
+  // Stair treads and the like are in `softs`: they shade, they just do not block.
+  const S = mb.allSolids ? mb.allSolids() : mb.solids;
   if (!S.length || !mb.p.length) return;
 
   const bb = boundsOf(S, 2);

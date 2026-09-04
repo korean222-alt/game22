@@ -109,3 +109,38 @@ export function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+/* Compose a glTF node transform: T * R(quat) * S. glTF stores rotation as a
+   quaternion, which the pose rig never needed — m4trs above takes Euler angles
+   and cannot express one. */
+export function m4trsQ(o, t, q, s) {
+  const [x, y, z, w] = q, [sx, sy, sz] = s;
+  const x2 = x + x, y2 = y + y, z2 = z + z;
+  const xx = x * x2, xy = x * y2, xz = x * z2;
+  const yy = y * y2, yz = y * z2, zz = z * z2;
+  const wx = w * x2, wy = w * y2, wz = w * z2;
+  o[0] = (1 - (yy + zz)) * sx; o[1] = (xy + wz) * sx; o[2] = (xz - wy) * sx; o[3] = 0;
+  o[4] = (xy - wz) * sy; o[5] = (1 - (xx + zz)) * sy; o[6] = (yz + wx) * sy; o[7] = 0;
+  o[8] = (xz + wy) * sz; o[9] = (yz - wx) * sz; o[10] = (1 - (xx + yy)) * sz; o[11] = 0;
+  o[12] = t[0]; o[13] = t[1]; o[14] = t[2]; o[15] = 1;
+  return o;
+}
+
+/* Shortest-arc quaternion slerp, writing into `o`. Falls back to nlerp when the
+   two are nearly parallel, where sin(theta) stops being a usable divisor. */
+export function qslerp(o, a, b, t) {
+  let bx = b[0], by = b[1], bz = b[2], bw = b[3];
+  let d = a[0] * bx + a[1] * by + a[2] * bz + a[3] * bw;
+  if (d < 0) { d = -d; bx = -bx; by = -by; bz = -bz; bw = -bw; }
+  let s0 = 1 - t, s1 = t;
+  if (d < 0.9995) {
+    const th = Math.acos(Math.min(1, d)), st = Math.sin(th);
+    s0 = Math.sin((1 - t) * th) / st;
+    s1 = Math.sin(t * th) / st;
+  }
+  o[0] = a[0] * s0 + bx * s1; o[1] = a[1] * s0 + by * s1;
+  o[2] = a[2] * s0 + bz * s1; o[3] = a[3] * s0 + bw * s1;
+  const l = Math.hypot(o[0], o[1], o[2], o[3]) || 1;
+  o[0] /= l; o[1] /= l; o[2] /= l; o[3] /= l;
+  return o;
+}

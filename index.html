@@ -56,7 +56,7 @@
   <div class="s" id="coName">스튜디오 게임22</div>
 </div>
 
-<!-- panel show/hide, first person, and fullscreen -->
+<!-- panel show/hide, fullscreen, and the first-person toggle -->
 <button id="menuBtn" class="iconbtn" aria-label="패널 열기/닫기"><span></span><span></span><span></span></button>
 <button id="fpBtn" class="iconbtn" aria-label="1인칭 시점">🚶</button>
 <button id="fsBtn" class="iconbtn" aria-label="전체화면">⛶</button>
@@ -78,6 +78,54 @@
   <div id="panel"></div>
 </div>
 
+<!-- ══ 보스 아레나 ══
+     개발에 착수하면 여기로 들어온다. 위에 보스, 아래에 팀, 가운데는 3D
+     사무실 그대로. 버튼으로 때리지 않는다 — 직원들이 알아서 친다. -->
+<div id="arena">
+  <div class="ahead">
+    <div class="atop">
+      <span class="apips" id="aPips"></span>
+      <span class="atitle" id="aTitle">—</span>
+      <span class="aturn" id="aTurn"></span>
+    </div>
+    <div class="aname">
+      <span class="aico" id="aIco">👾</span>
+      <b id="aBossName">—</b>
+      <span class="atag" id="aBossTag"></span>
+      <span class="aweak" id="aWeak">약점!</span>
+    </div>
+    <div class="ahp"><div class="ahpf" id="aBossHp"></div><span class="ahptx" id="aBossHpTx"></span></div>
+    <div class="atot"><div class="atotf" id="aTotal"></div></div>
+    <div class="atotk">전체 진행</div>
+  </div>
+
+  <div id="aLog"></div>
+  <div id="aFlash"></div>
+
+  <!-- 팀 전원이 쓰러졌을 때. 아레나를 나가지 않고 여기서 해결한다. -->
+  <div id="aRest">
+    <div class="arc card">
+      <div class="art">팀 전원 탈진</div>
+      <p class="arp">아무도 더는 못 칩니다. 밥을 먹이거나, 한 주를 넘겨 쉬게 하세요.</p>
+      <div id="aRestTray"></div>
+      <div class="arow">
+        <button class="btn primary" id="aWeek">다음 주로 넘기기</button>
+        <button class="btn" id="aRestOut">사무실로</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="afoot">
+    <div id="aParty"></div>
+    <div id="aTray"></div>
+    <div class="arow">
+      <button class="btn sm" id="aSpeed">⏩ 1배속</button>
+      <button class="btn sm" id="aBag">🎒 가방</button>
+      <button class="btn sm" id="aOut">🏢 사무실로</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ development battle bar — the boss fight ══ -->
 <div id="battle" class="card">
   <div class="bhead">
@@ -90,15 +138,10 @@
     <span class="bphase" id="bPhase"></span>
   </div>
   <div class="hpwrap"><div class="hpbar" id="bHp"></div><span class="hptx" id="bHpTx"></span></div>
-  <!-- 집중 개발: 지나가는 마커를 금색 구간에서 멈추면 데미지가 크게 붙는다 -->
-  <div id="bFocus">
-    <div class="ftrack"><div class="fzone" id="bZone"></div><div class="fmark" id="bMark"></div></div>
-    <div class="fhint">금색 칸에서 <b>지금!</b> 을 누르세요</div>
-  </div>
   <div class="brow">
-    <button class="btn primary" id="bTurn">개발 진행</button>
-    <button class="btn" id="bFocusBtn">집중</button>
-    <button class="btn" id="bAuto">자동</button>
+    <button class="btn primary" id="bArena">⚔ 전투 화면</button>
+    <button class="btn" id="bTurn">한 라운드</button>
+    <button class="btn" id="bBossCam">👾 보스</button>
     <span class="bcost" id="bCost"></span>
   </div>
   <!-- 도우미: 가방 속 소모품을 배틀 중에 바로 쓴다 -->
@@ -114,6 +157,20 @@
   <div class="pgrow"><span>✨ 번뜩임</span><b id="pgCrit">0</b></div>
   <div class="pgt" id="pgTeam"></div>
 </div>
+
+<!-- ══ 판매 현황 — 출시한 게임이 지금 얼마나 팔리고 있나 ══
+     운영 중인 타이틀이 있으면 화면 오른쪽에 붙는다. 주마다 매출이 줄어드는
+     모양이 보여야, 다음 게임을 언제 시작할지 판단할 수 있다. -->
+<div id="sales" class="card">
+  <div class="sgh"><b>판매 현황</b><span id="sgWeek"></span></div>
+  <div id="sgList"></div>
+</div>
+
+<!-- ══ 튜토리얼: 다음에 할 일 한 줄 ══ -->
+<div id="tut" class="card"></div>
+
+<!-- ══ 배치 모드 툴바: 패널이 닫힌 채로 바닥을 보며 쓴다 ══ -->
+<div id="placebar" class="card"></div>
 
 <!-- ══ 1인칭 조작계 ══
      Only rendered while body.fp is on. The stick and the buttons are DOM, not

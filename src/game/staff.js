@@ -7,7 +7,7 @@
 
 import {
   JOBS, JOB_ABILITY, JOB_ROLE, ITEMS, SURNAMES, GIVEN, rankInfo, TRAITS, TRAIT_IDS, GENRES,
-  HP, hpMult, shopItem, GEAR_SLOTS,
+  hireDiscount, HP, hpMult, shopItem, GEAR_SLOTS,
 } from './data.js';
 import { SKINS, HAIRS, SHIRTS, PANTS, P } from '../world/palette.js';
 
@@ -366,18 +366,34 @@ export function addMotivation(s, n, rank) {
 }
 
 /* Candidates for the hiring screen. Higher company rank surfaces better people
-   and, past rank 6, occasionally an already-promoted one. */
+   and, past rank 6, occasionally an already-promoted one.
+
+   At rank 1-2 the board is graduates at a graduate's price. A studio starts
+   with nobody now, so the first three hires have to be affordable out of the
+   startup grant with enough left to make a game — otherwise the opening move is
+   staring at a board of people you cannot pay for.
+
+   The pool is guaranteed to span disciplines rather than being three
+   independent rolls: without that, "all three are sound engineers" happens
+   often enough to strand a new studio that cannot yet refresh the board.
+
+   `quality` above 1 is a headhunting event handing you a better board than the
+   company has earned. */
 export function rollCandidates(rnd, rank, n = 3, quality = 1) {
   const pool = ['planner', 'programmer', 'designer', 'sound', 'networker'];
+  const bag = [];
   const out = [];
+  const discount = hireDiscount(rank);
   for (let i = 0; i < n; i++) {
-    let job = pool[Math.floor(rnd() * pool.length)];
+    if (!bag.length) bag.push(...pool);
+    let job = bag.splice(Math.floor(rnd() * bag.length), 1)[0];
     if (rnd() > (quality > 1.2 ? 0.45 : 0.72) && rank >= (quality > 1.2 ? 3 : 6)) {
       job = JOBS[job].next || job;
     }
     const talent = (0.72 + rnd() * (0.55 + Math.min(0.6, rank * 0.035))) * quality;
     const s = makeStaff(rnd, job, { talent, level: 1 + Math.floor(rnd() * Math.min(12, rank * 1.5)) });
-    s.hireCost = Math.round(s.salary * (7 + talent * 6));
+    s.hireCost = Math.max(1500, Math.round(s.salary * (7 + talent * 6) * discount));
+    s.rookie = discount < 1;
     out.push(s);
   }
   return out;

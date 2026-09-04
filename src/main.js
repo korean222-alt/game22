@@ -7,16 +7,19 @@
    someone getting up for coffee. */
 
 import { initGL, upload, disposeMesh } from './core/gl.js';
-import { splitGlass } from './core/meshbuilder.js';
+import { MeshBuilder, splitGlass } from './core/meshbuilder.js';
 import { bakeAO, NavGrid } from './core/bake.js';
 import { clamp, mulberry32 } from './core/math.js';
 import { Renderer, LIGHT_ORDER } from './render/renderer.js';
+import { SkinnedPass } from './render/skinned.js';
 import { OrbitCamera } from './render/camera.js';
 import { Rig } from './char/rig.js';
 import './world/palette.js';                  // registers the hex -> material map
-import { buildOffice, BUILDING, FLOOR_PLANS, STOREY } from './world/office.js';
+import { buildOffice, BUILDING, FLOOR_PLANS, STOREY, placeZones, inPlaceZone } from './world/office.js';
+import { buildPlaced, buildGhost } from './world/placed.js';
+import { FURNITURE_BY_ID } from './game/furniture.js';
 import { Crew, Agent, ST } from './world/agents.js';
-import { Boss } from './world/boss.js';
+import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, tauntFor } from './world/boss.js';
 import { Game } from './game/state.js';
 import { addMotivation } from './game/staff.js';
 import * as staffMod from './game/staff.js';
@@ -89,22 +92,29 @@ class View {
     this.meetingScenes = true;      // player-facing toggle
     this.camSaved = null;
     this._skip = null;
+    /* ---- 개발 배틀의 보스 ---- */
+    this.boss = null;               // the idea currently being fought
+    this.arena = false;             // 보스 아레나 카메라가 켜져 있는가
+    this.bossEl = null;
+    this.bossProject = null;
+    this.bossFloor = 0;
+
+    /* ---- 가구 배치 ---- */
+    this.place = null;              // the piece being positioned, if any
+    this.gPlaced = null; this.gGhost = null; this.gZones = null;
+    this.frameOpts = null;          // last frame's camera/cut state, for the skin pass
+
+    /* ---- 1인칭 ---- */
     this.entrance = null;
     this.cam = null;                // set once the camera exists, for first person
     this.storey = STOREY;
     this.fp = new FirstPerson(this);
+    this.prefs = loadPrefs();
     // Ids the office is still animating even though the game has already
     // dropped them from the roster, so syncAgents does not delete a body that
     // is halfway to the door.
     this.leaving = new Set();
     this.arriving = new Set();
-
-    /* ---- 개발 배틀의 보스 ---- */
-    this.boss = null;
-    this.bossAnchor = null;
-
-    /* ---- 화면 밝기 등 기기 설정 ---- */
-    this.prefs = loadPrefs();
   }
 
   /* ---- world ---- */
@@ -127,13 +137,19 @@ class View {
     // The walkable area is the building interior, given explicitly: the mesh
     // also contains a plaza and a skyline, and letting the grid size itself to
     // those would blow past its cell budget.
-    const area = { x0: BUILDING.x0 - 2, z0: BUILDING.z0 - 2, x1: BUILDING.x1 + 2, z1: BUILDING.z1 + 2 };
-    const navs = [];
+    this.navArea = { x0: BUILDING.x0 - 2, z0: BUILDING.z0 - 2, x1: BUILDING.x1 + 2, z1: BUILDING.z1 + 2 };
+    // Two grids per storey. `navBase` knows only the building and never
+    // changes, so a placement can be tested against walls without being
+    // rejected by the furniture already standing there — including the piece
+    // being moved. `navs` adds the furniture and is what people walk on.
+    this.officeSolids = built.mesh.solids;
+    this.navBase = [];
     for (let f = 0; f < built.floors; f++) {
-      navs.push(new NavGrid(built.mesh, f * STOREY + 1.0, f * STOREY + 5.5, 0.5, 1, area));
+      this.navBase.push(this.gridFor(f, built.mesh.solids));
       await nextFrame();
     }
-    this.crew.setWorld({ navs, meetings: built.meetings, spots: built.spots });
+    this.meetings = built.meetings;
+    this.spots = built.spots;
 
     bootStep('GPU 업로드');
     await nextFrame();
@@ -142,8 +158,38 @@ class View {
     this.gSolid = upload(split.solid);
     this.gGlass = upload(split.glass);
 
-    this.game.assignDesks(this.desks);
     this.buildRoomLabels();
+    this.rebuildFurniture();
+  }
+
+  gridFor(floor, solids) {
+    return new NavGrid({ solids }, floor * STOREY + 1.0, floor * STOREY + 5.5, 0.5, 1, this.navArea);
+  }
+
+  /* ---- placed furniture ----
+     Rebuilt whole rather than patched. It is a few hundred triangles, so
+     throwing the mesh away and making a new one is cheaper than reasoning
+     about incremental updates — and it means the desks the staff system sees,
+     the mesh on screen and the grid people walk on can never disagree. */
+  rebuildFurniture() {
+    const built = buildPlaced(this.game.company.placed);
+    this.desks = built.desks;
+    disposeMesh(this.gPlaced);
+    this.gPlaced = built.mesh.count() ? upload(splitGlass(built.mesh).solid) : null;
+
+    // Solids carry world Y and buildPlaced already lifted them onto their
+    // storey, so each floor's grid filters by its own Y window and the combined
+    // list can be shared. With nothing placed, the unchanged base grid is
+    // reused rather than rebuilt.
+    const furn = built.mesh.solids;
+    const all = furn.length ? this.officeSolids.concat(furn) : null;
+    const navs = [];
+    for (let f = 0; f < this.floorCount; f++) {
+      navs.push(all ? this.gridFor(f, all) : this.navBase[f]);
+    }
+    this.crew.setWorld({ navs, meetings: this.meetings, spots: this.spots });
+
+    this.game.assignDesks(this.desks);
     this.syncAgents();
   }
 
@@ -208,6 +254,7 @@ class View {
       a.mood = s.motivation;
       a.role = this.game.roleOf ? this.game.roleOf(s) : 'plan';
       const d = this.deskOf(s);
+      const moved = (a.home ? a.home.id : null) !== (d ? d.id : null);
       a.home = d;
       if (fresh && this.arriving.has(s.id) && this.entrance) {
         // A new hire comes in through the front doors and walks to their desk.
@@ -224,12 +271,16 @@ class View {
               this.crew.navFor(a.floor));
           }, 1100);
         }
-      } else if (d && !a.placed) {
+      } else if (d && (!a.placed || moved)) {
         // A newly seated person appears at their desk rather than walking in
-        // from nowhere.
+        // from nowhere. Desks can also be picked up mid-game, so a reassignment
+        // has to re-seat someone who is already placed — otherwise they carry
+        // on typing at a desk that is back in the bag.
         a.sitAt({ x: d.seatX, z: d.seatZ, yaw: d.yaw, floor: d.floor });
         a.placed = true;
-      } else if (!d && !a.placed) {
+      } else if (!d && (!a.placed || moved)) {
+        // Nowhere to sit: stand in the ground-floor lobby, which is the one
+        // place guaranteed to exist and be walkable.
         a.placeAt(30 + (s.id % 5) * 2.4, 24, Math.PI, 0);
         a.state = ST.STAND;
         a.placed = true;
@@ -306,26 +357,46 @@ class View {
      새로 지으면 프레임마다 VBO 를 버리고 다시 올리게 된다. */
   ensureBoss(project) {
     if (!project) { this.clearBoss(); return; }
-    if (this.boss && !this.boss.dead && this.bossProject === project.id) return;
+    // 3연전이므로 키는 프로젝트가 아니라 **프로젝트+스테이지**다. 예전처럼
+    // 프로젝트 id 만 보면 두 번째 보스가 첫 번째 놈의 몸으로 나온다.
+    const key = project.id + ':' + (project.stage || 0);
+    if (this.boss && !this.boss.dead && this.bossProject === key) return;
     this.spawnBoss(project);
   }
 
-  spawnBoss(project) {
+  /* 모델은 네트워크에서 온다. 로딩 중에 프로젝트가 끝나거나 바뀌었을 수
+     있으므로, 돌아왔을 때 아직 같은 프로젝트인지 확인하고 붙인다.
+     .glb 가 끝내 오지 않아도 전투는 예전 그대로 돌아간다. */
+  async spawnBoss(project) {
     this.clearBoss();
-    if (!project || !project.boss) return;
-    this.boss = new Boss(project.boss);
-    this.bossProject = project.id;
+    if (!project) return;
+    const def = monsterForStage(project);
+    const want = project.id + ':' + (project.stage || 0);
+    this.bossProject = want;
+    const model = await preloadMonster(def);
+    if (!model || this.bossProject !== want || this.game.project !== project) return;
+
+    this.boss = new Boss(def, model);
     this.boss.phase = project.phase || 0;
     this.boss.scale = 1 + (project.phase || 0) * 0.08;
-    this.boss.setAnchor(...this.bossSpot(project));
+    const spot = this.bossSpot(project);
+    this.boss.setAnchor(spot[0], spot[1], spot[2], this.bossFloor);
     this.boss.faceTo(this.bossFaceYaw());
     this.boss.yaw = this.boss.goalYaw;
+    this.boss.say(tauntFor(def, this.rnd), 3.4);
+    if (!this.bossEl) {
+      this.bossEl = document.createElement('div');
+      this.bossEl.className = 'bosstag';
+      ov.appendChild(this.bossEl);
+    }
+    return this.boss;
   }
 
   clearBoss() {
     if (this.boss) this.boss.dispose();
     this.boss = null;
     this.bossProject = null;
+    if (this.bossEl) this.bossEl.style.display = 'none';
   }
 
   /* 팀이 앉아 있는 자리들의 무게중심. 아무도 자리가 없으면 그 층 한복판. */
@@ -338,22 +409,24 @@ class View {
       sx += d.x; sz += d.z; n++;
       floor = d.floor;
     }
-    const x = n ? sx / n : (BUILDING.x1 / 2);
-    const z = n ? sz / n : (BUILDING.z1 / 2);
+    // 팀이 앉은 층에, 그 층의 고정 아레나 자리로. 무게중심을 쓰면 데몬이
+    // 자기를 때리는 책상 위에 서게 된다 — 통로 교차점이 어느 층에서나
+    // 비어 있는 것이 보장된 유일한 바닥이다.
     this.bossFloor = floor;
-    return [x, floor * STOREY + 7.2, z];
+    const spot = bossSpot(floor);
+    return [spot.x, spot.y, spot.z];
   }
 
   /* 눈이 카메라를 향하게. 궤도 모드에서는 방위각, 1인칭에서는 내 위치. */
   bossFaceYaw() {
     if (!this.boss) return 0;
-    if (this.fp.on) return Math.atan2(this.fp.x - this.boss.x, this.fp.z - this.boss.z);
+    if (this.walk) return Math.atan2(cam.wx - this.boss.x, cam.wz - this.boss.z);
     return cam.az;
   }
 
   /* 보스를 화면에 잡아준다. 개발 착수와 페이즈 전환에서 부른다. */
   focusBoss(dist = 40) {
-    if (!this.boss || this.fp.on) return;
+    if (!this.boss || this.walk) return;
     if (this.bossFloor !== undefined && this.bossFloor !== this.floor) {
       this.setFloor(this.bossFloor);
       ui.renderFloors();
@@ -363,13 +436,14 @@ class View {
     cam.el = 0.42;
   }
 
-  /* ---- camera / floor ----
-     1인칭(`this.fp`, `ui/firstperson.js`)이 걷기·충돌·상호작용을 전부 갖고
-     있으므로 여기서는 층 이동만 본다. */
+  /* ---- camera / floor ---- */
   setFloor(f) {
     this.floor = clamp(f, 0, this.floorCount - 1);
     cam.lookAt(BUILDING.x1 / 2, this.floor * STOREY + 6, BUILDING.z1 / 2);
     renderer.fitLight([BUILDING.x1 / 2, this.floor * STOREY + 5, BUILDING.z1 / 2], 62);
+    // The piece being placed belongs to whichever storey is being looked at, so
+    // changing floors mid-placement moves it rather than stranding it below.
+    if (this.place) { this.buildZoneOverlay(); this.refreshGhost(); }
     // The floor rail keeps working while walking around: you take the lift.
     if (this.fp && this.fp.on && this.fp.floor !== this.floor) this.fp.setFloor(this.floor);
   }
@@ -380,6 +454,123 @@ class View {
   }
 
   toggleCut() { this.wallCut = !this.wallCut; }
+
+  /* ---- 배치 모드 ----
+     A mode rather than drag-and-drop: on a phone there is no hover, and one
+     finger already means "orbit the camera". While placing, one finger moves
+     the ghost and two still work the camera, so nothing is lost. */
+  startPlacing(uid) {
+    const item = this.game.bag.find((b) => b.uid === uid);
+    if (!item) return false;
+    const def = FURNITURE_BY_ID.get(item.id);
+    if (!def) return false;
+    // Open in the middle of the first bay on this floor, so the piece is on
+    // screen and legal before the player has moved anything.
+    const zone = placeZones(this.floor)[0];
+    this.place = {
+      uid, id: item.id, def, rot: 0,
+      x: Math.round((zone.x0 + zone.x1) / 2 * 2) / 2,
+      z: Math.round((zone.z0 + zone.z1) / 2 * 2) / 2,
+      valid: false,
+    };
+    document.body.classList.add('placing');
+    this.refreshGhost();
+    return true;
+  }
+
+  stopPlacing() {
+    this.place = null;
+    disposeMesh(this.gGhost); this.gGhost = null;
+    disposeMesh(this.gZones); this.gZones = null;
+    document.body.classList.remove('placing');
+    // The toolbar belongs to the UI, but leaving it on screen after the mode
+    // ends is a lie about what tapping the floor will do — so leaving the mode
+    // always takes it down, whoever ended it.
+    if (ui) ui.renderPlaceBar();
+  }
+
+  movePlace(x, z) {
+    if (!this.place) return;
+    // Half-unit snapping: fine enough to line desks up by eye, coarse enough
+    // that a shaky finger does not produce a desk at x = 12.037.
+    this.place.x = Math.round(x * 2) / 2;
+    this.place.z = Math.round(z * 2) / 2;
+    this.refreshGhost();
+  }
+
+  rotatePlace() {
+    if (!this.place) return;
+    this.place.rot = (this.place.rot + 1) & 3;
+    this.refreshGhost();
+  }
+
+  /* Does a footprint clear the building's own walls and fittings? Sampled on
+     the base grid at half-unit steps — the same resolution the grid is built
+     at, so a gap it reports is a gap that exists. */
+  clearOfWalls(floor, x, z, w, d) {
+    const nav = this.navBase[floor];
+    if (!nav) return true;
+    const nx = Math.max(2, Math.ceil(w / 0.5)), nz = Math.max(2, Math.ceil(d / 0.5));
+    for (let i = 0; i <= nx; i++) {
+      for (let j = 0; j <= nz; j++) {
+        const px = x - w / 2 + (w * i) / nx;
+        const pz = z - d / 2 + (d * j) / nz;
+        if (!nav.isClearRaw(px, pz)) return false;
+      }
+    }
+    return true;
+  }
+
+  placeChecks() {
+    return {
+      zoneOk: (floor, x, z, w, d) => inPlaceZone(floor, x, z, w, d),
+      clearOfWalls: (floor, x, z, w, d) => this.clearOfWalls(floor, x, z, w, d),
+    };
+  }
+
+  refreshGhost() {
+    const p = this.place;
+    disposeMesh(this.gGhost); this.gGhost = null;
+    if (!p) return;
+    const chk = this.game.canPlace(p.uid, this.floor, p.x, p.z, p.rot, this.placeChecks());
+    p.valid = chk.ok;
+    p.why = chk.why || '';
+    if (ui) ui.renderPlaceBar();
+    const mb = buildGhost(p.id, this.floor, p.x, p.z, p.rot);
+    if (mb) {
+      // Recolour rather than draw a separate marker: the ghost IS the piece, so
+      // a red one is unmistakably this desk not fitting, not a generic error.
+      const col = p.valid ? [0.42, 0.86, 0.62] : [0.95, 0.34, 0.30];
+      for (let i = 0; i < mb.c.length; i += 3) { mb.c[i] = col[0]; mb.c[i + 1] = col[1]; mb.c[i + 2] = col[2]; }
+      for (let i = 0; i < mb.f.length; i++) mb.f[i] = 2;      // draw in the blended pass
+      this.gGhost = upload(mb);
+    }
+    if (!this.gZones) this.buildZoneOverlay();
+  }
+
+  /* A translucent floor patch over every bay on this storey, so "where may this
+     go" is answerable at a glance instead of by trial and error. */
+  buildZoneOverlay() {
+    disposeMesh(this.gZones);
+    const mb = new MeshBuilder();
+    mb.noSolid = true;
+    mb.flag = 2;
+    const y = this.floor * STOREY + 0.06;
+    for (const r of placeZones(this.floor)) {
+      mb.quad([r.x0, y, r.z1], [r.x1, y, r.z1], [r.x1, y, r.z0], [r.x0, y, r.z0], '#3f7fd0');
+    }
+    this.gZones = mb.count() ? upload(mb) : null;
+  }
+
+  commitPlace() {
+    const p = this.place;
+    if (!p) return { ok: false };
+    const r = this.game.placeFurniture(p.uid, this.floor, p.x, p.z, p.rot, this.placeChecks());
+    if (!r.ok) return r;
+    this.stopPlacing();
+    this.rebuildFurniture();
+    return r;
+  }
 
   focusStaff(id) {
     this.focused = id;
@@ -481,6 +672,16 @@ class View {
     cam.az = c.az;
   }
 
+  /* ══════════════════════ 1인칭 ══════════════════════
+     두 갈래가 각자 1인칭을 만들었다. 남긴 쪽은 `ui/firstperson.js` — 카메라
+     바깥에 있어서 궤도 카메라가 걷기를 알 필요가 없고, 조이스틱도 자기
+     DOM 을 쓴다. 여기 있던 조이스틱·walk 카메라 구현은 그래서 걷어냈다.
+     `walk` 는 그 시절 호출부가 아직 읽는 이름이라 별칭으로 남긴다. */
+  get walk() { return this.fp.on; }
+  toggleWalk() { this.fp.toggle(); }
+  enterWalk() { this.fp.enter(this.floor); }
+  exitWalk() { this.fp.exit(); }
+
   /* ---- effects driven by game events ---- */
   startWork(teamIds) {
     const set = new Set(teamIds);
@@ -493,22 +694,23 @@ class View {
     for (const ev of events) {
       if (ev.kind === 'hit' || ev.kind === 'crit') {
         const a = this.crew.get(ev.staffId);
-        if (!a) continue;
-        a.reactWith(ev.kind === 'crit' ? 'idea' : 'type', ev.kind === 'crit' ? 1.5 : 0.7);
-        if (ev.kind === 'crit') a.say(critLine(this.rnd), 2.0, 'idea');
-        if (this.boss) this.boss.hit(ev.kind === 'crit' ? 1.4 : 0.55);
+        if (a) {
+          a.reactWith(ev.kind === 'crit' ? 'idea' : 'type', ev.kind === 'crit' ? 1.5 : 0.7);
+          if (ev.kind === 'crit') a.say(critLine(this.rnd), 2.0, 'idea');
+        }
+        if (this.boss) this.boss.hit(ev.kind === 'crit' ? 1.2 : 0.45);
         // 데미지 숫자는 맞은 쪽 — 보스 위로 뜬다. 때린 사람 위에 뜨면
         // 누가 맞고 있는지가 화면에서 사라진다.
         const src = this.boss
-          ? { x: this.boss.x + (this.rnd() - 0.5) * 5, y: this.boss.y + 1.5 + this.rnd() * 2, z: this.boss.z + (this.rnd() - 0.5) * 4 }
-          : { x: a.x, y: a.floor * STOREY + 6.4, z: a.z };
+          ? { x: this.boss.x + (this.rnd() - 0.5) * 5, y: this.boss.y + 1.5 + this.rnd() * 2.6, z: this.boss.z + (this.rnd() - 0.5) * 4 }
+          : (a ? { x: a.x, y: a.floor * STOREY + 6.4, z: a.z } : { x: 0, y: 6, z: 0 });
         this.effects.push({
           ...src, text: ev.damage, crit: ev.kind === 'crit',
-          stat: ev.stat, life: 0, ttl: 1.15, el: null,
+          stat: ev.stat, life: 0, ttl: ev.kind === 'crit' ? 1.25 : 0.85, el: null,
         });
       } else if (ev.kind === 'boss') {
         // 반격: 보스가 부풀었다가 팀원들 머리 위로 붉은 숫자가 뜬다.
-        if (this.boss) this.boss.rage(this.boss.phase);
+        if (this.boss) { this.boss.attack(this.rnd); this.boss.rage(this.boss.phase); }
         for (const h of ev.hits || []) {
           const a = this.crew.get(h.staffId);
           if (!a) continue;
@@ -524,16 +726,66 @@ class View {
           z: this.boss ? this.boss.z : 0,
           text: ev.ko, boss: true, life: 0, ttl: 1.8, el: null,
         });
-      } else if (ev.kind === 'phase') {
-        if (this.boss) { this.boss.rage((this.boss.phase || 0) + 1); this.boss.scale = 1 + (this.boss.phase || 0) * 0.08; }
-        this.focusBoss(38);
-        this.effects.push({
-          x: this.boss ? this.boss.x : 0, y: (this.boss ? this.boss.y : 0) + 6.0,
-          z: this.boss ? this.boss.z : 0,
-          text: ev.ko + ' — 약점!', boss: true, life: 0, ttl: 2.2, el: null,
-        });
+      } else if (ev.kind === 'stageClear') {
+        // 한 마리가 쓰러진다. 다음 놈은 카드를 고른 뒤에 선다.
+        if (this.boss) {
+          this.effects.push({
+            x: this.boss.x, y: this.boss.headY + 1.4, z: this.boss.z,
+            text: ev.name + ' 격파!', boss: true, life: 0, ttl: 2.4, el: null,
+          });
+          this.boss.kill();
+        }
+        for (const id of project.team) {
+          const a = this.crew.get(id);
+          if (a) a.cheerUntil = this.time + 2.6;
+        }
+      } else if (ev.kind === 'stageStart') {
+        // 새 보스. ensureBoss 가 스테이지를 키에 넣으므로 다른 몸으로 선다.
+        this.ensureBoss(project);
+        this.focusBoss(this.arena ? 34 : 38);
+      } else if (ev.kind === 'down') {
+        const a = this.crew.get(ev.staffId);
+        if (a) { a.reactWith('shock', 2.4); a.say('더는 못 하겠어…', 2.6); }
       }
     }
+    if (project.hp <= 0 && this.boss && !events.some((e) => e.kind === 'stageClear')) this.boss.kill();
+  }
+
+  /* ══ 아레나 ══
+     보스를 화면 가운데에 놓고 낮은 각도에서 본다. 벽 자르기를 끄면 사무실이
+     통째로 보이지만, 낮은 각도에서는 앞벽이 시야를 막는다 — 그래서 켠 채로
+     둔다. 순수 카메라 연출이고 규칙은 건드리지 않는다. */
+  enterArena(project) {
+    this.arena = true;
+    this.ensureBoss(project);
+    if (this.fp && this.fp.on) this.fp.exit();
+    if (this.bossFloor !== undefined && this.bossFloor !== this.floor) this.setFloor(this.bossFloor);
+    this._camBefore = { dist: cam.goalDist, el: cam.el, az: cam.az, cut: this.wallCut };
+    // 각도가 낮을수록 액션 RPG 처럼 보이지만, 눈이 층 안으로 들어가면 앞벽과
+    // 책상이 화면의 대부분을 검게 덮는다. 벽 윗선 위로 올라오는 각도가
+    // 이 사무실에서 보스를 실제로 볼 수 있는 가장 낮은 각도다.
+    cam.goalDist = 30;
+    cam.el = 0.52;
+    this.wallCut = true;
+    if (this.boss) cam.lookAt(...this.arenaTarget());
+  }
+
+  /* 화면 아래 3분의 1은 파티 카드가 쓴다. 보스의 한복판을 화면 한복판에
+     두면 그 밴드에 다리가 잘리므로, 시선을 조금 아래로 내려 보스를 위로
+     밀어 올린다. 큰 놈일수록 더 내린다. */
+  arenaTarget() {
+    const b = this.boss;
+    if (!b) return [BUILDING.x1 / 2, this.floor * STOREY + 6, BUILDING.z1 / 2];
+    const h = Math.max(1, b.headY - b.y);
+    return [b.x, b.y + h * 0.28, b.z];
+  }
+
+  exitArena() {
+    if (!this.arena) return;
+    this.arena = false;
+    const b = this._camBefore;
+    if (b) { cam.goalDist = b.dist; cam.el = b.el; this.wallCut = b.cut; }
+    this._camBefore = null;
   }
 
   celebrate(teamIds) {
@@ -557,7 +809,13 @@ class View {
 
     if (this.boss) {
       this.boss.faceTo(this.bossFaceYaw());
-      this.boss.update(dt, this.time);
+      this.boss.update(dt);
+      // 아레나에서는 카메라가 보스를 놓지 않는다. 아주 느리게 돌아서
+      // 정지 화면처럼 보이지 않게만 한다.
+      if (this.arena) {
+        cam.lookAt(...this.arenaTarget());
+        cam.az += dt * 0.055;
+      }
       if (this.boss.dead) this.clearBoss();
     }
 
@@ -615,13 +873,16 @@ class View {
       }
     }
 
+    this.drawBossTag(w, h, showFloor);
+
     for (const e of this.effects) {
       if (!e.el) {
         e.el = document.createElement('div');
         e.el.className = 'dmg' + (e.crit ? ' crit' : '') + (e.hurt ? ' hurt' : '')
-          + (e.boss ? ' bossmsg' : '');
+          + (e.boss ? ' bossmsg' : '') + (e.big ? ' big' : '');
         const label = e.crit ? '번뜩임!' : (e.hurt ? '체력' : (e.stat ? STAT_LABEL[e.stat] : ''));
-        e.el.innerHTML = `${e.text}${label && !e.boss ? `<span class="sk">${label}</span>` : ''}`;
+        const txt = typeof e.text === 'number' ? Math.round(e.text).toLocaleString('ko-KR') : e.text;
+        e.el.innerHTML = `${txt}${label && !e.boss ? `<span class="sk">${label}</span>` : ''}`;
         ov.appendChild(e.el);
       }
       const p = cam.project(e.x, e.y, e.z, w, h);
@@ -632,18 +893,54 @@ class View {
     }
   }
 
+  /* The monster's name plate and health bar, in the DOM like every other label
+     so it stays crisp and readable at any distance. */
+  drawBossTag(w, h, showFloor) {
+    const el = this.bossEl;
+    if (!el) return;
+    const b = this.boss, p = this.game.project;
+    if (!b || b.floor !== showFloor || b.dying) { el.style.display = 'none'; return; }
+    const pt = cam.project(b.x, b.headY, b.z, w, h);
+    if (!pt || pt.z < -1 || pt.z > 1) { el.style.display = 'none'; return; }
+    const frac = p && p.hpMax ? Math.max(0, p.hp / p.hpMax) : 1;
+    el.style.display = '';
+    el.style.left = pt.x + 'px';
+    el.style.top = pt.y + 'px';
+    el.innerHTML =
+      `<div class="bn">${b.def.ko}</div>
+       <div class="bbar"><i style="width:${(frac * 100).toFixed(1)}%"></i></div>
+       ${b.bubble ? `<div class="btaunt">${b.bubble.text}</div>` : ''}`;
+  }
+
   /* ---- draw callback handed to the renderer ---- */
   draw(L, pass) {
-    if (pass === 'glass') { renderer.drawMesh(L, this.gGlass, null); return; }
+    if (pass === 'glass') {
+      renderer.drawMesh(L, this.gGlass, null);
+      // The zone patches and the ghost ride the blended pass: they are meant to
+      // be seen through, and it saves a program of their own.
+      renderer.drawMesh(L, this.gZones, null);
+      renderer.drawMesh(L, this.gGhost, null);
+      return;
+    }
     renderer.drawMesh(L, this.gSolid, null);
+    renderer.drawMesh(L, this.gPlaced, null);
     for (const a of this.crew.all()) renderer.drawMesh(L, a.rig, a.rig.world);
-    if (this.boss) renderer.drawMesh(L, this.boss, this.boss.world);
+
+    // The monster runs through its own skinned program, so it goes last and
+    // hands the pass back before anything else draws.
+    if (this.boss && skinPass && this.frameOpts) {
+      const p = this.game.project;
+      const frac = p && p.hpMax ? p.hp / p.hpMax : 1;
+      skinPass.begin(pass, this.frameOpts);
+      skinPass.draw(this.boss.inst, this.boss.drawArgs(frac));
+      skinPass.end(pass);
+    }
   }
 }
 
 /* ══════════════════════════════════════ boot ══════════════════════════════ */
 
-let renderer, cam, view, ui, game, tier = 'high', quality = TIERS.high;
+let renderer, cam, view, ui, game, skinPass, tier = 'high', quality = TIERS.high;
 
 async function boot() {
   bootStep('렌더러 준비');
@@ -670,6 +967,7 @@ async function boot() {
     // 기본이 'bright' 다. 실기기에서 예전 기본값은 밖에서 거의 안 보였다.
     brightness: prefs.brightness || 'bright',
   });
+  skinPass = new SkinnedPass(renderer);
   cam = new OrbitCamera();
   if (isMobile()) {
     // A phone in landscape is a wide, short window. Looking down more steeply
@@ -703,6 +1001,13 @@ async function boot() {
   ui = new UI(game, view);
   view.cam = cam;
   wireFirstPerson();
+
+  // A fresh studio is asked for a name and handed its grant; a loaded one that
+  // was mid-project gets its monster back, so reopening the tab does not leave
+  // the battle bar counting down an idea with no body.
+  ui.openingFlow();
+  if (game.project) view.spawnBoss(game.project);
+
   window.__game = game;                 // console handles while balancing
   window.__staffMod = staffMod;         // tools/battle.mjs reads power/abilities here
   window.__view = view;
@@ -711,6 +1016,7 @@ async function boot() {
   window.__cam = cam;
 
   wirePointer();
+  wireWalkKeys();
   suppressBrowserGestures(canvas);
   trackViewport(resize);
 
@@ -721,7 +1027,13 @@ async function boot() {
   // visit says how. Shown after boot rather than before it, so the office is
   // already behind the card and the wait does not read as a second loading
   // screen.
-  if (shouldShowInstallGuide()) wireInstallGuide($('a2hs'));
+  //
+  // 창업 팝업보다 뒤로 미룬다. 첫 방문에는 둘이 같은 순간에 뜨고, 안내 카드가
+  // 이름 입력 모달을 통째로 덮어 버려서 게임을 시작할 수가 없었다.
+  if (shouldShowInstallGuide()) {
+    if (game.company.founded) wireInstallGuide($('a2hs'));
+    else ui.onFounded = () => wireInstallGuide($('a2hs'));
+  }
 
   let last = performance.now();
   function frame(now) {
@@ -751,6 +1063,9 @@ function resize() {
 }
 
 function tick(dt) {
+  // 전투의 시계는 화면의 시계와 같다. 따로 돌리면 탭이 백그라운드로 갔을 때
+  // 보이지 않는 곳에서 전투만 흘러간다.
+  if (ui) ui.tickBattle(dt);
   view.update(dt);
   const vp = viewportSize();
   cam.update(dt, vp.w / Math.max(1, vp.h));
@@ -767,14 +1082,18 @@ function tick(dt) {
     ? (view.fp.floor + 1) * STOREY + 0.35
     : view.floor * STOREY + BUILDING.wallH + 0.1;
 
-  renderer.render({
+  // Stashed rather than passed through: the draw callback only receives the
+  // uniform block and the pass name, and the skinned program needs the camera.
+  const opts = {
     vp: cam.vp,
     eye: cam.eye,
     target: [cam.tx, cam.ty, cam.tz],
     wallCut: view.wallCut && !walking,
     floorY,
     time: view.time,
-  }, (L, pass) => view.draw(L, pass));
+  };
+  view.frameOpts = opts;
+  renderer.render(opts, (L, pass) => view.draw(L, pass));
 
   view.drawOverlays(vp.w, vp.h);
   if (view.fpTick) view.fpTick();
@@ -815,7 +1134,6 @@ function wireFirstPerson() {
     if (!on) { cam.fp = null; cam.snap(); view.setFloor(view.floor); }
     else { cam.fp = { x: fp.x, y: 0, z: fp.z, yaw: fp.yaw, pitch: fp.pitch }; }
     ui.renderFloors();
-    ui.renderShell();
   };
 
   /* Encouragement is capped per person per week: the week counter is the
@@ -923,6 +1241,18 @@ function wirePointer() {
     return { d: Math.hypot(dx, dy), x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2 };
   };
 
+  /* While placing, one finger drags the piece across the floor instead of
+     orbiting. Two fingers still zoom and pan, so the camera is never locked
+     out — which matters, because judging a desk's position needs to be able to
+     look at it from another angle. */
+  const dragPlace = (e) => {
+    if (!view.place) return false;
+    const vp = viewportSize();
+    const hit = cam.hitPlane(e.clientX, e.clientY, vp.w, vp.h, view.floor * STOREY + 0.05);
+    if (hit) view.movePlace(hit[0], hit[2]);
+    return true;
+  };
+
   canvas.addEventListener('pointerdown', (e) => {
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* already gone */ }
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -933,6 +1263,7 @@ function wirePointer() {
     if (view.fp.on) { view.fp.startLook(e.pointerId, e.clientX, e.clientY); firstGesture(); return; }
     const g = gather();
     if (g) { pinch = g.d; mid = g; }
+    if (pts.size === 1) dragPlace(e);
     firstGesture();
   });
 
@@ -941,11 +1272,14 @@ function wirePointer() {
     if (!prev) return;
     const nx = e.clientX, ny = e.clientY;
     moved += Math.abs(nx - prev.x) + Math.abs(ny - prev.y);
+
     pts.set(e.pointerId, { x: nx, y: ny });
     if (view.fp.on) { view.fp.moveLook(e.pointerId, nx, ny); return; }
-    if (pts.size === 1) cam.orbit(nx - prev.x, ny - prev.y);
+    // Placement mode claims one finger before the camera does: while a piece is
+    // in hand, dragging moves it. Two fingers still zoom and pan.
+    if (pts.size === 1 && !dragPlace(e)) cam.orbit(nx - prev.x, ny - prev.y);
 
-    if (pts.size >= 2) {
+    if (pts.size >= 2 && !view.fp.on) {
       const g = gather();
       if (g) {
         if (pinch > 0 && g.d > 0) cam.zoom((pinch - g.d) * 2.0);
@@ -965,7 +1299,7 @@ function wirePointer() {
       return;
     }
     // A tap rather than a drag skips whatever cutscene is running.
-    if (moved < 8 && pts.size === 1) view.skipMeeting();
+    if (moved < 8 && pts.size === 1 && !view.place) view.skipMeeting();
     pts.delete(e.pointerId);
     if (pts.size < 2) { pinch = 0; mid = null; }
     if (!pts.size) canvas.classList.remove('drag');
@@ -995,6 +1329,25 @@ function wirePointer() {
   });
   window.addEventListener('keyup', (e) => { if (view.fp.on) view.fp.key(e, false); });
   window.addEventListener('blur', () => view.fp.keys.clear());
+}
+
+/* 데스크톱에서는 WASD 로 걷는다. 조이스틱과 같은 벡터로 들어가므로
+   이동 코드는 하나뿐이다. */
+function wireWalkKeys() {
+  const map = { w: 'fwd', s: 'back', a: 'left', d: 'right', arrowup: 'fwd', arrowdown: 'back', arrowleft: 'left', arrowright: 'right' };
+  const set = (e, on) => {
+    if (e.target && e.target.tagName === 'INPUT') return;
+    const k = e.key.toLowerCase();
+    if (k === 'f' && on) { view.fp.toggle(); return; }
+    if (!view.walk) return;
+    const slot = map[k];
+    if (!slot) return;
+    e.preventDefault();
+    view.keys[slot] = on;
+  };
+  window.addEventListener('keydown', (e) => set(e, true));
+  window.addEventListener('keyup', (e) => set(e, false));
+  window.addEventListener('blur', () => { view.keys = { fwd: false, back: false, left: false, right: false }; });
 }
 
 /* Browsers only grant fullscreen and orientation lock from inside a user
