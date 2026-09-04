@@ -8,18 +8,25 @@
 
    It also emits the desk slots the staff system assigns people to. Desks are no
    longer generated with the floor; a desk exists because the player bought one
-   and put it down, which is what makes hiring cost furniture as well as salary. */
+   and put it down, which is what makes hiring cost furniture as well as salary.
+
+   This is the one place `world/` reaches into `game/`. It reads the furniture
+   catalogue — which piece is a workstation, how big it is — and nothing else.
+   `game/furniture.js` is pure data with no imports of its own, so this adds no
+   cycle and cannot drag DOM or WebGL into the simulation; the alternative,
+   threading the catalogue through every caller including the headless sims,
+   costs more than the boundary is worth here. */
 
 import { MeshBuilder } from '../core/meshbuilder.js';
 import { MAT } from '../core/color.js';
 import { P } from './palette.js';
-import { FURNITURE_BY_ID, footprint } from '../game/furniture.js';
+import { FURNITURE_BY_ID } from '../game/furniture.js';
 import { FLOOR_PLANS } from './office.js';
 import {
   workstation, standDesk, cubeWall, shelfUnit, fileCab, supplyShelf, lockers,
   plantBasket, plantTall, couch, tableRound, coffeeMaker, waterCooler, vending,
   rug, whiteboard, pinBoard, serverRack, copier, phoneBooth, counterRun,
-  STOREY, DESK_Y,
+  STOREY,
 } from './props.js';
 
 /* Each entry draws one piece at the origin-relative position it was placed at.
@@ -42,9 +49,10 @@ const DRAW = {
   coffee: (m, x, z, ry) => { counterRun(m, x, z, ry, 3.0, false); coffeeMaker(m, x, 3.1, z, ry); },
   waterCooler: (m, x, z) => waterCooler(m, x, z),
   vending: (m, x, z, ry) => vending(m, x, z, ry),
+  // Quarter turns swap the rug's two dimensions; nothing else about it changes.
   rug: (m, x, z, ry) => {
-    const f = footprint({ w: 8, d: 6 }, ry === 0 || Math.abs(ry - Math.PI) < 0.1 ? 0 : 1);
-    rug(m, x, z, f.w, f.d, P.rug);
+    const turned = Math.abs(Math.sin(ry)) > 0.5;
+    rug(m, x, z, turned ? 6 : 8, turned ? 8 : 6, P.rug);
   },
   // Freestanding, on a pair of legs: the wall-mounted versions need a wall, and
   // the player can put one in the middle of the floor.
@@ -69,8 +77,6 @@ const DRAW = {
   copier: (m, x, z, ry) => copier(m, x, z, ry),
   phoneBooth: (m, x, z, ry) => phoneBooth(m, x, z, ry),
 };
-
-export function hasDrawer(id) { return !!DRAW[id]; }
 
 /* Lift a sub-mesh built at ground level onto its storey. Same trick the office
    generator uses, and for the same reason: no prop function has to know which
@@ -142,5 +148,3 @@ export function buildGhost(id, floor, x, z, rot) {
   liftInto(m, sub, floor * STOREY);
   return m;
 }
-
-export { DESK_Y };
