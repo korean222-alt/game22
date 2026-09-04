@@ -83,9 +83,11 @@ export function glassWall(m, x0, z0, x1, z1, h, sill, y0) {
   }
   m.mat = 0;
   m.flag = 2;                                        // glass: its own blended pass
-  m.noSolid = true;
+  // The pane blocks. It used to be noSolid, and the mullions every five units
+  // were the only obstacles in the run — so you could stroll through the
+  // meeting-room window between two of them. Glass is a wall you can see past,
+  // not a wall you can walk past.
   m.boxY(cx, base + h / 2, cz, 0.09, h - 0.3, len - 0.2, ry, P.glass);
-  m.noSolid = false;
   m.flag = prev;
 }
 
@@ -105,10 +107,18 @@ export function doorway(m, x, z, ry, w, h, col, openAng) {
   if (openAng !== undefined) {
     // Hinged on one jamb: at openAng 0 the leaf fills the opening, and it
     // swings out of the way from there.
+    //
+    // The leaf does not block. A standing-open door sweeps a quarter circle
+    // across the very gap it is meant to reveal, and to the walk grid that is
+    // a wall — which is what sealed the stair core off from the rest of the
+    // floor. A door you can see through is a door you can walk through.
+    const prevNav = m.noNav;
+    m.noNav = true;
     const hx = x + ux * (w / 2), hz = z + uz * (w / 2);
     const a = ry + openAng;
     const lx = Math.sin(a), lz = Math.cos(a);
     m.boxY(hx - lx * (w / 2), h / 2, hz - lz * (w / 2), 0.16, h - 0.2, w, a, col || P.door);
+    m.noNav = prevNav;
   }
   m.mat = 0; m.flag = prev;
 }
@@ -543,6 +553,10 @@ export function confTable(m, x, z, ry, len, w) {
    and it walled the office in half. */
 export function stairs(m, x, z, ry, steps, run, rise, width) {
   m.mat = MAT.TILE;
+  // Treads shade but do not block: a flight is climbed, not walked around, and
+  // feeding it to the walk grid sealed the stair core off entirely.
+  const prevNav = m.noNav;
+  m.noNav = true;
   const n = steps || 12, r = run || 0.8, h = rise || (STOREY / (steps || 12));
   const w = width || 4.0;
   const ux = Math.sin(ry), uz = Math.cos(ry);
@@ -563,6 +577,7 @@ export function stairs(m, x, z, ry, steps, run, rise, width) {
     }
   }
   m.mat = 0;
+  m.noNav = prevNav;
 }
 
 export { seedAt };

@@ -8,11 +8,11 @@
    JSON and nothing needs a migration layer yet. */
 
 import {
-  JOBS, PLATFORMS, MONETIZE, GENRES, CONTENTS, STATS, rankInfo, RANK_UP_FANS, ITEMS,
+  JOBS, PLATFORMS, MONETIZE, GENRES, CONTENTS, METHODS, STATS, rankInfo, RANK_UP_FANS, ITEMS,
   RESEARCH, researchCost, CONTRACTS, contractPay, MARKETING,
   marketingCost, floorCost, comboScore,
   STARTUP_GRANT, rescueAmount, rescueMorale,
-  SHOP, shopItem, shopFor, GEAR_SLOTS, OVERTIME, DEX_SECTIONS, HP, bossFor, FOCUS_STAMINA,
+  SHOP, shopItem, shopFor, GEAR_SLOTS, OVERTIME, DEX_SECTIONS, HP, bossFor, RAID,
 } from './data.js';
 import {
   FURNITURE_BY_ID, RESELL, comfortScore, comfortLevel, footprint, overlaps,
@@ -25,8 +25,9 @@ import {
   equipGear, unequipGear, canEquip, gearOf, isTired, isSpent, basePower,
 } from './staff.js';
 import {
-  generateProposal, startProject, battleTurn, chooseCard, finishProject, debug,
+  generateProposal, startProject, battleTurn, battleTick, chooseCard, finishProject, debug,
   turnCost, seedProjectIds, previewQuality, previewBugs, funScore,
+  ensureStages, currentStage, raidProgress, teamDown, advanceStage, stageName,
 } from './project.js';
 import { TASKS, rollEvent, grantReward, rewardText } from './events.js';
 import {
@@ -445,40 +446,89 @@ export class Game {
       proposal: pr, platformId, monetizeId, team,
       rank: this.company.rank, seriesOf,
     });
+    // 스태미나는 **여기서** 나간다. 게임을 만드는 데 쓰는 것이 스태미나이고,
+    // 보스를 잡는 데 쓰는 것은 직원들의 체력이다.
+    if (this.company.stamina < p.devStamina) {
+      return { ok: false, why: `개발 착수에 스태미나 ${p.devStamina} 필요 (보유 ${this.company.stamina})` };
+    }
     if (!this.spend(p.devCost)) return { ok: false, why: `개발비 부족 (₩${p.devCost.toLocaleString()})` };
+    this.company.stamina -= p.devStamina;
 
     this.proposals = this.proposals.filter((x) => x.id !== proposalId);
     this.project = p;
     this.dexSee('bosses', p.genreId);
-    this.note(`「${p.title}」 개발 착수. ${p.boss.ko} 아이디어 HP ${p.hpMax.toLocaleString()}`, 'good');
+    this.note(`「${p.title}」 개발 착수! ${p.stages.length}마리를 잡으면 완성이다.`, 'good');
     this.emit('project', p);
+    this.emit('raid', p);
     return { ok: true, project: p };
   }
 
-  /* `opts.focus` is the multiplier the 집중 개발 timing bar produced. It costs
-     extra stamina, so a mistimed tap is a real loss rather than a free reroll. */
-  devTurn(opts = {}) {
+  /* ---------- 자동 전투 ----------
+     스태미나는 개발 착수에서 이미 냈다. 여기서는 한 점도 들지 않는다 —
+     보스를 잡는 것은 직원들이고, 그들이 쓰는 것은 자기 체력이다.
+
+     dt(초)를 받아 게이지를 돌린다. UI 의 rAF 루프가 매 프레임 부른다. */
+  devTick(dt, speed = 1) {
+    const p = this.project;
+    if (!p) return { ok: false, idle: true };
+    ensureStages(p);
+    if (p.pendingCards) return { ok: true, idle: true, blocked: 'card' };
+    if (p.paused) return { ok: true, idle: true, blocked: 'paused' };
+
+    const staff = this.staffById();
+    if (teamDown(p, staff)) {
+      // 팀 전원이 쓰러졌다. 이번 주에는 더 못 싸운다 — 밥을 먹이거나
+      // 다음 주로 넘기면 다시 일어선다.
+      if (!p.exhausted) {
+        p.exhausted = true;
+        this.note('팀이 모두 지쳐 쓰러졌다. 밥을 먹이거나 다음 주로 넘기세요.', 'bad');
+        this.emit('battle', { project: p, events: [{ kind: 'exhausted' }] });
+      }
+      return { ok: true, idle: true, blocked: 'exhausted' };
+    }
+    p.exhausted = false;
+
+    const r = battleTick(p, staff, this.rnd, this.ctx(), dt * speed);
+    if (!r.events.length) return { ok: true, idle: r.idle };
+    this._battleEvents(p, r.events);
+    return { ok: true, ...r };
+  }
+
+  /* 한 라운드를 통째로. 시뮬레이터와 "즉시 진행" 이 쓴다. */
+  devTurn() {
     const p = this.project;
     if (!p) return { ok: false, why: '개발 중인 프로젝트가 없다' };
+    ensureStages(p);
     if (p.pendingCards) return { ok: false, why: '아이디어를 먼저 고르세요' };
-    const focus = opts.focus || 0;
-    const cost = turnCost(p) + (focus ? FOCUS_STAMINA : 0);
-    if (this.company.stamina < cost) return { ok: false, why: '스태미나 부족. 다음 주로 넘기세요.' };
-    this.company.stamina -= cost;
+    const staff = this.staffById();
+    if (teamDown(p, staff)) return { ok: false, why: '팀이 지쳐서 더 못 싸운다. 다음 주로 넘기세요.' };
+    const r = battleTurn(p, staff, this.rnd, this.ctx());
+    this._battleEvents(p, r.events);
+    return { ok: true, ...r };
+  }
 
-    const r = battleTurn(p, this.staffById(), this.rnd, this.ctx(focus ? { focus } : {}));
-    for (const ev of r.events) {
+  /* 배틀 이벤트를 로그와 3D 로 흘려보낸다. 스테이지가 넘어가는 자리도
+     여기다 — 보스가 죽으면 카드가 서고, 카드를 고르면 다음 놈이 선다. */
+  _battleEvents(p, events) {
+    let cleared = false, complete = false;
+    for (const ev of events) {
       if (ev.kind === 'boss') {
-        this.note(`${p.boss.ko}의 ${ev.ko}! ${ev.line}`, 'bad');
-      } else if (ev.kind === 'phase') {
-        this.note(`${ev.boss} ${ev.ko}! 약점이 드러났다 — 지금이 기회다.`, 'good');
+        this.note(`${currentStage(p).name || '아이디어'}의 ${ev.ko}! ${ev.line}`, 'bad');
+      } else if (ev.kind === 'stageClear') {
+        cleared = true;
+        this.note(`${ev.name} 격파! (${ev.stage + 1}/${p.stages.length})`, 'good');
+      } else if (ev.kind === 'stageStart') {
+        this.note(`${ev.name} 등장!`, 'bad');
+      } else if (ev.kind === 'complete') {
+        complete = true;
+      } else if (ev.kind === 'down') {
+        this.note(`${ev.name} 이(가) 쓰러졌다.`, 'bad');
       }
     }
-    this.emit('battle', { project: p, events: r.events });
-
-    if (p.hp <= 0 && !p.pendingCards) this._completeProject();
+    this.emit('battle', { project: p, events });
+    if (complete) this._completeProject();
     else this.emit('project', p);
-    return { ok: true, ...r };
+    return { cleared, complete };
   }
 
   pickCard(optionId) {
@@ -486,14 +536,29 @@ export class Game {
     if (!p || !p.pendingCards) return { ok: false };
     const r = chooseCard(p, optionId);
     if (r.kind === 'content') {
-      this.note(`게임 내용 결정: ${p.contentId}`);
+      const c = CONTENTS.find((x) => x.id === p.contentId);
+      this.note(`게임 내용 결정: ${c ? c.ko : p.contentId}`);
+      this.dexSee('contents', p.contentId);
     } else {
-      this.note(`개발 방식 결정: ${p.methodId}`);
+      const m = METHODS.find((x) => x.id === p.methodId);
+      this.note(`개발 방식 결정: ${m ? m.ko : p.methodId}`);
+    }
+    if (r.started) {
+      this.note(`${r.started.name} 등장!`, 'bad');
+      this.emit('battle', { project: p, events: [{ kind: 'stageStart', ...r.started }] });
     }
     if (r.complete) this._completeProject();
     else this.emit('project', p);
     return r;
   }
+
+  /* 사무실로 돌아갈 때 전투를 멈춘다. 아레나 밖에서 체력이 말없이 녹는
+     것만큼 나쁜 일은 없다. */
+  pauseBattle(on = true) {
+    if (this.project) { this.project.paused = !!on; this.emit('project', this.project); }
+  }
+
+  raidProgress() { return this.project ? raidProgress(this.project) : 0; }
 
   _completeProject() {
     const p = this.project;
@@ -518,7 +583,7 @@ export class Game {
     }
     // Everyone who worked on it learns from it. A bigger, better-received game
     // teaches more, so the team that ships ambitious work grows fastest.
-    const xp = Math.round(20 + p.hpMax / 300 + p.criticTotal * 2);
+    const xp = Math.round(20 + (p.scale || p.hpMax) / 300 + p.criticTotal * 2);
     for (const id of p.team) {
       const s = this.staff.find((x) => x.id === id);
       if (!s) continue;

@@ -14,7 +14,7 @@ import {
   RESEARCH, CONTRACTS, MARKETING, TRAITS, FLOOR_UPKEEP, UNKNOWN_COMBO,
   comboScore, comboLabel, rankInfo, RANK_UP_FANS, researchEffect,
   STARTUP_GRANT, hireDiscount,
-  SHOP, SHOP_KINDS, GEAR_SLOTS, BOSSES, bossFor, BOSS_PHASES, FOCUS_STAMINA, OVERTIME,
+  SHOP, SHOP_KINDS, GEAR_SLOTS, BOSSES, bossFor, BOSS_STAGES, BOSS_PHASES, RAID, OVERTIME,
 } from '../game/data.js';
 import {
   FURNITURE, FURNITURE_BY_ID, FURNITURE_CATS, RESELL, comfortLabel,
@@ -23,8 +23,11 @@ import {
   abilities, power, role, itemCost, trainStamina, traitsOf, expToNext,
   hpRatio, isTired, isSpent, gearOf, canEquip,
 } from '../game/staff.js';
-import { turnCost, projectQuality, projectedQuality, ideaHp } from '../game/project.js';
-import { monsterFor } from '../game/monsters.js';
+import {
+  turnCost, projectQuality, projectedQuality, ideaHp, raidRounds, devStaminaCost,
+  currentStage, raidProgress, ensureStages, strikePeriod,
+} from '../game/project.js';
+import { monsterFor, monsterForStage } from '../game/monsters.js';
 import { rewardText } from '../game/events.js';
 import { FLOOR_PLANS } from '../world/office.js';
 import { isTouch, isFullscreen, goFullscreen, exitFullscreen, wireInstallGuide } from './device.js';
@@ -85,12 +88,12 @@ export class UI {
     this.tab = 'company';
     this.selectedStaff = null;
     this.draft = null;
-    this.auto = false;
     this.modalOnOk = null;
     this.busy = false;          // a cutscene is playing; hold modals back
     this.shopKind = 'food';     // 상점 탭의 현재 분류
     this.gearTarget = null;     // 장비를 채워줄 직원
-    this.focus = null;          // 집중 개발 타이밍 바의 상태
+    this.speed = 1;             // 아레나 배속
+    this._logs = [];
 
     if (isTouch() && window.innerWidth < 900) document.body.classList.add('panel-hidden');
 
@@ -118,94 +121,195 @@ export class UI {
   }
 
   _wireBattle() {
-    $('bTurn').onclick = () => {
-      // 집중 개발이 켜져 있으면 같은 버튼이 "지금!" 이 된다. 폰에서 버튼을
-      // 하나 더 두는 것보다, 누르던 자리를 그대로 쓰는 편이 빠르다.
-      if (this.focus) this.stopFocus();
-      else this.doTurn();
+    const go = (id, fn) => {
+      const b = $(id);
+      if (!b) return;
+      b.onclick = fn;
+      b.style.touchAction = 'manipulation';
     };
-    $('bFocusBtn').onclick = () => {
-      if (this.focus) this.cancelFocus();
-      else this.startFocus();
-    };
-    $('bAuto').onclick = () => {
-      this.auto = !this.auto;
-      $('bAuto').classList.toggle('primary', this.auto);
-      if (this.auto) this._autoTick();
-    };
-    const boss = $('bBoss');
-    if (boss) {
-      boss.onclick = () => {
-        if (!this.view.focusBoss()) this.toast('아이디어가 아직 나타나지 않았습니다.', 'bad');
-        else this.togglePanel(true);
-      };
-      boss.style.touchAction = 'manipulation';
-    }
+    // 사무실 화면에 남은 배틀 바는 이제 요약과 입구다. 때리는 버튼이 아니다.
+    go('bArena', () => this.enterArena());
+    go('bTurn', () => this.doTurn());
+    go('bBossCam', () => {
+      if (!this.view.focusBoss()) this.toast('아이디어가 아직 나타나지 않았습니다.', 'bad');
+      else this.togglePanel(true);
+    });
+
+    // ── 아레나 ──
+    go('aOut', () => this.exitArena());
+    go('aRestOut', () => this.exitArena());
+    go('aWeek', () => {
+      // 아레나 안에서 한 주를 넘긴다. 주간 회복이 팀을 일으키므로 여기가
+      // 탈진에서 빠져나오는 가장 짧은 길이다.
+      if (this.g.pendingEvent) { this.exitArena(); this._eventFlow(); return; }
+      const r = this.g.nextWeek();
+      if (r && r.ok === false) { this.toast(r.why || '지금은 넘길 수 없습니다', 'bad'); return; }
+      this.g.save();
+      this.renderArena(true);
+    });
+    go('aBag', () => { this.exitArena(); this.openTab('shop'); });
+    go('aSpeed', () => {
+      const i = RAID.speeds.indexOf(this.speed);
+      this.speed = RAID.speeds[(i + 1) % RAID.speeds.length];
+      $('aSpeed').textContent = `⏩ ${this.speed}배속`;
+    });
   }
 
-  /* ---------- 집중 개발 ----------
-     마커가 좌우로 왕복하고, 금색 구간에서 멈추면 데미지 배율이 붙는다.
-     스태미나를 더 쓰므로 빗나가면 실제로 손해다 — 그래야 누를 때 긴장한다.
-     자동 진행 중에는 뜨지 않는다. */
-  startFocus() {
+  /* ══════════════════════ 보스 아레나 ══════════════════════
+     개발에 착수하면 화면이 통째로 전투가 된다. 스태미나는 착수할 때 이미
+     냈고, 여기서 드는 것은 직원들의 체력뿐이다 — 그래서 누를 것이 없다.
+     플레이어가 하는 일은 지켜보고, 지친 사람에게 밥을 먹이고, 보스가
+     바뀔 때 카드를 고르는 것이다. */
+  enterArena() {
     const g = this.g;
-    if (!g.project || g.project.pendingCards || this.busy) return;
-    if (g.company.stamina < turnCost(g.project) + FOCUS_STAMINA) {
-      this.toast(`집중 개발에는 스태미나 ${turnCost(g.project) + FOCUS_STAMINA} 이 필요합니다.`, 'bad');
-      return;
+    if (!g.project) return false;
+    ensureStages(g.project);
+    g.pauseBattle(false);
+    document.body.classList.add('arena');
+    this.speed = this.speed || 1;
+    $('aSpeed').textContent = `⏩ ${this.speed}배속`;
+    this._logs = [];
+    $('aLog').innerHTML = '';
+    this.view.enterArena(g.project);
+    this.renderArena(true);
+    return true;
+  }
+
+  exitArena() {
+    if (!document.body.classList.contains('arena')) return;
+    document.body.classList.remove('arena');
+    document.body.classList.remove('rest');
+    // 사무실로 돌아가면 전투는 멈춘다. 보이지 않는 곳에서 체력이 녹으면
+    // 돌아왔을 때 무슨 일이 있었는지 알 방법이 없다.
+    this.g.pauseBattle(true);
+    this.view.exitArena();
+    this.renderAll();
+  }
+
+  inArena() { return document.body.classList.contains('arena'); }
+
+  /* main.js 의 단 하나뿐인 rAF 루프가 매 프레임 부른다. 시계를 하나로 두면
+     탭이 백그라운드로 갔을 때 전투만 따로 달려나가는 일이 없다. */
+  tickBattle(dt) {
+    if (!this.inArena()) return;
+    const g = this.g;
+    if (!g.project) { this.exitArena(); return; }
+    if (this.busy) return;
+    // 모달이 떠 있으면 전투도 멈춘다. 카드나 합성 결과를 읽는 동안 뒤에서
+    // 체력이 깎이면, 읽는 것 자체가 벌칙이 된다.
+    if ($('modal').classList.contains('show')) return;
+    const r = g.devTick(dt, this.speed || 1);
+    // DOM 은 초당 20번이면 충분하다. 매 프레임 다시 그리면 폰에서 전투가
+    // 프레임을 잡아먹고, 정작 3D 가 끊긴다.
+    this._acc = (this._acc || 0) + dt;
+    if (this._acc >= 0.05) { this._acc = 0; this.renderArena(); }
+    document.body.classList.toggle('rest', r && r.blocked === 'exhausted');
+  }
+
+  _arenaEvent(ev) {
+    if (ev.kind === 'stageClear') {
+      this.arenaLog(`${ev.name} 격파!`, 'big');
+      this._flash();
+    } else if (ev.kind === 'stageStart') {
+      this.arenaLog(`${ev.name} 등장!`, 'bad');
+      this._flash();
+      this.renderArena(true);
+    } else if (ev.kind === 'boss') {
+      this.arenaLog(`${ev.ko} — ${ev.line}`, 'bad');
+    } else if (ev.kind === 'crit') {
+      this.arenaLog(`${ev.name} 번뜩임! ${num(ev.damage)}`, 'good');
+    } else if (ev.kind === 'down') {
+      this.arenaLog(`${ev.name} 쓰러짐`, 'bad');
+    } else if (ev.kind === 'revive') {
+      this.arenaLog(`${ev.name} 복귀`, 'good');
+    } else if (ev.kind === 'exhausted') {
+      this.arenaLog('팀 전원 탈진 — 다음 주로 넘기거나 밥을 먹이세요', 'bad');
     }
-    this.auto = false;
-    $('bAuto').classList.remove('primary');
-    // 구간의 위치는 매번 다르고, 폭은 페이즈가 오를수록 좁아진다.
-    const width = Math.max(14, 30 - (g.project.phase || 0) * 6);
-    const at = 8 + Math.random() * (84 - width);
-    this.focus = { at, width, pos: 0, dir: 1, speed: 78 + (g.project.phase || 0) * 26, t0: performance.now() };
-    const zone = $('bZone');
-    zone.style.left = at + '%';
-    zone.style.width = width + '%';
-    $('bFocus').classList.add('on');
-    $('bTurn').textContent = '지금!';
-    $('bFocusBtn').textContent = '취소';
-    this._focusTick();
   }
 
-  _focusTick() {
-    const f = this.focus;
+  arenaLog(text, cls = '') {
+    if (!this.inArena()) return;
+    const box = $('aLog');
+    if (!box) return;
+    const line = el('div', 'l' + (cls ? ' ' + cls : ''), text);
+    box.appendChild(line);
+    while (box.children.length > 6) box.removeChild(box.firstChild);
+    setTimeout(() => { if (line.parentNode) line.parentNode.removeChild(line); }, 4200);
+  }
+
+  _flash() {
+    const f = $('aFlash');
     if (!f) return;
-    const now = performance.now();
-    const dt = Math.min(0.05, (now - (f.last || f.t0)) / 1000);
-    f.last = now;
-    f.pos += f.dir * f.speed * dt;
-    if (f.pos >= 100) { f.pos = 100; f.dir = -1; }
-    if (f.pos <= 0) { f.pos = 0; f.dir = 1; }
-    $('bMark').style.left = f.pos + '%';
-    f.raf = requestAnimationFrame(() => this._focusTick());
+    f.classList.remove('on');
+    void f.offsetWidth;
+    f.classList.add('on');
   }
 
-  cancelFocus() {
-    if (this.focus && this.focus.raf) cancelAnimationFrame(this.focus.raf);
-    this.focus = null;
-    $('bFocus').classList.remove('on');
-    $('bTurn').textContent = '개발 진행';
-    $('bFocusBtn').textContent = '집중';
-    this.renderBattle();
-  }
+  renderArena(full = false) {
+    const g = this.g, p = g.project;
+    if (!p || !this.inArena()) return;
+    ensureStages(p);
+    const st = currentStage(p);
+    const n = p.stages.length;
+    const stage = p.stage || 0;
 
-  /* 멈춘 위치 → 배율. 한가운데면 2.2배, 구간 안이면 1.5배 언저리,
-     빗나가면 0.75배. 빗나갔을 때 1.0 이면 누르지 않을 이유가 없어진다. */
-  stopFocus() {
-    const f = this.focus;
-    if (!f) return;
-    const centre = f.at + f.width / 2;
-    const dist = Math.abs(f.pos - centre);
-    let mult, label;
-    if (dist <= f.width * 0.18) { mult = 2.2; label = '완벽한 타이밍!'; }
-    else if (dist <= f.width / 2) { mult = 1.55; label = '좋은 타이밍'; }
-    else if (dist <= f.width) { mult = 1.0; label = '아슬아슬'; }
-    else { mult = 0.75; label = '빗나갔다…'; }
-    this.cancelFocus();
-    this.toast(`${label} ×${mult.toFixed(2)}`, mult >= 1.5 ? 'good' : mult < 1 ? 'bad' : '');
-    this.doTurn({ focus: mult });
+    if (full || this._aStage !== stage || this._aProj !== p.id) {
+      this._aStage = stage; this._aProj = p.id;
+      $('aTitle').textContent = `「${p.title}」`;
+      $('aBossName').textContent = st.name || st.ko;
+      $('aBossTag').textContent = `${st.ko} · ${stage + 1}/${n}`;
+      $('aIco').textContent = ['🐱', '👹', '👿'][stage] || '👾';
+      const pips = $('aPips');
+      pips.innerHTML = '';
+      for (let i = 0; i < n; i++) {
+        pips.appendChild(el('span', 'apip' + (i < stage ? ' dead' : i === stage ? ' on' : '')));
+      }
+      this._aParty = null;   // 파티 카드도 다시 짓는다
+    }
+
+    const frac = Math.max(0, p.hp / Math.max(1, p.hpMax));
+    $('aBossHp').style.width = (frac * 100) + '%';
+    $('aBossHpTx').textContent = `${num(p.hp)} / ${num(p.hpMax)}`;
+    $('aTotal').style.width = (raidProgress(p) * 100) + '%';
+    $('aTurn').textContent = `${p.turn}라운드 · 번뜩임 ${p.crits}`;
+    $('arena').classList.toggle('weak', (p.weak || 0) > 0);
+
+    // ---- 파티 ----
+    const box = $('aParty');
+    if (!this._aParty || this._aParty !== p.team.join(',')) {
+      this._aParty = p.team.join(',');
+      box.innerHTML = '';
+      this._aCards = new Map();
+      for (const id of p.team) {
+        const s = g.staff.find((x) => x.id === id);
+        if (!s) continue;
+        const card = el('div', 'apc',
+          `<div class="apn">${s.name} <i>${JOBS[s.job].ko}</i></div>
+           <div class="aph"><div class="aphf"></div></div>
+           <div class="apa"><div class="apaf"></div></div>
+           <div class="apx"></div>`);
+        box.appendChild(card);
+        this._aCards.set(id, card);
+      }
+    }
+    for (const id of p.team) {
+      const card = this._aCards.get(id);
+      const s = g.staff.find((x) => x.id === id);
+      if (!card || !s) continue;
+      const r = hpRatio(s);
+      const down = (p.down && p.down[id] > 0) || s.hp <= 0;
+      card.classList.toggle('down', !!down);
+      card.classList.toggle('tired', !down && r < 0.4);
+      card.querySelector('.aphf').style.width = (r * 100) + '%';
+      const gauge = down ? 0 : Math.min(1, p.atb[id] || 0);
+      card.querySelector('.apaf').style.width = (gauge * 100) + '%';
+      card.classList.toggle('act', gauge > 0.86);
+      const x = card.querySelector('.apx');
+      const txt = down ? '쓰러짐' : `체력 ${Math.round(s.hp)}/${s.hpMax}`;
+      if (x.textContent !== txt) x.textContent = txt;
+    }
+    this.renderTray($('aTray'));
+    if (document.body.classList.contains('rest')) this.renderTray($('aRestTray'));
   }
 
   _wireModal() {
@@ -225,20 +329,11 @@ export class UI {
       fs.onclick = () => { if (isFullscreen()) exitFullscreen(); else goFullscreen(); };
       fs.style.touchAction = 'manipulation';
     }
-    for (const id of ['walkBtn', 'walkExit']) {
-      const b = $(id);
-      if (!b) continue;
-      b.onclick = () => { this.view.toggleWalk(); this.renderShell(); };
-      b.style.touchAction = 'manipulation';
-    }
   }
 
   /* 1인칭에 들어가면 패널을 접는다 — 걷는 동안 화면의 절반이 UI 면 곤란하다. */
   renderShell() {
-    const walking = !!this.view.walk;
-    if (walking) this.togglePanel(true);
-    const b = $('walkBtn');
-    if (b) b.textContent = walking ? '🏢' : '🚶';
+    if (this.view.walk) this.togglePanel(true);
   }
 
   _wireKeys() {
@@ -274,8 +369,19 @@ export class UI {
 
   /* ---------- game events ---------- */
   _onGameEvent(type, payload) {
-    if (type === 'log') this.toast(payload.text, payload.kind);
-    if (type === 'battle') this.view.playBattle(payload);
+    // 아레나에서는 알림이 로그 리본으로 간다. 화면 한복판은 보스의 자리고,
+    // 자동 전투는 초당 몇 줄씩 나오므로 토스트로 받으면 서로를 덮는다.
+    if (type === 'log') {
+      if (this.inArena()) this.arenaLog(payload.text, payload.kind);
+      else this.toast(payload.text, payload.kind);
+    }
+    if (type === 'battle') {
+      this.view.playBattle(payload);
+      // 아레나의 연출은 여기 한 곳에서만 돈다. tickBattle 안에서도 처리하면
+      // 카드로 스테이지가 넘어갈 때(그 emit 은 tick 밖에서 난다) 헤더가
+      // 한 박자 늦게 바뀐다.
+      if (this.inArena()) for (const ev of payload.events) this._arenaEvent(ev);
+    }
     // 개발이 시작되면 그 자리에서 보스가 솟아오른다 — 첫 타격을 기다리지 않는다.
     if (type === 'project') this.view.ensureBoss(payload);
     if (type === 'rank') this.showRankUp(payload);
@@ -290,9 +396,21 @@ export class UI {
     // something else happens to rebuild the world.
     if (type === 'staff' || type === 'desks') this.view.syncAgents();
     if (type === 'event' && !payload.resolved) this._eventFlow();
+
+    // 아레나에서는 경영 패널이 한 장도 보이지 않는다. 자동 전투는 초당
+    // 서너 번 이벤트를 뿜으므로, 여기서 사이드 패널까지 통째로 다시 지으면
+    // 그 비용이 그대로 프레임에서 나간다.
+    if (this.inArena()) {
+      this.renderHUD();
+      if (type !== 'battle') this.renderArena(true);
+      this._cardFlow();
+      return;
+    }
+
     this.renderHUD();
     this.renderBattle();
     this.renderProgress();
+    this.renderSales();
     if (type !== 'log') this.renderPanel();
     this.renderTutorial();
     this._cardFlow();
@@ -340,7 +458,13 @@ export class UI {
          사무실은 비어 있고 직원도 없습니다. 이 돈으로
          <b>책상을 사서 배치하고</b>, 그 자리에 <b>직원을 뽑으면</b> 회사가 굴러가기 시작합니다.<br><br>
          지금은 <b>신입 할인</b> 기간이라 채용비가 ${Math.round((1 - hireDiscount(1)) * 100)}% 쌉니다.</p>`,
-      null, () => { this.openTab('office'); this.renderTutorial(); });
+      null, () => {
+        this.openTab('office');
+        this.renderTutorial();
+        // 창업이 끝나고 나서야 '홈 화면에 추가' 안내가 뜬다.
+        const f = this.onFounded; this.onFounded = null;
+        if (f) f();
+      });
   }
 
   showRescue({ amount, debt, count, morale }) {
@@ -438,38 +562,65 @@ export class UI {
     if (this.g.finished) this.showFinished(p);
   }
 
-  /* ---------- actions ---------- */
-  doTurn(opts = {}) {
+  /* ---------- actions ----------
+     한 라운드를 통째로 돌린다. 아레나에 들어가지 않고 사무실에서 바로
+     진행시키고 싶을 때의 지름길이다 — 스태미나는 들지 않는다. */
+  doTurn() {
     const g = this.g;
     if (this.busy) return;
     if (g.project && g.project.pendingCards) { this._cardFlow(); return; }
     if (!g.project) return;
-    const r = g.devTurn(opts);
-    if (!r.ok) {
-      this.toast(r.why, 'bad');
-      this.auto = false;
-      $('bAuto').classList.remove('primary');
-    }
+    const r = g.devTurn();
+    if (!r.ok) this.toast(r.why, 'bad');
     g.save();
-  }
-
-  _autoTick() {
-    if (!this.auto) return;
-    const g = this.g;
-    if (this.busy) { setTimeout(() => this._autoTick(), 500); return; }
-    if (!g.project || g.project.pendingCards || g.company.stamina < 1) {
-      this.auto = false;
-      $('bAuto').classList.remove('primary');
-      return;
-    }
-    this.doTurn();
-    setTimeout(() => this._autoTick(), 620);
   }
 
   /* ---------- rendering ---------- */
   renderAll() {
     this.renderHUD(); this.renderFloors(); this.renderPanel();
-    this.renderBattle(); this.renderProgress(); this.renderShell();
+    this.renderBattle(); this.renderProgress(); this.renderSales(); this.renderShell();
+  }
+
+  /* ---------- 판매 현황 ----------
+     출시한 게임은 한 번에 목돈이 되지 않는다. 몇 주에 걸쳐 팔리고, 매주
+     조금씩 식는다. 그 곡선을 화면 옆에 붙여 두면 "다음 게임을 언제
+     시작할까" 가 판단 가능한 질문이 된다 — 운영 탭을 열어야만 보인다면
+     아무도 보지 않는다. */
+  renderSales() {
+    const g = this.g, box = $('sgList');
+    if (!box) return;
+    const live = g.managed();
+    document.body.classList.toggle('has-sales', live.length > 0);
+    if (!live.length) { box.innerHTML = ''; this._salesSig = null; return; }
+
+    const week = live.reduce((a, r) => a + (r.lastIncome || 0), 0);
+    $('sgWeek').textContent = `이번 주 ${won(week)}`;
+
+    const sig = live.map((r) => `${r.id}:${r.weeks}:${r.users}:${r.lastIncome || 0}`).join('|');
+    if (this._salesSig === sig) return;
+    this._salesSig = sig;
+
+    box.innerHTML = '';
+    for (const r of live) {
+      const hist = r.history || [];
+      const peak = Math.max(1, ...hist.map((h) => h.income));
+      const bars = hist.slice(-14).map((h, i, arr) =>
+        `<i class="${i === arr.length - 1 ? 'now' : ''}" style="height:${Math.max(6, h.income / peak * 100)}%"></i>`).join('');
+      // 이 속도로 식으면 몇 주 더 팔리는가. decay 는 주당 잔존율이다.
+      const left = r.decay > 0 && r.decay < 1
+        ? Math.max(0, Math.ceil(Math.log(60 / Math.max(1, r.users)) / Math.log(r.decay)))
+        : 99;
+      const drop = hist.length >= 2
+        ? Math.round((1 - hist[hist.length - 1].income / Math.max(1, hist[hist.length - 2].income)) * 100)
+        : 0;
+      const c = el('div', 'sgc',
+        `<div class="sgt">「${r.title}」</div>
+         <div class="sgv">${won(r.lastIncome || 0)}</div>
+         <div class="sgn"><span>${r.weeks}주차</span><span>유저 ${num(r.users)}</span></div>
+         ${bars ? `<div class="spark">${bars}</div>` : ''}
+         <div class="sgend">${drop > 0 ? `지난주 대비 −${drop}% · ` : ''}${left < 90 ? `약 ${left}주 남음` : '판매 시작'}</div>`);
+      box.appendChild(c);
+    }
   }
 
   renderHUD() {
@@ -512,17 +663,18 @@ export class UI {
     if (!p) {
       bar.classList.remove('show');
       document.body.classList.remove('in-battle');
-      if (this.focus) this.cancelFocus();
+      if (this.inArena()) this.exitArena();
       return;
     }
+    ensureStages(p);
     bar.classList.add('show');
     document.body.classList.add('in-battle');
     // Tolerant of a project missing its lookups: a save written by another
     // build should degrade to a placeholder, not take the whole HUD down.
     const gen = GENRES.find((x) => x.id === p.genreId) || { ko: '?' };
-    const mon = monsterFor(p);
+    const st = currentStage(p);
     $('bTitle').textContent = `「${p.title}」`;
-    const bits = [mon.ko, gen.ko, `★${p.proposal ? p.proposal.grade : '?'}`, `${p.turn}턴`];
+    const bits = [gen.ko, `★${p.proposal ? p.proposal.grade : '?'}`, `${p.turn}라운드`];
     if (p.contentId) {
       const c = CONTENTS.find((x) => x.id === p.contentId);
       const known = this.knownCombo(p.genreId, p.contentId);
@@ -531,23 +683,26 @@ export class UI {
     }
     if (p.seriesN > 1) bits.push(`시리즈 ${p.seriesN}편`);
     $('bMeta').textContent = bits.join(' · ');
-    const pct = Math.max(0, p.hp / p.hpMax * 100);
+    const pct = Math.max(0, p.hp / Math.max(1, p.hpMax) * 100);
     $('bHp').style.width = pct + '%';
     $('bHpTx').textContent = `${num(p.hp)} / ${num(p.hpMax)}`;
-    // 보스 줄: 이름과 페이즈, 그리고 약점이 드러난 동안의 경고
-    const boss = p.boss || bossFor(p.genreId);
-    $('bBoss').textContent = boss.ko;
+    // 보스 줄: 지금 상대하는 놈의 이름과 몇 번째인지.
+    $('bBoss').textContent = st.name || st.ko;
     const ph = $('bPhase');
-    const phase = BOSS_PHASES[p.phase || 0] || BOSS_PHASES[0];
-    ph.textContent = (p.weak || 0) > 0 ? `약점! ×1.45 (${p.weak}턴)` : phase.ko;
+    ph.textContent = (p.weak || 0) > 0
+      ? `약점! ×1.45`
+      : `${(p.stage || 0) + 1}/${p.stages.length} · ${st.ko}`;
     ph.classList.toggle('weak', (p.weak || 0) > 0);
 
-    const cost = turnCost(p);
-    const focusCost = cost + FOCUS_STAMINA;
-    $('bCost').innerHTML = `스태미나 <b style="color:var(--warn)">-${this.focus ? focusCost : cost}</b><br>보유 ${g.company.stamina}`;
+    // 스태미나는 착수할 때 이미 냈다. 여기 뜨는 것은 팀의 상태다.
+    const team = p.team.map((id) => g.staff.find((x) => x.id === id)).filter(Boolean);
+    const avg = team.length
+      ? Math.round(team.reduce((a, s) => a + hpRatio(s) * 100, 0) / team.length) : 0;
+    $('bCost').innerHTML = p.paused
+      ? '<b style="color:var(--warn)">일시정지</b><br>팀 체력 ' + avg + '%'
+      : '팀 체력<br><b style="color:' + (avg < 40 ? 'var(--warn)' : 'var(--good,#8affd8)') + '">' + avg + '%</b>';
     const blocked = !!p.pendingCards || this.busy;
-    $('bTurn').disabled = blocked || (this.focus ? false : g.company.stamina < cost);
-    $('bFocusBtn').disabled = blocked || g.company.stamina < focusCost;
+    $('bTurn').disabled = blocked;
     this.renderTray();
   }
 
@@ -555,20 +710,25 @@ export class UI {
      배틀 중에 가방을 열지 않고 밥을 먹인다. 음식은 가장 지친 팀원에게,
      음료와 도구는 회사에 바로 적용된다 — 폰에서 대상 고르기를 한 번 더
      시키면 아무도 안 쓴다. */
-  renderTray() {
-    const box = $('tray');
+  renderTray(box = null) {
+    box = box || $('tray');
     if (!box) return;
     const g = this.g;
-    box.innerHTML = '';
     const items = g.bagList().filter((b) => b.item.kind !== 'gear').slice(0, 8);
+    // 아레나는 초당 20번 다시 그린다. 내용이 그대로면 DOM 을 건드리지 않는다 —
+    // 안 그러면 손가락이 아이콘에 닿는 순간 그 아이콘이 이미 다른 노드다.
+    const sig = items.map((b) => b.item.id + 'x' + b.n).join('|');
+    if (box._sig === sig) return;
+    box._sig = sig;
+    box.innerHTML = '';
     for (const { item, n } of items) {
       const t = el('div', 'tray-i', `<span class="e">${item.emoji}</span><span class="n">${n}</span>`);
       t.title = `${item.ko} — ${item.desc || ''}`;
       t.onclick = () => {
-        const target = item.kind === 'food' && !item.all
+        const who = item.kind === 'food' && !item.all
           ? (g.neediest(g.project ? g.project.team : null) || g.neediest())
           : null;
-        const r = g.useItem(item.id, target ? target.id : null);
+        const r = g.useItem(item.id, who ? who.id : null);
         if (!r.ok) this.toast(r.why || '지금은 쓸 수 없다', 'bad');
         g.save();
       };
@@ -1120,11 +1280,16 @@ export class UI {
     const gradeMult = 0.75 + pr.grade * 0.25;
     const seriesOf = d.seriesOfId ? g.releases.find((r) => r.id === d.seriesOfId) : null;
     const seriesMult = 1 + (seriesOf ? seriesOf.seriesN : 0) * 0.55;
+    const seriesN = seriesOf ? seriesOf.seriesN + 1 : 1;
     const cost = Math.round(plat.cost * gradeMult * seriesMult);
+    const stam = devStaminaCost({ platformId: d.platformId, grade: pr.grade, seriesN });
     box.appendChild(el('div', 'row', `<span>개발비</span><b>${won(cost)}</b>`));
+    // 스태미나는 여기서만 나간다. 전투는 직원들의 체력으로 한다.
+    box.appendChild(el('div', 'row',
+      `<span>착수 스태미나</span><b class="${g.company.stamina < stam ? 'warn' : ''}">${stam} / 보유 ${g.company.stamina}</b>`));
 
     const go = el('button', 'btn primary wide', '개발 시작');
-    go.disabled = !d.teamIds.length || g.company.money < cost;
+    go.disabled = !d.teamIds.length || g.company.money < cost || g.company.stamina < stam;
     go.onclick = () => {
       const r = g.beginDevelopment(d);
       if (!r.ok) { this.toast(r.why, 'bad'); return; }
@@ -1139,14 +1304,20 @@ export class UI {
     };
     box.appendChild(go);
 
-    const hpMax = ideaHp({
-      genreId: pr.genreId, platformId: d.platformId, grade: pr.grade,
-      seriesN: seriesOf ? seriesOf.seriesN + 1 : 1, rank: g.company.rank,
+    // 상대는 세 마리다. 무엇을 잡게 되는지 착수 전에 보여준다 — 세 번째는
+    // 언제나 마감이고, 두 번째는 첫 놈을 잡은 뒤 고를 조합이 이름을 준다.
+    const rounds = raidRounds({
+      genreId: pr.genreId, platformId: d.platformId, grade: pr.grade, seriesN,
     });
-    const mon = monsterFor({ hpMax });
+    const boss1 = bossFor(pr.genreId);
+    const names = [boss1.ko, '조합 보스 (내용 선택 후 결정)', '마감 데몬'];
+    const icons = ['🐱', '👹', '👿'];
     box.appendChild(el('div', 'item',
-      `<div class="t"><span class="n">상대할 아이디어</span><span class="j">${mon.ko}</span></div>
-       <div class="d">${mon.desc}<br>아이디어 HP <b>${num(hpMax)}</b></div>`));
+      `<div class="t"><span class="n">3연전</span><span class="j">약 ${rounds}라운드</span></div>
+       <div class="d">${BOSS_STAGES.map((st, i) =>
+        `${icons[i]} <b>${names[i]}</b> <span style="color:var(--dim)">— ${st.ko}</span>`).join('<br>')}
+       <br><br>보스는 <b>직원들이 자동으로</b> 공격해서 잡습니다. 전투에는 스태미나가 들지 않고,
+       직원들의 <b>체력</b>이 줄어듭니다.</div>`));
   }
 
   async _kickoff(p) {
@@ -1161,15 +1332,31 @@ export class UI {
 
   panelInDev(box) {
     const g = this.g, p = g.project;
+    ensureStages(p);
     const gen = GENRES.find((x) => x.id === p.genreId);
-    const boss = p.boss || bossFor(p.genreId);
-    box.appendChild(el('h4', 'sec', `개발 중 — ${boss.ko}`));
+    const st = currentStage(p);
+    box.appendChild(el('h4', 'sec', `개발 중 — ${st.name || st.ko}`));
     box.appendChild(el('div', 'item',
       `<div class="t"><span class="n">「${p.title}」</span><span class="stars">${stars(p.proposal.grade)}</span></div>
        <div class="d">${gen.ko} · ${PLATFORMS.find((x) => x.id === p.platformId).ko} · ${MONETIZE.find((x) => x.id === p.monetizeId).ko}</div>`));
+
+    const arena = el('button', 'btn primary wide', '⚔ 전투 화면으로');
+    arena.onclick = () => this.enterArena();
+    box.appendChild(arena);
+
+    // 세 마리의 사다리. 어디까지 왔는지가 한눈에 보여야 한다.
+    const icons = ['🐱', '👹', '👿'];
+    box.appendChild(el('div', 'item',
+      `<div class="t"><span class="n">보스 ${(p.stage || 0) + 1} / ${p.stages.length}</span>
+         <span class="j">${Math.round(raidProgress(p) * 100)}%</span></div>
+       <div class="d">${p.stages.map((x, i) => {
+        const done = i < (p.stage || 0);
+        const now = i === (p.stage || 0);
+        const nm = i <= (p.stage || 0) ? (x.name || x.ko) : (i === 1 ? '???' : (x.name || x.ko));
+        return `${icons[i]} ${done ? '<s>' + nm + '</s> ✔' : now ? '<b>' + nm + '</b> ◀' : nm}`;
+      }).join('<br>')}</div>`));
     box.appendChild(el('div', 'row', `<span>남은 HP</span><b>${num(p.hp)} / ${num(p.hpMax)}</b>`));
-    box.appendChild(el('div', 'row', `<span>페이즈</span><b>${(BOSS_PHASES[p.phase || 0] || BOSS_PHASES[0]).ko}${(p.weak || 0) > 0 ? ' · 약점!' : ''}</b>`));
-    box.appendChild(el('div', 'row', `<span>턴</span><b>${p.turn}</b>`));
+    box.appendChild(el('div', 'row', `<span>라운드</span><b>${p.turn}</b>`));
     box.appendChild(el('div', 'row', `<span>번뜩임</span><b>${p.crits}회</b>`));
     box.appendChild(el('div', 'row', `<span>반격당한 횟수</span><b>${p.attacks || 0}회</b>`));
     if (p.contentId) {
@@ -1772,7 +1959,11 @@ export class UI {
             name: o.ko + (hot ? ' 🔥' : ''),
             desc,
             right: `<span class="pill ${lb.cls}">${known ? lb.ko : '???'}</span>`,
-            onPick: () => { this.g.pickCard(o.id); this.g.save(); },
+            onPick: () => {
+              this.g.pickCard(o.id);
+              this.g.save();
+              this.showFusion(o);
+            },
           };
         }));
     } else {
@@ -1783,6 +1974,39 @@ export class UI {
           onPick: () => { this.g.pickCard(o.id); this.g.save(); },
         })));
     }
+  }
+
+  /* ---------- 합성 ----------
+     내용을 고른 그 자리에서 장르와 합쳐 보여준다. 고르기 전에는 처음 해보는
+     조합의 궁합을 감추지만(그게 발견의 재미다), 고르고 나면 무엇을 만들게
+     됐는지는 알려줘야 한다 — 그게 두 번째 보스의 정체이기 때문이다. */
+  showFusion(opt) {
+    const p = this.g.project;
+    if (!p) return;
+    const gen = GENRES.find((x) => x.id === p.genreId);
+    const c = CONTENTS.find((x) => x.id === p.contentId) || { ko: opt.ko };
+    const score = comboScore(p.genreId, p.contentId);
+    const lb = comboLabel(score);
+    const first = !this.knownCombo(p.genreId, p.contentId);
+    const st = p.stages && p.stages[1];
+    const verdict = score >= 1.35
+      ? '팀 전체가 손뼉을 쳤다. 이건 된다.'
+      : score >= 1.12 ? '나쁘지 않다. 잘 다듬으면 물건이 된다.'
+      : score >= 0.95 ? '무난하다. 결국은 만듦새 싸움이다.'
+      : '어울리지 않는다. 각오하고 만들어야 한다.';
+    this.openModal('합성', `${gen ? gen.ko : ''} × ${c.ko}`,
+      `<div class="fuse">
+         <span class="fz">${gen ? gen.ko : ''}</span>
+         <span class="fx">✚</span>
+         <span class="fz">${c.ko}</span>
+         <span class="fx">➜</span>
+         <span class="fz gold">${st ? st.name : '조합 보스'}</span>
+       </div>
+       <div class="grade" style="font-size:26px">×${score.toFixed(2)}</div>
+       <div class="gsub"><span class="pill ${lb.cls}">${lb.ko}</span>${first ? ' · <b>새로운 조합!</b>' : ''}</div>
+       <p style="font-size:12px;line-height:1.6;margin-top:10px">${verdict}</p>
+       <p style="color:var(--dim);font-size:11px;margin-top:6px">
+         궁합은 데미지와 품질에 함께 곱해집니다. 출시하면 도감에 남습니다.</p>`);
   }
 
   showFinished(p) {
@@ -1819,7 +2043,9 @@ export class UI {
        <div class="row"><span>홍보</span><b>${(MARKETING.find((m) => m.id === r.marketingId) || {}).ko || '없음'}</b></div>
        <div class="row"><span>평론가</span><b>${r.criticTotal}점</b></div>
        <div class="row"><span>남은 버그</span><b>${r.bugs}개</b></div>
-       <p style="color:var(--dim);font-size:11.5px;margin-top:10px">운영 탭에서 주간 매출을 확인할 수 있습니다. 다음 주로 넘기면 정산됩니다.</p>`);
+       <p style="color:var(--dim);font-size:11.5px;margin-top:10px">
+         한 게임은 몇 주에 걸쳐 팔리고, 매주 조금씩 식습니다.
+         화면 오른쪽 <b>판매 현황</b>에서 이번 주 매출과 남은 수명을 볼 수 있습니다.</p>`);
   }
 
   showRankUp(up) {

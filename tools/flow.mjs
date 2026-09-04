@@ -362,31 +362,9 @@ await step('보스 HP 바가 화면에 뜬다', async () => {
   if (!vis) throw new Error('.bosstag 요소가 없음');
   return vis.shown ? `표시: ${vis.txt}` : '요소는 있으나 화면 밖 (카메라 각도)';
 });
-await step('타격하면 몬스터가 반응한다', async () => {
-  const before = await page.evaluate(() => window.__view.boss.inst.clip.name);
-  await page.evaluate(() => {
-    if (window.__game.company.stamina < 2) window.__game.nextWeek();
-    window.__game.devTurn();
-  });
-  const hit = await page.evaluate(() => ({
-    clip: window.__view.boss ? window.__view.boss.inst.clip.name : null,
-    flash: window.__view.boss ? window.__view.boss.flash : 0,
-    fx: window.__view.effects.filter((e) => e.boss).length,
-  }));
-  if (!hit.clip) throw new Error('보스가 사라짐');
-  if (hit.flash <= 0) throw new Error('피격 플래시가 없음');
-  if (!hit.fx) throw new Error('보스 데미지 이펙트가 큐에 들어가지 않음');
-  // The DOM node is created on the frame that projects it, and software GL
-  // renders at a few frames a second, so give it real time rather than a tick.
-  let dom = 0;
-  for (let i = 0; i < 12; i++) {
-    dom = await page.evaluate(() => document.querySelectorAll('.dmg.big').length);
-    if (dom) break;
-    await page.waitForTimeout(250);
-  }
-  if (!dom) throw new Error('보스 위에 데미지 숫자가 안 뜸');
-  return `${before} → ${hit.clip} · 데미지 팝업 ${dom}`;
-});
+/* 살아 있는 보스만 움직인다 — 죽은 놈은 마지막 포즈에서 멈춘다. 그래서 이
+   검사는 때리기 **전**에 한다. 자동 전투로 HP 를 낮춘 뒤로 데뷔작 1번 보스는
+   한 라운드에 죽을 수도 있다. */
 await step('스켈레톤이 매 프레임 갱신된다', async () => {
   const a = await page.evaluate(() => Array.from(window.__view.boss.inst.skel.jointData.slice(0, 32)));
   await page.waitForTimeout(700);
@@ -395,6 +373,30 @@ await step('스켈레톤이 매 프레임 갱신된다', async () => {
   const moved = a.some((v, i) => Math.abs(v - b[i]) > 1e-5);
   if (!moved) throw new Error('애니메이션이 멈춰 있음');
   return '조인트 행렬 갱신 확인';
+});
+await step('타격하면 몬스터가 반응한다', async () => {
+  const before = await page.evaluate(() => window.__view.boss.inst.clip.name);
+  // 자동 전투가 된 뒤로 한 턴은 스태미나를 먹지 않는다. 데미지 숫자도
+  // 라운드 합계 하나가 아니라 사람마다 하나씩 뜬다.
+  await page.evaluate(() => window.__game.devTurn());
+  const hit = await page.evaluate(() => ({
+    clip: window.__view.boss ? window.__view.boss.inst.clip.name : null,
+    flash: window.__view.boss ? window.__view.boss.flash : 0,
+    fx: window.__view.effects.length,
+  }));
+  if (!hit.clip) throw new Error('보스가 사라짐');
+  if (hit.flash <= 0) throw new Error('피격 플래시가 없음');
+  if (!hit.fx) throw new Error('보스 데미지 이펙트가 큐에 들어가지 않음');
+  // The DOM node is created on the frame that projects it, and software GL
+  // renders at a few frames a second, so give it real time rather than a tick.
+  let dom = 0;
+  for (let i = 0; i < 12; i++) {
+    dom = await page.evaluate(() => document.querySelectorAll('.dmg').length);
+    if (dom) break;
+    await page.waitForTimeout(250);
+  }
+  if (!dom) throw new Error('보스 위에 데미지 숫자가 안 뜸');
+  return `${before} → ${hit.clip} · 데미지 팝업 ${dom}`;
 });
 let cards = 0;
 await step('HP를 0까지 (카드 2장 선택)', async () => {

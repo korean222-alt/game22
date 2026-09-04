@@ -59,6 +59,15 @@ export function monsterFor(project) {
   return pick;
 }
 
+/* 3연전에서는 종류를 체력으로 고르지 않는다. 스테이지가 곧 사다리다 —
+   장르 보스는 냥이, 조합 보스는 오크, 마감은 데몬. 세 마리를 차례로 잡는
+   구조 자체가 눈에 보여야 하기 때문이다. */
+export function monsterForStage(project) {
+  if (!project || !project.stages) return monsterFor(project);
+  const st = project.stages[Math.min(project.stage || 0, project.stages.length - 1)];
+  return (st && MONSTER_BY_ID.get(st.species)) || monsterFor(project);
+}
+
 /* A short line for the moment the fight starts, and for the moment it ends. */
 export function tauntFor(def, rnd) {
   const list = def.taunts || [];

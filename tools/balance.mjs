@@ -150,9 +150,11 @@ for (let week = 0; week < YEARS * 48; week++) {
     }
   }
 
-  // ── spend the week's stamina on the battle, then on training ──
+  // ── 이번 주에 팀이 버티는 데까지 싸운다 ──
+  // 전투는 스태미나를 먹지 않는다. 멈추는 것은 팀이 전부 쓰러졌을 때뿐이고,
+  // devTurn() 이 그때 {ok:false} 를 돌려준다. guard 는 라운드 상한(58)의 몇 배.
   let guard = 0;
-  while (g.project && c.stamina > 1 && guard++ < 80) {
+  while (g.project && guard++ < 400) {
     if (g.project.pendingCards) {
       const pc = g.project.pendingCards;
       const best = pc.kind === 'content'

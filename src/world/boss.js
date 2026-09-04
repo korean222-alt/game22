@@ -13,7 +13,7 @@
    이벤트를 몸짓으로 바꾸는 것이 전부다. */
 
 import { SkinnedModel, SkinnedInstance } from '../render/skinned.js';
-import { MONSTERS, MONSTER_BY_ID, monsterFor, tauntFor } from '../game/monsters.js';
+import { MONSTERS, MONSTER_BY_ID, monsterFor, monsterForStage, tauntFor } from '../game/monsters.js';
 import { clamp, angLerp } from '../core/math.js';
 import { STOREY } from './props.js';
 
@@ -157,4 +157,4 @@ export function bossSpot(floor) {
   return { ...BOSS_SPOT, floor: f, y: f * STOREY };
 }
 
-export { MONSTERS, MONSTER_BY_ID, monsterFor, tauntFor };
+export { MONSTERS, MONSTER_BY_ID, monsterFor, monsterForStage, tauntFor };

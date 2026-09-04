@@ -83,6 +83,9 @@ export function releaseGame(project, company, rnd, ctx = {}) {
     arpu,
     weeks: 0,
     earned: 0,
+    // 주차별 매출·유저 기록. 판매 팝업의 그래프가 이걸 읽는다 — 한 게임이
+    // 며칠(주) 동안 얼마나 팔리고 어떻게 식어가는지가 눈에 보여야 한다.
+    history: [],
     managing: true,
     marketingId: mk.id,
     combo: project.combo,
@@ -124,6 +127,10 @@ export function tickRelease(rel, rnd) {
   rel.weeks += 1;
   const income = Math.round(rel.users * rel.arpu * 0.7);
   rel.earned += income;
+  rel.lastIncome = income;
+  if (!rel.history) rel.history = [];
+  rel.history.push({ w: rel.weeks, income, users: rel.users });
+  if (rel.history.length > 26) rel.history.shift();
   // Churn, with a little noise so the curve is not a clean exponential.
   rel.users = Math.max(0, Math.round(rel.users * rel.decay * (0.97 + rnd() * 0.06)));
   if (rel.users < 60) rel.managing = false;   // the title has run its course
@@ -133,7 +140,7 @@ export function tickRelease(rel, rnd) {
 /* Research earned by finishing a project. Bigger, better-reviewed games teach
    the company more, which is what makes research a reward for ambition. */
 export function researchFromProject(project) {
-  const size = Math.log2(1 + project.hpMax / 1200);
+  const size = Math.log2(1 + (project.scale || project.hpMax) / 1200);
   const grade = 0.6 + project.proposal.grade * 0.2;
   return Math.max(2, Math.round(size * grade * 5));
 }

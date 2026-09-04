@@ -19,7 +19,7 @@ import { buildOffice, BUILDING, FLOOR_PLANS, STOREY, placeZones, inPlaceZone } f
 import { buildPlaced, buildGhost } from './world/placed.js';
 import { FURNITURE_BY_ID } from './game/furniture.js';
 import { Crew, Agent, ST } from './world/agents.js';
-import { Boss, bossSpot, preloadMonster, monsterFor, tauntFor } from './world/boss.js';
+import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, tauntFor } from './world/boss.js';
 import { Game } from './game/state.js';
 import { addMotivation } from './game/staff.js';
 import * as staffMod from './game/staff.js';
@@ -94,6 +94,7 @@ class View {
     this._skip = null;
     /* ---- 개발 배틀의 보스 ---- */
     this.boss = null;               // the idea currently being fought
+    this.arena = false;             // 보스 아레나 카메라가 켜져 있는가
     this.bossEl = null;
     this.bossProject = null;
     this.bossFloor = 0;
@@ -356,7 +357,10 @@ class View {
      새로 지으면 프레임마다 VBO 를 버리고 다시 올리게 된다. */
   ensureBoss(project) {
     if (!project) { this.clearBoss(); return; }
-    if (this.boss && !this.boss.dead && this.bossProject === project.id) return;
+    // 3연전이므로 키는 프로젝트가 아니라 **프로젝트+스테이지**다. 예전처럼
+    // 프로젝트 id 만 보면 두 번째 보스가 첫 번째 놈의 몸으로 나온다.
+    const key = project.id + ':' + (project.stage || 0);
+    if (this.boss && !this.boss.dead && this.bossProject === key) return;
     this.spawnBoss(project);
   }
 
@@ -366,8 +370,8 @@ class View {
   async spawnBoss(project) {
     this.clearBoss();
     if (!project) return;
-    const def = monsterFor(project);
-    const want = project.id;
+    const def = monsterForStage(project);
+    const want = project.id + ':' + (project.stage || 0);
     this.bossProject = want;
     const model = await preloadMonster(def);
     if (!model || this.bossProject !== want || this.game.project !== project) return;
@@ -687,28 +691,26 @@ class View {
   playBattle({ project, events }) {
     this.startWork(project.team);
     this.ensureBoss(project);
-    let total = 0, anyCrit = false;
     for (const ev of events) {
       if (ev.kind === 'hit' || ev.kind === 'crit') {
-        total += ev.damage;
-        if (ev.kind === 'crit') anyCrit = true;
         const a = this.crew.get(ev.staffId);
-        if (!a) continue;
-        a.reactWith(ev.kind === 'crit' ? 'idea' : 'type', ev.kind === 'crit' ? 1.5 : 0.7);
-        if (ev.kind === 'crit') a.say(critLine(this.rnd), 2.0, 'idea');
-        if (this.boss) this.boss.hit(ev.kind === 'crit' ? 1.4 : 0.55);
+        if (a) {
+          a.reactWith(ev.kind === 'crit' ? 'idea' : 'type', ev.kind === 'crit' ? 1.5 : 0.7);
+          if (ev.kind === 'crit') a.say(critLine(this.rnd), 2.0, 'idea');
+        }
+        if (this.boss) this.boss.hit(ev.kind === 'crit' ? 1.2 : 0.45);
         // 데미지 숫자는 맞은 쪽 — 보스 위로 뜬다. 때린 사람 위에 뜨면
         // 누가 맞고 있는지가 화면에서 사라진다.
         const src = this.boss
-          ? { x: this.boss.x + (this.rnd() - 0.5) * 5, y: this.boss.y + 1.5 + this.rnd() * 2, z: this.boss.z + (this.rnd() - 0.5) * 4 }
-          : { x: a.x, y: a.floor * STOREY + 6.4, z: a.z };
+          ? { x: this.boss.x + (this.rnd() - 0.5) * 5, y: this.boss.y + 1.5 + this.rnd() * 2.6, z: this.boss.z + (this.rnd() - 0.5) * 4 }
+          : (a ? { x: a.x, y: a.floor * STOREY + 6.4, z: a.z } : { x: 0, y: 6, z: 0 });
         this.effects.push({
           ...src, text: ev.damage, crit: ev.kind === 'crit',
-          stat: ev.stat, life: 0, ttl: 1.15, el: null,
+          stat: ev.stat, life: 0, ttl: ev.kind === 'crit' ? 1.25 : 0.85, el: null,
         });
       } else if (ev.kind === 'boss') {
         // 반격: 보스가 부풀었다가 팀원들 머리 위로 붉은 숫자가 뜬다.
-        if (this.boss) this.boss.rage(this.boss.phase);
+        if (this.boss) { this.boss.attack(this.rnd); this.boss.rage(this.boss.phase); }
         for (const h of ev.hits || []) {
           const a = this.crew.get(h.staffId);
           if (!a) continue;
@@ -724,39 +726,66 @@ class View {
           z: this.boss ? this.boss.z : 0,
           text: ev.ko, boss: true, life: 0, ttl: 1.8, el: null,
         });
-      } else if (ev.kind === 'phase') {
-        if (this.boss) { this.boss.rage((this.boss.phase || 0) + 1); this.boss.scale = 1 + (this.boss.phase || 0) * 0.08; }
-        this.focusBoss(38);
-        this.effects.push({
-          x: this.boss ? this.boss.x : 0, y: (this.boss ? this.boss.y : 0) + 6.0,
-          z: this.boss ? this.boss.z : 0,
-          text: ev.ko + ' — 약점!', boss: true, life: 0, ttl: 2.2, el: null,
-        });
+      } else if (ev.kind === 'stageClear') {
+        // 한 마리가 쓰러진다. 다음 놈은 카드를 고른 뒤에 선다.
+        if (this.boss) {
+          this.effects.push({
+            x: this.boss.x, y: this.boss.headY + 1.4, z: this.boss.z,
+            text: ev.name + ' 격파!', boss: true, life: 0, ttl: 2.4, el: null,
+          });
+          this.boss.kill();
+        }
+        for (const id of project.team) {
+          const a = this.crew.get(id);
+          if (a) a.cheerUntil = this.time + 2.6;
+        }
+      } else if (ev.kind === 'stageStart') {
+        // 새 보스. ensureBoss 가 스테이지를 키에 넣으므로 다른 몸으로 선다.
+        this.ensureBoss(project);
+        this.focusBoss(this.arena ? 34 : 38);
+      } else if (ev.kind === 'down') {
+        const a = this.crew.get(ev.staffId);
+        if (a) { a.reactWith('shock', 2.4); a.say('더는 못 하겠어…', 2.6); }
       }
     }
-    // The turn's total, over the monster's head. The per-staffer numbers say
-    // who contributed; this one says how the fight is going.
-    if (this.boss && total > 0) {
-      this.effects.push({
-        x: this.boss.x, y: this.boss.headY + 1.2, z: this.boss.z,
-        text: total, crit: anyCrit, stat: null, big: true,
-        life: 0, ttl: 1.5, el: null,
-      });
-    }
+    if (project.hp <= 0 && this.boss && !events.some((e) => e.kind === 'stageClear')) this.boss.kill();
+  }
 
-    if (this.boss && total > 0) {
-      this.boss.react(this.rnd);
-      // Every few turns the idea swings back. It changes no number — the fight
-      // is still one-sided by design — but it stops the monster reading as a
-      // punching bag halfway through a twenty-turn project.
-      if (project.turn % 4 === 0) setTimeout(() => { if (this.boss) this.boss.attack(this.rnd); }, 900);
-      this.effects.push({
-        x: this.boss.x, y: this.boss.headY + 1.2, z: this.boss.z,
-        text: total, crit: anyCrit, stat: null, boss: true,
-        life: 0, ttl: 1.5, el: null,
-      });
-    }
-    if (project.hp <= 0 && this.boss) this.boss.kill();
+  /* ══ 아레나 ══
+     보스를 화면 가운데에 놓고 낮은 각도에서 본다. 벽 자르기를 끄면 사무실이
+     통째로 보이지만, 낮은 각도에서는 앞벽이 시야를 막는다 — 그래서 켠 채로
+     둔다. 순수 카메라 연출이고 규칙은 건드리지 않는다. */
+  enterArena(project) {
+    this.arena = true;
+    this.ensureBoss(project);
+    if (this.fp && this.fp.on) this.fp.exit();
+    if (this.bossFloor !== undefined && this.bossFloor !== this.floor) this.setFloor(this.bossFloor);
+    this._camBefore = { dist: cam.goalDist, el: cam.el, az: cam.az, cut: this.wallCut };
+    // 각도가 낮을수록 액션 RPG 처럼 보이지만, 눈이 층 안으로 들어가면 앞벽과
+    // 책상이 화면의 대부분을 검게 덮는다. 벽 윗선 위로 올라오는 각도가
+    // 이 사무실에서 보스를 실제로 볼 수 있는 가장 낮은 각도다.
+    cam.goalDist = 30;
+    cam.el = 0.52;
+    this.wallCut = true;
+    if (this.boss) cam.lookAt(...this.arenaTarget());
+  }
+
+  /* 화면 아래 3분의 1은 파티 카드가 쓴다. 보스의 한복판을 화면 한복판에
+     두면 그 밴드에 다리가 잘리므로, 시선을 조금 아래로 내려 보스를 위로
+     밀어 올린다. 큰 놈일수록 더 내린다. */
+  arenaTarget() {
+    const b = this.boss;
+    if (!b) return [BUILDING.x1 / 2, this.floor * STOREY + 6, BUILDING.z1 / 2];
+    const h = Math.max(1, b.headY - b.y);
+    return [b.x, b.y + h * 0.28, b.z];
+  }
+
+  exitArena() {
+    if (!this.arena) return;
+    this.arena = false;
+    const b = this._camBefore;
+    if (b) { cam.goalDist = b.dist; cam.el = b.el; this.wallCut = b.cut; }
+    this._camBefore = null;
   }
 
   celebrate(teamIds) {
@@ -781,6 +810,12 @@ class View {
     if (this.boss) {
       this.boss.faceTo(this.bossFaceYaw());
       this.boss.update(dt);
+      // 아레나에서는 카메라가 보스를 놓지 않는다. 아주 느리게 돌아서
+      // 정지 화면처럼 보이지 않게만 한다.
+      if (this.arena) {
+        cam.lookAt(...this.arenaTarget());
+        cam.az += dt * 0.055;
+      }
       if (this.boss.dead) this.clearBoss();
     }
 
@@ -992,7 +1027,13 @@ async function boot() {
   // visit says how. Shown after boot rather than before it, so the office is
   // already behind the card and the wait does not read as a second loading
   // screen.
-  if (shouldShowInstallGuide()) wireInstallGuide($('a2hs'));
+  //
+  // 창업 팝업보다 뒤로 미룬다. 첫 방문에는 둘이 같은 순간에 뜨고, 안내 카드가
+  // 이름 입력 모달을 통째로 덮어 버려서 게임을 시작할 수가 없었다.
+  if (shouldShowInstallGuide()) {
+    if (game.company.founded) wireInstallGuide($('a2hs'));
+    else ui.onFounded = () => wireInstallGuide($('a2hs'));
+  }
 
   let last = performance.now();
   function frame(now) {
@@ -1022,6 +1063,9 @@ function resize() {
 }
 
 function tick(dt) {
+  // 전투의 시계는 화면의 시계와 같다. 따로 돌리면 탭이 백그라운드로 갔을 때
+  // 보이지 않는 곳에서 전투만 흘러간다.
+  if (ui) ui.tickBattle(dt);
   view.update(dt);
   const vp = viewportSize();
   cam.update(dt, vp.w / Math.max(1, vp.h));
