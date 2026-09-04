@@ -70,24 +70,49 @@
     <div class="tab on" data-tab="company">회사</div>
     <div class="tab" data-tab="staff">직원</div>
     <div class="tab" data-tab="dev">개발</div>
+    <div class="tab" data-tab="shop">상점</div>
+    <div class="tab" data-tab="dex">도감</div>
     <div class="tab" data-tab="live">운영</div>
     <div class="tab" data-tab="office">사무실</div>
   </div>
   <div id="panel"></div>
 </div>
 
-<!-- ══ development battle bar ══ -->
+<!-- ══ development battle bar — the boss fight ══ -->
 <div id="battle" class="card">
   <div class="bhead">
     <span class="bt2" id="bTitle">—</span>
     <span class="bmeta" id="bMeta"></span>
   </div>
+  <div class="bossline">
+    <span class="bico">👾</span>
+    <span class="bname" id="bBoss">아이디어</span>
+    <span class="bphase" id="bPhase"></span>
+  </div>
   <div class="hpwrap"><div class="hpbar" id="bHp"></div><span class="hptx" id="bHpTx"></span></div>
+  <!-- 집중 개발: 지나가는 마커를 금색 구간에서 멈추면 데미지가 크게 붙는다 -->
+  <div id="bFocus">
+    <div class="ftrack"><div class="fzone" id="bZone"></div><div class="fmark" id="bMark"></div></div>
+    <div class="fhint">금색 칸에서 <b>지금!</b> 을 누르세요</div>
+  </div>
   <div class="brow">
     <button class="btn primary" id="bTurn">개발 진행</button>
+    <button class="btn" id="bFocusBtn">집중</button>
     <button class="btn" id="bAuto">자동</button>
     <span class="bcost" id="bCost"></span>
   </div>
+  <!-- 도우미: 가방 속 소모품을 배틀 중에 바로 쓴다 -->
+  <div id="tray"></div>
+</div>
+
+<!-- ══ 개발 진행 상황 — 화면 오른쪽에 붙는 실시간 점수판 ══ -->
+<div id="prog" class="card">
+  <div class="pgh"><b id="pgTitle">—</b><span id="pgTurn"></span></div>
+  <div class="pgfun"><span>재미</span><b id="pgFun">0</b><i id="pgFunD"></i></div>
+  <div id="pgStats"></div>
+  <div class="pgrow"><span>🐞 예상 버그</span><b id="pgBugs">0</b></div>
+  <div class="pgrow"><span>✨ 번뜩임</span><b id="pgCrit">0</b></div>
+  <div class="pgt" id="pgTeam"></div>
 </div>
 
 <!-- ══ 1인칭 조작계 ══

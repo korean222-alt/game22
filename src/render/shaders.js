@@ -147,7 +147,7 @@ in vec3 vN; in vec3 vC; in float vAO; in float vFlag; in vec3 vW; in vec4 vLS; i
 flat in float vMat; in vec2 vUV;
 
 uniform vec3 uSun, uSunCol, uSkyCol, uGndCol, uHorizCol, uFogCol, uEye;
-uniform float uAmb, uFogFar, uHL, uTime, uExposure;
+uniform float uAmb, uFogFar, uHL, uTime, uExposure, uFill;
 uniform vec2 uRes, uSTexel;
 uniform float uGlassMode;
 uniform sampler2DShadow uShadow;
@@ -327,6 +327,12 @@ void main(){
     s.albedo *= 0.96 + 0.05*wv;
     s.albedo *= 1.0 + (vn3(vW*8.0)-0.5)*0.05;
     s.rough = 0.86; sheen = 0.30;
+  } else if(mat == 16){                            // self-lit: boss eyes, aura
+    // Emissive in its own vertex colour and well above 1.0, so the bloom chain
+    // picks it up. The pulse is what makes an idea monster read as alive.
+    s.emis = vC * (2.1 + 0.9*sin(uTime*3.1 + vW.y*0.7));
+    s.albedo = vC * 0.15;
+    s.rough = 0.30;
   } else {
     float g = (vn3(vW*2.3)-0.5)*0.055 + (vn3(vW*9.0)-0.5)*0.035;
     height = vn3(vW*2.3); bump = 0.006;
@@ -369,10 +375,13 @@ void main(){
   lit += skyColor(R, s.rough) * envBRDF(f0, s.rough, ndv) * uAmb * so;
 
   // ---- overhead fluorescents: a soft downward fill the sun cannot provide.
-  // Kept low: at any strength that reads as "lit", it flattens every floor and
-  // desktop into the same pale value and the room loses its shape. ----
+  // uFill is the player-facing 밝기 setting. Low values keep the room's shape;
+  // high values make a phone screen in daylight readable, which matters more
+  // than the shape does when you cannot see the game at all. A little bounce
+  // off the floor comes with it so undersides do not go to pitch. ----
   float tube = max(N.y, 0.0);
-  lit += kd * vec3(0.96,0.98,1.0) * tube * 0.085 * vAO;
+  float bounce = max(-N.y, 0.0) * 0.35;
+  lit += kd * vec3(0.96,0.98,1.0) * (tube + bounce) * uFill * vAO;
 
   // ---- cloth sheen: grazing retroreflection, the thing that reads as fabric ----
   if(sheen > 0.0){

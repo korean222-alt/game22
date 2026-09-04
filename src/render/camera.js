@@ -1,8 +1,19 @@
-/* Orbit camera for the dollhouse view of the office tower.
+/* The camera. Two modes share one object so everything downstream — the
+   renderer's wall cut, the DOM label projection, desk picking — keeps working
+   without knowing which mode is on.
 
-   The target is a point on the floor currently being inspected; azimuth and
-   elevation orbit it and the wheel dollies in. Everything is critically damped
-   toward a goal rather than snapped, so switching floors glides. */
+   orbit  dollhouse view of the tower. The target is a point on the floor being
+          inspected; azimuth and elevation orbit it and the wheel dollies in.
+   fp     first person, standing on a floor. `ui/firstperson.js` owns movement
+          and collision and writes `{x,y,z,yaw,pitch}` into `camera.fp` each
+          frame; this file only turns that into a view/projection matrix.
+
+   FACING CONVENTION (the same one the rigs use, on purpose)
+     yaw y  ->  forward = (sin y, cos y) in world XZ.
+     Screen-right is therefore (-cos y, sin y): with m4look's basis, looking
+     down +Z puts world -X on the right of the screen. Getting this backwards
+     is what makes a virtual stick feel like it is fighting you, so both
+     vectors are derived here, once, and nowhere else. */
 
 import { m4, m4mul, m4inv, m4persp, m4look, clamp, lerp } from '../core/math.js';
 
