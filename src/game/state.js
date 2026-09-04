@@ -21,6 +21,7 @@ import {
   generateProposal, startProject, battleTurn, chooseCard, finishProject, debug,
   turnCost, seedProjectIds,
 } from './project.js';
+import { TASKS, rollEvent, grantReward, rewardText } from './events.js';
 import {
   releaseGame, tickRelease, weeklyCosts, checkRankUp, cashCap, coinsFromRelease,
   researchFromProject,
@@ -63,7 +64,11 @@ export class Game {
       discovered: {},               // combo log: "genre|content" -> best score
       contract: null,               // { id, weeksLeft, pay, research }
       marketingId: 'none',
+      recentCombos: [],             // the last few genre|content keys shipped
+      tasksDone: {},                // sales tasks already paid out
+      eventsSeen: 0,
     };
+    this.pendingEvent = null;       // a weekly event waiting on the player
     this.staff = [];
     this.proposals = [];
     this.project = null;         // the project currently in development
@@ -149,8 +154,9 @@ export class Game {
   }
 
   /* ---------- hiring ---------- */
-  rollCandidates() {
-    this.candidates = rollCandidates(this.rnd, this.company.rank, 3);
+  rollCandidates(quality = 1) {
+    this.candidates = rollCandidates(this.rnd, this.company.rank, 3, quality);
+    this.emit('staff', null);
   }
 
   hire(candidateId) {
@@ -164,7 +170,11 @@ export class Game {
     this.candidates = this.candidates.filter((x) => x.id !== candidateId);
     this.note(`${c.name} (${JOBS[c.job].ko}) 입사.`, 'good');
     if (this.desks) this.assignDesks(this.desks);
+    // The office walks a new hire in through the front door rather than
+    // teleporting them into a chair, so hiring is something you SEE happen.
+    this.emit('hired', c);
     this.emit('staff', null);
+    this.checkTasks();
     return { ok: true };
   }
 
@@ -176,6 +186,9 @@ export class Game {
     }
     this.staff = this.staff.filter((x) => x.id !== staffId);
     this.note(`${s.name} 퇴사.`, 'bad');
+    // Emitted BEFORE 'staff' so the view can hold on to the agent and walk it
+    // out of the building instead of deleting a body that is still in a chair.
+    this.emit('fired', s);
     this.emit('staff', null);
     return { ok: true };
   }
@@ -316,10 +329,12 @@ export class Game {
     // Research earned, and the combo written into the discovery log.
     const rp = researchFromProject(p);
     this.company.researchPts += rp;
+    let discovered = null;
     if (p.contentId) {
       const key = `${p.genreId}|${p.contentId}`;
       const score = comboScore(p.genreId, p.contentId);
       const prev = this.company.discovered[key];
+      if (!prev) discovered = { key, score };
       if (!prev || score > prev.score || p.criticTotal > prev.critic) {
         this.company.discovered[key] = {
           score, critic: Math.max(p.criticTotal, prev ? prev.critic : 0), title: p.title,
@@ -339,10 +354,27 @@ export class Game {
     this.project = null;
     this.finished = p;
     this.company.marketingId = 'none';
+    // Every proposal on the desk was written for a company that has now moved
+    // on: finishing a game clears the pile and you draw fresh ones. Without
+    // this a player banks a five-star proposal in year one and never has to
+    // think about 기획 again.
+    const dropped = this.proposals.length;
+    this.proposals = [];
     this.note(`「${p.title}」 완성! 평론가 합계 ${p.criticTotal}점, 버그 ${p.bugs}개 · 연구 +${rp}`,
       p.hallOfFame ? 'good' : 'info');
+    if (dropped) this.note(`남아 있던 기획서 ${dropped}건은 폐기됐다. 새로 뽑아야 한다.`);
+    if (discovered) {
+      const g = GENRES.find((x) => x.id === p.genreId);
+      const c = CONTENTS.find((x) => x.id === p.contentId);
+      this.company.researchPts += 8;
+      this.company.coins += 1;
+      this.note(`새 조합 발견: ${g ? g.ko : ''} × ${c ? c.ko : ''} — 도감에 기록됐다. 연구 +8 · 코인 +1`, 'good');
+      this.emit('discovery', { ...discovered, genreKo: g ? g.ko : '', contentKo: c ? c.ko : '' });
+    }
     if (p.hallOfFame) this.note('명예의 전당 등재! 이제 속편을 만들 수 있다.', 'good');
+    this.emit('proposals', null);
     this.emit('finished', p);
+    this.checkTasks();
   }
 
   debugProject() {
@@ -350,8 +382,11 @@ export class Game {
     if (!p || p.bugs <= 0) return { ok: false, why: '고칠 버그가 없다' };
     if (this.company.stamina < 1) return { ok: false, why: '스태미나 부족' };
     this.company.stamina -= 1;
+    const wasHof = p.hallOfFame;
     const r = debug(p, this.staffById(), this.rnd);
-    this.note(`디버그: 버그 ${r.fixed}개 수정 (남은 ${p.bugs}개)`);
+    const gained = r.gained > 0 ? ` · 평론가 +${r.gained}점 (${p.criticTotal}점)` : '';
+    this.note(`디버그: 버그 ${r.fixed}개 수정 (남은 ${p.bugs}개)${gained}`, r.gained > 0 ? 'good' : 'info');
+    if (!wasHof && p.hallOfFame) this.note('버그를 잡아 명예의 전당에 올랐다!', 'good');
     this.emit('finished', p);
     return { ok: true, ...r };
   }
@@ -369,7 +404,7 @@ export class Game {
       return { ok: false, why: `홍보비 부족 (₩${mkCost.toLocaleString()})` };
     }
     const { release, fansGained } = releaseGame(p, this.company, this.rnd,
-      this.ctx({ marketingId: mk.id, team: this.teamOf(p) }));
+      this.ctx({ marketingId: mk.id, team: this.teamOf(p), recent: this.company.recentCombos || [] }));
     this.releases.unshift(release);
     this.company.fans += fansGained;
     this.company.coins += coinsFromRelease(release);
@@ -379,11 +414,18 @@ export class Game {
       criticTotal: p.criticTotal, users: release.users, at: this.dateLabel(),
     });
     this.finished = null;
+    // The last three shipped pairings, so 재탕 can be detected on the next one.
+    const key = `${p.genreId}|${p.contentId}`;
+    this.company.recentCombos = [key, ...(this.company.recentCombos || [])].slice(0, 3);
     const mkNote = mk.id === 'none' ? '' : ` · ${mk.ko} ₩${mkCost.toLocaleString()}`;
     const trendNote = release.trendHit ? ' · 유행을 탔다!' : '';
     this.note(`「${release.title}」 출시! 초기 유저 ${release.users.toLocaleString()}명, 팬 +${fansGained.toLocaleString()}${mkNote}${trendNote}`, 'good');
+    for (const n of release.notes || []) {
+      if (n.cls === 'bad') this.note(n.ko, 'bad');
+    }
     this.emit('release', release);
     this._maybeRankUp();
+    this.checkTasks();
     return { ok: true, release };
   }
 
@@ -507,9 +549,77 @@ export class Game {
     this.emit('trends', this.company.trends);
   }
 
+  /* ---------- 주간 이벤트 ----------
+     A week that is only "정산 + 스태미나 회복" has no texture. An event lands
+     every few weeks; some are a flat outcome, some are a decision the player
+     answers before the week can roll on. */
+  rollWeeklyEvent() {
+    if (this.pendingEvent) return null;
+    const ev = rollEvent(this, this.rnd);
+    if (!ev) return null;
+    this.company.eventsSeen = (this.company.eventsSeen || 0) + 1;
+    if (ev.def.choices) {
+      // Only the options the company can actually afford are offered, and the
+      // last one is always answerable, so an event can never soft-lock a turn.
+      const opts = ev.def.choices.filter((c) => !c.can || c.can(this));
+      ev.options = opts.length ? opts : [ev.def.choices[ev.def.choices.length - 1]];
+      this.pendingEvent = ev;
+      this.emit('event', ev);
+      return ev;
+    }
+    const line = ev.def.apply ? ev.def.apply(this, this.rnd, ev.target) : '';
+    this.note(`${ev.icon || ''} ${ev.ko}: ${ev.text}${line ? ' — ' + line : ''}`);
+    this.emit('event', { ...ev, resolved: true, line });
+    this.checkTasks();
+    return ev;
+  }
+
+  answerEvent(index) {
+    const ev = this.pendingEvent;
+    if (!ev) return { ok: false };
+    const opt = ev.options[index] || ev.options[0];
+    const line = opt.apply ? opt.apply(this, this.rnd, ev.target) : '';
+    this.pendingEvent = null;
+    this.note(`${ev.icon || ''} ${ev.ko} → ${opt.ko}${line ? ' · ' + line : ''}`);
+    this.emit('event', { ...ev, resolved: true, line });
+    this.emit('staff', null);
+    this.checkTasks();
+    return { ok: true, line };
+  }
+
+  /* ---------- 세일즈 태스크 ----------
+     A standing list of things the company has not done yet, each paying once.
+     Checked after anything that could complete one rather than on a timer, so
+     the reward lands in the same beat as the action that earned it. */
+  tasks() {
+    const done = this.company.tasksDone || {};
+    return TASKS.map((t) => ({ ...t, complete: !!done[t.id] }));
+  }
+
+  checkTasks() {
+    const done = this.company.tasksDone = this.company.tasksDone || {};
+    let any = false;
+    for (const t of TASKS) {
+      if (done[t.id]) continue;
+      let ok = false;
+      try { ok = t.done(this); } catch (e) { ok = false; }
+      if (!ok) continue;
+      done[t.id] = true;
+      grantReward(this, t.reward);
+      this.note(`태스크 달성: ${t.ko} — ${rewardText(t.reward)}`, 'good');
+      this.emit('task', t);
+      any = true;
+    }
+    if (any) this._maybeRankUp();
+    return any;
+  }
+
   /* ---------- the week clock ---------- */
   nextWeek() {
     const c = this.company;
+    // An unanswered event blocks the week: the whole point of a choice is that
+    // the world waits for it.
+    if (this.pendingEvent) { this.emit('event', this.pendingEvent); return { blocked: true }; }
     let income = 0;
     for (const r of this.releases) income += tickRelease(r, this.rnd);
     const costs = weeklyCosts(c, this.staff);
@@ -562,6 +672,10 @@ export class Game {
     if (this.rnd() > 0.72) this.rollCandidates();
 
     this.emit('week', { income, costs });
+    this.checkTasks();
+    // Roughly one week in five. Frequent enough that a year has a shape,
+    // rare enough that it never becomes the thing you are playing.
+    if (this.rnd() < 0.21) this.rollWeeklyEvent();
     return { income, costs };
   }
 
@@ -604,6 +718,18 @@ export class Game {
       c.discovered = c.discovered || {};
       c.marketingId = c.marketingId || 'none';
       c.contract = c.contract || null;
+      c.recentCombos = c.recentCombos || [];
+      c.tasksDone = c.tasksDone || {};
+      c.eventsSeen = c.eventsSeen || 0;
+      // Saves written before the score/bug split have no criticBase, so a
+      // debug pass would have nothing to recompute from. Reconstruct it from
+      // the scores the save does have.
+      for (const pr of [g.finished, g.project]) {
+        if (pr && pr.critics && !pr.criticBase) {
+          const pen = Math.min(2.6, (pr.bugs || 0) * 0.11);
+          pr.criticBase = pr.critics.map((v) => v + pen);
+        }
+      }
       if (!c.trends) g.rollTrends();
       // Ids must not collide with anything the save already used.
       seedIds(Math.max(0, ...g.staff.map((s) => s.id), ...g.candidates.map((s) => s.id)) + 1);
@@ -624,5 +750,5 @@ export class Game {
 export {
   STATS, JOBS, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, RESEARCH, CONTRACTS, MARKETING,
   abilities, power, role, rankInfo, RANK_UP_FANS, itemCost, trainStamina, floorCost,
-  expToNext,
+  expToNext, TASKS, rewardText,
 };
