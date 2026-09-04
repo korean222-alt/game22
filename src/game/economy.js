@@ -43,9 +43,18 @@ export function releaseGame(project, company, rnd, ctx = {}) {
   let starMult = 1;
   for (const s of ctx.team || []) starMult *= traitMult(s, 'fans');
 
+  // 재탕. The doc lists "이거 전에 본 것 같은데" as one of the original's release
+  // events, and it is the one that stops a discovered combo from being the
+  // answer forever: shipping the same genre × content you just shipped reads as
+  // a rerun and the market treats it as one.
+  const key = `${project.genreId}|${project.contentId}`;
+  const recent = ctx.recent || [];
+  const repeats = recent.filter((k) => k === key).length;
+  const rehashMult = repeats >= 2 ? 0.55 : repeats === 1 ? 0.76 : 1;
+
   const users = Math.max(400, Math.round(
     pull * 26 * platform.fans * money.users * bugPenalty * fanBoost * sequelBoost * hofBoost
-    * res.users * mk.users * trendMult * starMult
+    * res.users * mk.users * trendMult * starMult * rehashMult
     * (0.85 + rnd() * 0.3)
   ));
 
@@ -76,8 +85,32 @@ export function releaseGame(project, company, rnd, ctx = {}) {
     earned: 0,
     managing: true,
     marketingId: mk.id,
+    combo: project.combo,
     trendHit: trendMult > 1.1,
+    repeats,
   };
+
+  /* Why the launch went the way it did, in the player's language.
+
+     The doc is explicit that the original names its release events rather than
+     hiding them in a multiplier, and that this is what turns a flop into
+     information: a line saying 버그가 너무 많다 is something you can act on next
+     time, a silent ×0.6 is not. */
+  rel.notes = [];
+  const note = (ko, cls) => rel.notes.push({ ko, cls });
+  if (trendMult > 1.4) note('시장의 유행을 정면으로 탔다', 'great');
+  else if (trendMult > 1.1) note('유행과 조금 맞았다', 'good');
+  else if (trendMult < 0.95) note('지금 시장이 원하는 장르가 아니다', 'bad');
+  if (project.combo >= 1.55) note('장르와 소재가 환상적으로 맞았다', 'great');
+  else if (project.combo >= 1.25) note('장르와 소재의 궁합이 좋다', 'good');
+  else if (project.combo < 0.82) note('장르와 소재가 서로 겉돈다', 'bad');
+  if (repeats >= 2) note('또 같은 조합? 재탕이라는 말이 나온다', 'bad');
+  else if (repeats === 1) note('직전 작품과 비슷하다는 평이 있다', 'bad');
+  if (project.bugs >= 14) note('버그가 너무 많아 평이 나쁘다', 'bad');
+  else if (project.bugs === 0) note('버그 하나 없는 깔끔한 빌드', 'great');
+  if (project.hallOfFame) note('명예의 전당 등재작', 'great');
+  if (mk.id !== 'none') note(`${mk.ko} 효과로 초기 유입이 늘었다`, 'good');
+  if (project.seriesN > 1) note(`시리즈 ${project.seriesN}편, 팬들이 기다렸다`, 'good');
 
   // Fans the launch wins the company, which raises the floor on every future
   // release and is what actually drives rank.

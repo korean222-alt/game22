@@ -56,8 +56,9 @@
   <div class="s" id="coName">스튜디오 게임22</div>
 </div>
 
-<!-- panel show/hide, and fullscreen -->
+<!-- panel show/hide, first person, and fullscreen -->
 <button id="menuBtn" class="iconbtn" aria-label="패널 열기/닫기"><span></span><span></span><span></span></button>
+<button id="fpBtn" class="iconbtn" aria-label="1인칭 시점">🚶</button>
 <button id="fsBtn" class="iconbtn" aria-label="전체화면">⛶</button>
 
 <!-- ══ floor selector ══ -->
@@ -96,8 +97,59 @@
 <!-- ══ 배치 모드 툴바: 패널이 닫힌 채로 바닥을 보며 쓴다 ══ -->
 <div id="placebar" class="card"></div>
 
+<!-- ══ 1인칭 조작계 ══
+     Only rendered while body.fp is on. The stick and the buttons are DOM, not
+     canvas hit-testing, so a thumb on the stick can never be mistaken for a
+     look-drag. -->
+<div id="fpui">
+  <div id="fpStick"><div class="knob"></div></div>
+  <div id="fpReticle"></div>
+  <div id="fpPrompt"></div>
+  <div id="fpSay"></div>
+  <div id="fpBtns">
+    <button class="fpbtn act" id="fpAct">상호작용</button>
+    <button class="fpbtn" id="fpExit">시점 나가기</button>
+  </div>
+  <div id="fpHelp">이동 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · 시점 드래그 · 상호작용 <kbd>E</kbd> · 나가기 <kbd>F</kbd></div>
+</div>
+
 <!-- ══ 사무실 공사 배너: 층을 사면 월드를 다시 짓는다 ══ -->
 <div id="busy">사무실 공사 중</div>
+
+<!-- ══ 홈 화면에 추가 안내 ══
+     The game is a website first and a home-screen app second, and the two are
+     not the same product: in Safari or Chrome the browser chrome eats a third
+     of a landscape phone and the game cannot go fullscreen. So the very first
+     visit explains how to install it, and remembers if you would rather it
+     did not ask again. -->
+<div id="a2hs">
+  <div class="a2c card">
+    <div class="a2tag">시작하기 전에</div>
+    <h3>홈 화면에 추가해 주세요</h3>
+    <p class="a2p">브라우저 주소창이 화면을 가려서, 홈 화면 앱으로 실행할 때 가장 잘 보입니다.
+      한 번만 추가하면 다음부터는 앱처럼 바로 열립니다.</p>
+    <div class="a2tabs">
+      <button class="a2tab on" data-os="ios">📱 아이폰 · 아이패드</button>
+      <button class="a2tab" data-os="and">🤖 갤럭시 · 안드로이드</button>
+    </div>
+    <ol class="a2steps" id="a2ios">
+      <li>사파리 아래쪽 가운데의 <b>공유 버튼</b> <span class="a2ic">⬆</span> 을 누릅니다.</li>
+      <li>메뉴를 내려서 <b>“홈 화면에 추가”</b> 를 누릅니다.</li>
+      <li>오른쪽 위 <b>“추가”</b> 를 누르면 끝입니다.</li>
+      <li>홈 화면의 아이콘으로 실행하고, <b>가로로</b> 돌려 주세요.</li>
+    </ol>
+    <ol class="a2steps" id="a2and" hidden>
+      <li>크롬 오른쪽 위의 <b>⋮ 메뉴</b> 를 누릅니다.</li>
+      <li><b>“홈 화면에 추가”</b> 또는 <b>“앱 설치”</b> 를 누릅니다.</li>
+      <li><b>“설치”</b> 를 누르면 끝입니다.</li>
+      <li>홈 화면의 아이콘으로 실행하고, <b>가로로</b> 돌려 주세요.</li>
+    </ol>
+    <div class="a2row">
+      <button class="btn" id="a2never">다시 보지 않기</button>
+      <button class="btn primary" id="a2close">닫기</button>
+    </div>
+  </div>
+</div>
 
 <!-- ══ modal: idea cards, release, rank up ══ -->
 <div id="modal">
@@ -111,7 +163,7 @@
 </div>
 
 <div id="toast" class="card"></div>
-<div id="hint">한 손가락 회전 · 두 손가락 확대 · 층 버튼으로 이동</div>
+<div id="hint">한 손가락 회전 · 두 손가락 확대 · 🚶 버튼으로 1인칭 시점</div>
 
 <script type="module" src="./src/main.js"></script>
 <script>

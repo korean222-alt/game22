@@ -174,7 +174,11 @@ for (let week = 0; week < YEARS * 48; week++) {
   }
   for (const s of g.staff) g.promoteStaff(s.id);
 
+  // A weekly event with a choice holds the calendar until it is answered; the
+  // AI always takes the first affordable option.
+  if (g.pendingEvent) g.answerEvent(0);
   g.nextWeek();
+  if (g.pendingEvent) g.answerEvent(0);
 
   if (week % 48 === 47) {
     const last = g.releases[0];

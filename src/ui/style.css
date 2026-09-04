@@ -602,3 +602,135 @@ body.meeting::after{
   box-shadow:0 6px 22px rgba(0,0,0,.45);
 }
 body.busy #busy{display:block}
+
+/* ── 세일즈 태스크 ── */
+.task{display:flex;align-items:center;gap:7px;padding:6px 8px;margin-bottom:4px;border-radius:8px;
+  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.07);font-size:11px}
+.task .tk{width:14px;height:14px;border-radius:4px;flex:none;background:rgba(255,255,255,.10);
+  display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--good)}
+.task .tt{flex:1;min-width:0}
+.task .tr{flex:none;color:var(--gold);font-weight:700;font-size:10px}
+.task.done{opacity:.5}
+.task.done .tk{background:rgba(113,192,122,.24)}
+.task.done .tr{color:var(--good)}
+
+/* ── 출시 결과 한 줄 평 ──
+   The doc's point that a flop must be information, not a hidden multiplier:
+   each line names one thing that moved the launch. */
+.verd{font-size:11px;padding:5px 9px;border-radius:7px;margin:4px 0;line-height:1.4;
+  background:rgba(255,255,255,.05);border-left:3px solid rgba(255,255,255,.18)}
+.verd.great{background:rgba(232,176,85,.14);border-left-color:var(--gold);color:#f3dfb6}
+.verd.good{background:rgba(113,192,122,.12);border-left-color:var(--good);color:#cfe6d1}
+.verd.bad{background:rgba(208,100,76,.13);border-left-color:var(--bad);color:#eec3b8}
+
+/* ── 홈 화면에 추가 안내 ──
+   Shown once, over everything, before the first game. It is deliberately not
+   the normal modal: it has to be readable while the office is still booting
+   behind it, and it owns its own dismiss buttons. */
+#a2hs{
+  position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;
+  padding:calc(var(--sat) + 10px) calc(var(--sar) + 12px) calc(var(--sab) + 10px) calc(var(--sal) + 12px);
+  background:rgba(8,9,12,.78);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+}
+#a2hs.show{display:flex}
+#a2hs .a2c{
+  width:min(430px,100%);max-height:100%;overflow:auto;padding:16px 18px;border-radius:14px;
+}
+.a2tag{font-size:8.5px;letter-spacing:2.2px;text-transform:uppercase;color:var(--gold);font-weight:700}
+#a2hs h3{margin:4px 0 6px;font-size:16px}
+.a2p{margin:0 0 10px;font-size:11.5px;line-height:1.6;color:var(--dim)}
+.a2tabs{display:flex;gap:6px;margin-bottom:9px}
+.a2tab{
+  flex:1;padding:8px 6px;border-radius:9px;font:inherit;font-size:11px;font-weight:700;
+  background:rgba(255,255,255,.06);border:1px solid var(--edge);color:var(--dim);cursor:pointer;
+}
+.a2tab.on{background:rgba(232,176,85,.16);border-color:rgba(232,176,85,.55);color:var(--gold)}
+.a2steps{margin:0;padding-left:19px;font-size:11.5px;line-height:1.85;color:#dcd8ce}
+.a2steps b{color:var(--txt)}
+.a2ic{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;
+  border-radius:4px;background:rgba(111,176,220,.22);color:var(--sky);font-size:10px;vertical-align:-3px}
+.a2row{display:flex;gap:7px;margin-top:13px}
+.a2row .btn{flex:1;margin:0}
+@media (max-height:470px){
+  #a2hs .a2c{padding:12px 14px}
+  #a2hs h3{font-size:14px}
+  .a2p{font-size:10.5px;margin-bottom:7px}
+  .a2steps{font-size:10.5px;line-height:1.6}
+}
+
+/* ── 1인칭 시점 ──
+   The management UI gets out of the way entirely: down here you are a person in
+   an office, not a spreadsheet. Only the HUD and the floor rail stay, because
+   both still mean something while walking around. */
+/* .iconbtn hides by default and the shell reveals #menuBtn/#fsBtn only on a
+   touch or compact layout. First person is a feature, not a mobile
+   affordance, so this one is always on screen — and it sits in the band right
+   of the panel, like the battle bar, so an open panel never covers it. */
+#fpBtn{
+  display:flex;font-size:17px;
+  bottom:calc(var(--sab) + var(--gap));
+  left:calc(var(--sal) + var(--panel-cur) + var(--gap)*2);
+  transition:left .26s cubic-bezier(.2,.85,.25,1);
+}
+body.in-battle #fpBtn{bottom:calc(var(--sab) + var(--gap) + 96px)}
+/* Walking, the corner belongs to the movement stick and 시점 나가기 already
+   does the job, so the toggle steps aside. */
+body.fp #fpBtn{display:none}
+body.fp #side{transform:translateX(calc(-100% - var(--sal) - var(--gap) - 4px));opacity:0;pointer-events:none}
+body.fp #battle{transform:translateY(150%)}
+body.fp #menuBtn,body.fp #brand,body.fp #hint{opacity:0;pointer-events:none}
+
+#fpui{position:fixed;inset:0;z-index:12;display:none;pointer-events:none}
+body.fp #fpui{display:block}
+
+#fpStick{
+  position:absolute;left:calc(var(--sal) + 16px);bottom:calc(var(--sab) + 16px);
+  width:112px;height:112px;border-radius:50%;pointer-events:auto;touch-action:none;
+  background:rgba(16,18,23,.42);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+}
+#fpStick .knob{
+  position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;
+  border-radius:50%;background:rgba(232,176,85,.34);border:1px solid rgba(232,176,85,.55);
+  transition:transform .05s linear;
+}
+#fpBtns{position:absolute;right:calc(var(--sar) + 16px);bottom:calc(var(--sab) + 16px);
+  display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:auto}
+.fpbtn{
+  padding:11px 16px;border-radius:11px;font:inherit;font-size:12px;font-weight:700;
+  background:var(--pan2);border:1px solid var(--edge);color:var(--txt);cursor:pointer;
+  min-height:42px;touch-action:manipulation;
+}
+.fpbtn.act{background:var(--gold);border-color:var(--gold);color:#241a08;min-width:118px}
+.fpbtn.act:disabled{opacity:.35}
+
+#fpReticle{
+  position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;
+  background:rgba(255,255,255,.55);box-shadow:0 0 0 1px rgba(0,0,0,.4);
+}
+#fpPrompt{
+  position:absolute;left:50%;top:calc(50% + 20px);transform:translateX(-50%);
+  font-size:11.5px;font-weight:700;color:#fff;background:rgba(16,18,23,.78);
+  padding:5px 12px;border-radius:8px;white-space:nowrap;opacity:0;transition:opacity .12s ease;
+  border:1px solid rgba(255,255,255,.14);
+}
+#fpPrompt.on{opacity:1}
+#fpSay{
+  position:absolute;left:50%;bottom:calc(var(--sab) + 152px);transform:translateX(-50%);
+  max-width:min(460px,80vw);text-align:center;font-size:12.5px;line-height:1.5;
+  color:#fff;background:rgba(16,18,23,.86);border:1px solid rgba(232,176,85,.35);
+  padding:9px 15px;border-radius:11px;opacity:0;transition:opacity .18s ease;
+}
+#fpSay.on{opacity:1}
+#fpHelp{
+  position:absolute;left:50%;top:calc(var(--sat) + var(--hud-h) + 16px);transform:translateX(-50%);
+  font-size:10px;color:rgba(255,255,255,.62);background:rgba(16,18,23,.62);
+  padding:4px 11px;border-radius:8px;white-space:nowrap;
+}
+body.touch #fpHelp{display:none}
+@media (max-height:470px){
+  #fpStick{width:92px;height:92px}
+  #fpStick .knob{width:38px;height:38px;margin:-19px 0 0 -19px}
+  .fpbtn{padding:9px 13px;font-size:11.5px;min-height:38px}
+  #fpSay{bottom:calc(var(--sab) + 124px);font-size:11.5px}
+}

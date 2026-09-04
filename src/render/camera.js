@@ -18,6 +18,13 @@ export class OrbitCamera {
 
     this.vp = m4(); this.proj = m4(); this.view = m4(); this.inv = m4();
     this.eye = [0, 0, 0];
+
+    /* First person is a MODE of this camera rather than a second camera, so
+       everything downstream — the projection helpers the DOM overlay uses, the
+       ray picker, the renderer's uniform block — keeps working untouched. When
+       `fp` is set it is { x, y, z, yaw, pitch } in world space. */
+    this.fp = null;
+    this.fpFov = 1.15;
   }
 
   lookAt(x, y, z) { this.gx = x; this.gy = y; this.gz = z; }
@@ -48,6 +55,7 @@ export class OrbitCamera {
   }
 
   update(dt, asp) {
+    if (this.fp) { this._updateFP(asp); return; }
     // Frame-rate independent damping: the 1-exp form keeps the same feel at
     // 30fps and 144fps, which a raw lerp(a,b,0.1) does not.
     const k = 1 - Math.exp(-dt * 9);
@@ -64,6 +72,26 @@ export class OrbitCamera {
 
     m4look(this.view, e[0], e[1], e[2], this.tx, this.ty, this.tz, 0, 1, 0);
     m4persp(this.proj, this.fov, asp, 0.5, 1200);
+    m4mul(this.vp, this.proj, this.view);
+    m4inv(this.inv, this.vp);
+  }
+
+  /* Eye and focus are the same point in first person, which is exactly what
+     switches the wall cut off: the shader needs an eye-to-target direction to
+     dissolve along, and a zero-length one means "cut nothing". Standing inside
+     the office, that is the behaviour you want — the walls are the room. The
+     near plane has to come in too, or a desk you are leaning over clips away. */
+  _updateFP(asp) {
+    const f = this.fp;
+    const e = this.eye;
+    e[0] = f.x; e[1] = f.y; e[2] = f.z;
+    this.tx = f.x; this.ty = f.y; this.tz = f.z;
+    this.gx = f.x; this.gy = f.y; this.gz = f.z;
+    const cp = Math.cos(f.pitch);
+    m4look(this.view, e[0], e[1], e[2],
+      f.x + Math.sin(f.yaw) * cp, f.y + Math.sin(f.pitch), f.z + Math.cos(f.yaw) * cp,
+      0, 1, 0);
+    m4persp(this.proj, this.fpFov, asp, 0.16, 1200);
     m4mul(this.vp, this.proj, this.view);
     m4inv(this.inv, this.vp);
   }

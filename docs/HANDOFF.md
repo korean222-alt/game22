@@ -46,7 +46,10 @@ src/
             boss                                  보스 몬스터 상태 기계
   game/     data state staff project economy dialogue   순수 시뮬레이션 (DOM/WebGL 없음)
             furniture monsters tutorial           가구 카탈로그 · 몬스터 정의 · 튜토리얼
+  game/     data state staff project economy dialogue events
+                                                  순수 시뮬레이션 (DOM/WebGL 없음)
   ui/       hud device style.css                  DOM 오버레이
+            firstperson                           1인칭 이동·충돌·상호작용 (규칙은 모름)
   main.js                                         셋을 묶는 View + 부트스트랩
 assets/monsters/  cat.glb orc.glb demon.glb       유일한 외부 에셋 (Quaternius CC0)
 tools/      balance sloppy flow meeting probe     테스트 하네스 (아래 5장)
@@ -74,6 +77,8 @@ tools/      balance sloppy flow meeting probe     테스트 하네스 (아래 5�
 | 창업 지원금 · 긴급 지원금 | `game/data.js` 의 `STARTUP_GRANT` · `rescueAmount()` |
 | 직원 걷기/회의 행동 | `world/agents.js` |
 | 회의 대사 | `game/dialogue.js` |
+| 주간 이벤트 · 세일즈 태스크 | `game/events.js` (데이터+효과), `game/state.js` 의 `rollWeeklyEvent`/`checkTasks` |
+| 1인칭 이동·상호작용 | `ui/firstperson.js` (조작), `main.js` 의 `wireFirstPerson()` (게임과 연결) |
 | 카메라·연출 | `main.js` 의 `View` 클래스 |
 
 ---
@@ -295,6 +300,12 @@ planBonus = 1 + t × 0.18  // 기획력 배율
 | 새 직원이 화면에 안 나타남 | `hire()` 는 `staff` 이벤트만 쏜다. `ui/hud.js` 가 그걸 `view.syncAgents()` 로 연결한다. 사무실이 비어서 시작하게 되면서 드러난 오래된 버그 |
 | 배치 검사에 가구가 포함된 격자를 씀 | 옮기려는 가구 자신과 충돌한다. 격자는 **두 벌** — `navBase`(건물만, 배치 검사용)와 `navs`(건물+가구, 길찾기용) |
 | 배치 구역 없이 벽 충돌만 검사 | 출입구와 승강기 로비는 빈 공간이라 통과한다. `PLACE_ZONES` 가 **먼저** 걸러야 한다 |
+| 랭크 1 `staffCap` 이 창업 멤버 수와 같음 | 첫날부터 채용이 전부 "정원 초과". 지금은 7명(창업 5명)으로 여유를 둔다 |
+| `View.syncAgents()` 를 채용/퇴사에서 부르지 않음 | 퇴사자가 자리에 계속 앉아 있고 신입은 3D 에 안 나타난다. `state` 가 `hired`/`fired`/`staff` 를 emit 하고 `main.js` 가 받는다 |
+| 1-999 품질을 `/4` 해서 막대 폭으로 | 데뷔작 9점이 2% 막대 → "그래프가 안 올라온다". `hud.js` 의 `qBar()` 포화 곡선을 쓸 것 |
+| `monitor()` 를 데스크 깊이 축으로 만듦 | 화면이 옆을 보고, 게다가 와인딩이 뒤집혀 뒷면이 앞이었다. 지금은 좌석 방향으로 향한다 (`props.js` 주석의 FACING 절) |
+| 이동 슬라이드에서 축 성분이 1e-16 | 정북으로 걸으면 dx≈0 인데 "x 로 이동했다" 처리되어 제자리. `firstperson.js` 의 EPS |
+| 선택지 이벤트를 답하지 않고 `nextWeek()` | 주가 넘어가지 않는다 (`{blocked:true}` 반환). 하네스는 `answerEvent(0)` 을 부를 것 |
 
 ---
 
@@ -337,6 +348,10 @@ node tools/probe.mjs      # 부팅만 (에러/단계별 타이밍/월드 통계)
 node tools/meeting.mjs    # 창업·가구·채용 → 경로탐색 → 회의 → 착석 → 복귀
 node tools/flow.mjs       # 전체 34개 검사. 지금 34/34 통과
 node tools/shots.mjs      # 눈으로 볼 것들의 스크린샷 (CI 아님)
+node tools/meeting.mjs    # 경로탐색 → 회의 시작 → 착석 → 말풍선 → 복귀
+node tools/flow.mjs       # 핵심 루프 19개 검사. 지금 19/19 통과
+node tools/features.mjs  # 채용·퇴사 연출, 기획서 폐기, 디버그 점수, 품질 막대,
+                         # 미발견 조합, 주간 이벤트, 세일즈 태스크, 1인칭. 19/19
 ```
 
 환경변수: `PLAYWRIGHT=` (기본 `/opt/node22/.../playwright/index.mjs`),
@@ -347,7 +362,10 @@ node tools/shots.mjs      # 눈으로 볼 것들의 스크린샷 (CI 아님)
 SwiftShader 가 느리므로 **고정 딜레이 대신 상태를 폴링**하도록 짜여 있다.
 
 `flow.mjs` 마지막에 `flow-final.png` 가 떨어진다. 렌더링이 눈으로 멀쩡한지
-확인할 때 쓸 것.
+확인할 때 쓸 것. `features.mjs` 는 단계마다 스크린샷을 남긴다 (`01-a2hs.png`
+… `06-back.png`).
+
+`tools/` 하네스는 `tools/` 이름을 README 의 구조 목록에도 넣어둔다.
 
 `shots.mjs` 는 **숫자로 검사할 수 없는 것**을 위한 것이다. 스킨드 몬스터는
 조인트가 전부 유한하고 올바른 클립이 돌고 GPU 에 메시가 올라가 있어도
@@ -400,6 +418,16 @@ ls src/*/*.js src/*.js | sed 's|^|"./|;s|$|",|' | sort   # sw.js 의 목록과 �
 4. **랜덤 이벤트** — 주간 클록(`state.nextWeek()`)에 훅. 서버 다운,
    유명인 트윗, 경쟁사 출시, 직원 번아웃. 유행 시스템과 같은 자리에 붙는다.
 5. **자체 플랫폼 개발** — 랭크 20 해금 플랫폼은 있는데 "개발" 과정이 없다.
+1. **시설 배치** — 층마다 시설 슬롯(서버랙/사운드부스/휴게실/회의실 확장).
+   `world/office.js` 는 이미 방을 rect 로 잡고 있으니 슬롯을 데이터로
+   빼고 `game/state.js` 에 구매 액션을 붙이면 된다. 원작의 큰 축인데
+   지금은 층 역할(`FLOOR_PLANS[].role`)만 있다.
+2. ~~**랜덤 이벤트**~~ — 구현됨. `game/events.js` 의 `EVENTS` 12종,
+   주당 21% 확률로 `nextWeek()` 끝에서 뽑는다. 선택지가 있는 사건은
+   `pendingEvent` 로 남아 답하기 전까지 주를 막는다. 새 사건은 배열에
+   한 항목만 추가하면 되고, `when`/`pick`/`vars`/`apply`(또는 `choices`)
+   네 개가 계약의 전부다.
+3. **자체 플랫폼 개발** — 랭크 20 해금 플랫폼은 있는데 "개발" 과정이 없다.
    `data.js` PLATFORMS 의 `own` 을 목표로 하는 별도 트랙.
 6. **속편/시리즈 UI 다듬기** — 로직은 있다(`seriesOf`, `seriesN`).
    명예의 전당 목록에서 바로 속편을 만들 수 있게.
@@ -408,6 +436,11 @@ ls src/*/*.js src/*.js | sed 's|^|"./|;s|$|",|' | sort   # sw.js 의 목록과 �
 8. **후반 성장** — 지금 `x` 가 ~450 에서 정체한다. 환생(재능 ×1.12)이
    유일한 돌파구인데 UI 유도가 약하다. 10년 넘게 가는 세이브를 원하면
    여기가 병목이다.
+7. **1인칭 확장** — 지금은 걷기 + 격려 + 비품 한 마디까지다. 자연스러운
+   다음 수는 책상 앞에서 그 사람의 상세 패널 열기, 회의실에서 회의 소집,
+   그리고 사장 아바타를 실제로 그려 다른 직원이 반응하게 하는 것.
+8. **보조자 / GameDex** — 분석 문서(B-11, B-12)의 요일별 보조자와 판매
+   부스트 이벤트. 세일즈 태스크와 같은 자리(`game/events.js`)에 붙는다.
 
 ### 손대지 말아야 할 것
 
@@ -426,6 +459,7 @@ ls src/*/*.js src/*.js | sed 's|^|"./|;s|$|",|' | sort   # sw.js 의 목록과 �
 ```
 eb10944  보스 몬스터 · 빈 사무실에서 시작 · 가구 배치 · 그래프 수정
 fbdf465  인수인계 문서 + 테스트 하네스를 저장소로
+(this)   채용 · 퇴사 연출 · 1인칭 시점 · 주간 이벤트 · 조합 발견 · 모니터/그래프 수정
 eab23bc  회의실 회의 · 사무실 확장 · 분석 문서의 시스템 · 밸런스 재조정
 3c026c2  모바일 가로 모드 + PWA
 bface46  소셜게임 스토리 3D: WebGL2 PBR 리메이크 뼈대
@@ -442,3 +476,5 @@ bface46  소셜게임 스토리 3D: WebGL2 PBR 리메이크 뼈대
 
 **외부 3D 모델을 더 받아 넣는 방법 — 어디서 받고, 어떤 규격이어야 하고,
 어떻게 배선하는지는 [ASSETS.md](ASSETS.md) 에 따로 적었다.**
+앞의 세 커밋은 브랜치 `claude/social-game-story-3d-b3kfse`,
+마지막은 `claude/game-planning-system-auj1dp` 에 있다.

@@ -11,7 +11,7 @@
 
 import {
   JOBS, JOB_ABILITY, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, STATS, STAT_KO, METHODS,
-  RESEARCH, CONTRACTS, MARKETING, TRAITS, FLOOR_UPKEEP,
+  RESEARCH, CONTRACTS, MARKETING, TRAITS, FLOOR_UPKEEP, UNKNOWN_COMBO,
   comboScore, comboLabel, rankInfo, RANK_UP_FANS, researchEffect,
   STARTUP_GRANT, hireDiscount,
 } from '../game/data.js';
@@ -19,10 +19,11 @@ import {
   FURNITURE, FURNITURE_BY_ID, FURNITURE_CATS, RESELL, comfortLabel,
 } from '../game/furniture.js';
 import { abilities, power, role, itemCost, trainStamina, traitsOf, expToNext } from '../game/staff.js';
-import { turnCost, projectQuality, ideaHp } from '../game/project.js';
+import { turnCost, projectQuality, projectedQuality, ideaHp } from '../game/project.js';
 import { monsterFor } from '../game/monsters.js';
+import { rewardText } from '../game/events.js';
 import { FLOOR_PLANS } from '../world/office.js';
-import { isTouch, isFullscreen, goFullscreen, exitFullscreen } from './device.js';
+import { isTouch, isFullscreen, goFullscreen, exitFullscreen, wireInstallGuide } from './device.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => {
@@ -34,6 +35,8 @@ const el = (tag, cls, html) => {
 const won = (n) => '₩' + Math.round(n).toLocaleString('ko-KR');
 const num = (n) => Math.round(n).toLocaleString('ko-KR');
 const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+/* Motivation is fractional for anyone with 일벌레, so it cannot be printed raw. */
+const mot = (v) => (Number.isInteger(v) ? v : (Math.round(v * 10) / 10).toFixed(1));
 
 /* ---- the stat bars ----
    Every bar in the game reads against a stated maximum, and the maximum is
@@ -47,16 +50,27 @@ const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
 
    `bar` takes a value and its scale and draws one row. Nothing else does. */
 const QUALITY_MAX = 999;        // finishProject clamps every axis to this
+const QUALITY_GAMMA = 0.4;      // see barPct: a debut game must still draw a bar
 const ABILITY_MAX = 120;        // a tier-2 job at max level with items sits near here
 
+/* `gamma` below 1 pulls the bottom of the range up. Quality runs 1-999 but a
+   debut game scores single digits, and a linear bar draws that as one pixel —
+   which reads as a broken graph rather than as a weak game. At 0.4 a score of 9
+   fills 13% and a 900 still has visible headroom. The number the bar is
+   labelled with is untouched, so nothing is being hidden. */
+function barPct(value, max, gamma) {
+  const t = Math.max(0, Math.min(1, value / max));
+  return Math.max(gamma < 1 ? 3 : 0, Math.min(100, Math.round(Math.pow(t, gamma) * 100)));
+}
+
 function bar(label, value, max, opts = {}) {
-  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  const pct = barPct(value, max, opts.gamma ?? 1);
   const cls = opts.cls ? ' ' + opts.cls : '';
   const shown = opts.text !== undefined ? opts.text : num(value);
   return `<div class="sb${cls}"><span class="lb">${label}</span>`
     + `<span class="bar"><span class="fill" style="width:${pct.toFixed(1)}%"></span>`
     + (opts.mark !== undefined
-      ? `<i class="mk" style="left:${Math.max(0, Math.min(100, (opts.mark / max) * 100)).toFixed(1)}%"></i>` : '')
+      ? `<i class="mk" style="left:${barPct(opts.mark, max, opts.gamma ?? 1)}%"></i>` : '')
     + `</span><span class="vv">${shown}</span></div>`;
 }
 
@@ -135,6 +149,9 @@ export class UI {
   _wireKeys() {
     window.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT') return;
+      // While walking the office, WASD/E/F belong to the first-person
+      // controller; the management shortcuts would fight it for the same keys.
+      if (this.view.fp && this.view.fp.on) return;
       const k = e.key.toLowerCase();
       if (k === ' ') { e.preventDefault(); this.doTurn(); }
       else if (k === 'q') this.view.stepFloor(-1);
@@ -168,11 +185,14 @@ export class UI {
     if (type === 'finished') this._finishedFlow(payload);
     if (type === 'floors') this.view.setFloorCount(payload).then(() => this.renderFloors());
     if (type === 'rescue') this.showRescue(payload);
+    if (type === 'hired') this.view.walkIn(payload);
+    if (type === 'fired') this.view.walkOut(payload);
     // A hire, a departure or a desk reshuffle changes who exists and where they
     // sit. The office starts empty now, so every person in the building arrived
     // through one of these — without this the first hire is invisible until
     // something else happens to rebuild the world.
     if (type === 'staff' || type === 'desks') this.view.syncAgents();
+    if (type === 'event' && !payload.resolved) this._eventFlow();
     this.renderHUD();
     this.renderBattle();
     if (type !== 'log') this.renderPanel();
@@ -256,6 +276,28 @@ export class UI {
     box.appendChild(row);
   }
 
+  /* A weekly event with a choice holds the week until it is answered. */
+  _eventFlow() {
+    const ev = this.g.pendingEvent;
+    if (!ev || this.busy) return;
+    this.openModal(`이번 주 · ${ev.ko}`, `${ev.icon || ''} ${ev.ko}`, ev.text,
+      ev.options.map((o, i) => ({
+        name: o.ko,
+        desc: o.desc,
+        onPick: () => { this.g.answerEvent(i); this.g.save(); },
+      })));
+  }
+
+  /* Has the company ever shipped this pairing?
+
+     The discovery game only works if the answer is hidden the first time. Once
+     a combo is in the 도감 the card can say what it is worth, so a veteran
+     studio plays with knowledge and a new one plays on instinct. */
+  knownCombo(genreId, contentId) {
+    const d = this.g.company.discovered || {};
+    return !!d[`${genreId}|${contentId}`];
+  }
+
   /* Variables the meeting dialogue interpolates. */
   mvars(p) {
     const g = GENRES.find((x) => x.id === p.genreId);
@@ -267,28 +309,33 @@ export class UI {
     };
   }
 
+  /* Which beats are worth walking the whole team to the meeting room for.
+
+     Every card used to summon a meeting, which meant four cutscenes per game
+     and the room stopped being an event. The two that decide what the game IS
+     — 착수 and 게임 내용 — keep the scene; 개발 방식 and the wrap-up are just
+     the modal, and the office keeps working behind it. */
+  wantsMeeting(phase) { return phase === 'kickoff' || phase === 'content'; }
+
   /* An idea card waits for the meeting that produces it. */
   async _cardFlow() {
     const p = this.g.project;
     if (!p || !p.pendingCards || this.busy) return;
-    this.busy = true;
-    try {
-      await this.view.playMeeting(p.pendingCards.kind, p.team, this.mvars(p));
-    } finally {
-      this.busy = false;
+    const kind = p.pendingCards.kind;
+    if (this.wantsMeeting(kind)) {
+      this.busy = true;
+      try {
+        await this.view.playMeeting(kind, p.team, this.mvars(p));
+      } finally {
+        this.busy = false;
+      }
     }
     // The player may have skipped ahead and resolved it already.
     if (this.g.project && this.g.project.pendingCards) this.showCards();
   }
 
-  async _finishedFlow(p) {
+  _finishedFlow(p) {
     if (!p || this.busy) return;
-    this.busy = true;
-    try {
-      await this.view.playMeeting('wrap', p.team, this.mvars(p));
-    } finally {
-      this.busy = false;
-    }
     this.view.celebrate(p.team);
     if (this.g.finished) this.showFinished(p);
   }
@@ -376,8 +423,9 @@ export class UI {
     const bits = [mon.ko, gen.ko, `★${p.proposal ? p.proposal.grade : '?'}`, `${p.turn}턴`];
     if (p.contentId) {
       const c = CONTENTS.find((x) => x.id === p.contentId);
-      const lb = comboLabel(comboScore(p.genreId, p.contentId));
-      bits.push(`${c ? c.ko : ''} ${lb.ko}`);
+      const known = this.knownCombo(p.genreId, p.contentId);
+      const lb = known ? comboLabel(comboScore(p.genreId, p.contentId)) : UNKNOWN_COMBO;
+      bits.push(`${c ? c.ko : ''} ${known ? lb.ko : '???'}`);
     }
     if (p.seriesN > 1) bits.push(`시리즈 ${p.seriesN}편`);
     $('bMeta').textContent = bits.join(' · ');
@@ -429,9 +477,28 @@ export class UI {
     ]) box.appendChild(el('div', 'row', `<span>${k}</span><b>${v}</b>`));
 
     box.appendChild(el('h4', 'sec', '주간 진행'));
-    const wk = el('button', 'btn primary wide', '다음 주로 (스태미나 회복)');
-    wk.onclick = () => { g.nextWeek(); g.save(); };
+    const wk = el('button', 'btn primary wide',
+      g.pendingEvent ? '이번 주 사건을 먼저 처리하세요' : '다음 주로 (스태미나 회복)');
+    wk.onclick = () => {
+      if (g.pendingEvent) { this._eventFlow(); return; }
+      g.nextWeek();
+      g.save();
+    };
     box.appendChild(wk);
+
+    /* 세일즈 태스크 — the standing checklist */
+    const tasks = g.tasks();
+    const doneN = tasks.filter((t) => t.complete).length;
+    box.appendChild(el('h4', 'sec', `세일즈 태스크 ${doneN} / ${tasks.length}`));
+    const open = tasks.filter((t) => !t.complete).slice(0, 5);
+    for (const t of open) {
+      box.appendChild(el('div', 'task',
+        `<span class="tk"></span><span class="tt">${t.ko}</span><span class="tr">${rewardText(t.reward)}</span>`));
+    }
+    for (const t of tasks.filter((x) => x.complete).slice(-3)) {
+      box.appendChild(el('div', 'task done',
+        `<span class="tk">✓</span><span class="tt">${t.ko}</span><span class="tr">완료</span>`));
+    }
 
     /* 계약 — the safety net */
     box.appendChild(el('h4', 'sec', '계약 일감'));
@@ -479,6 +546,13 @@ export class UI {
     };
     box.appendChild(tg);
 
+    const a2 = el('button', 'btn wide sm', '홈 화면에 추가하는 법 보기');
+    a2.onclick = () => {
+      const root = $('a2hs');
+      if (root) { wireInstallGuide(root); this.togglePanel(true); }
+    };
+    box.appendChild(a2);
+
     const sv = el('button', 'btn wide sm', '저장하기');
     sv.onclick = () => { g.save(); this.toast('저장했습니다.', 'good'); };
     box.appendChild(sv);
@@ -517,7 +591,7 @@ export class UI {
       it.innerHTML = `<div class="t"><span class="n">${s.name}</span>
         <span class="j">Lv.${s.level}/${s.maxLevel}${inTeam ? ' · 개발중' : ''}</span></div>
         <div class="d"><span class="pill ${role(s)}">${JOBS[s.job].ko}</span>${traitTags}<br>
-        의욕 <span class="mot">${s.motivation}</span> · 힘 ${Math.round(power(s))}
+        의욕 <span class="mot">${mot(s.motivation)}</span> · 힘 ${Math.round(power(s))}
         ${s.reincarnations ? ` · 환생 ${s.reincarnations}회` : ''}</div>`;
       it.onclick = () => {
         this.selectedStaff = this.selectedStaff === s.id ? null : s.id;
@@ -797,9 +871,10 @@ export class UI {
     box.appendChild(el('div', 'row', `<span>번뜩임</span><b>${p.crits}회</b>`));
     if (p.contentId) {
       const c = CONTENTS.find((x) => x.id === p.contentId);
-      const lb = comboLabel(comboScore(p.genreId, p.contentId));
+      const known = this.knownCombo(p.genreId, p.contentId);
+      const lb = known ? comboLabel(comboScore(p.genreId, p.contentId)) : UNKNOWN_COMBO;
       box.appendChild(el('div', 'row',
-        `<span>게임 내용</span><b>${c ? c.ko : ''} <span class="pill ${lb.cls}">${lb.ko}</span></b>`));
+        `<span>게임 내용</span><b>${c ? c.ko : ''} <span class="pill ${lb.cls}">${known ? lb.ko : '???'}</span></b>`));
     }
     if (p.methodId) {
       box.appendChild(el('div', 'row',
@@ -816,7 +891,7 @@ export class UI {
     box.appendChild(el('h4', 'sec', '예상 품질 <span class="hint">(완성 시 · 999점 만점)</span>'));
     const projected = projectQuality(p);
     for (const st of STATS) {
-      box.appendChild(el('div', 'wrap', bar(STAT_KO[st], projected[st], QUALITY_MAX)));
+      box.appendChild(el('div', 'wrap', bar(STAT_KO[st], projected[st], QUALITY_MAX, { gamma: QUALITY_GAMMA })));
     }
 
     box.appendChild(el('h4', 'sec', '팀'));
@@ -825,7 +900,7 @@ export class UI {
       if (!s) continue;
       box.appendChild(el('div', 'item',
         `<div class="t"><span class="n">${s.name}</span><span class="j">힘 ${Math.round(power(s))}</span></div>
-         <div class="d"><span class="pill ${role(s)}">${JOBS[s.job].ko}</span>의욕 <span class="mot">${s.motivation}</span></div>`));
+         <div class="d"><span class="pill ${role(s)}">${JOBS[s.job].ko}</span>의욕 <span class="mot">${mot(s.motivation)}</span></div>`));
     }
   }
 
@@ -836,15 +911,28 @@ export class UI {
       `<div class="t"><span class="n">「${p.title}」</span><span class="stars">${stars(p.proposal.grade)}</span></div>
        <div class="d">${p.genreKo} × ${p.contentKo} · ${p.methodKo}</div>`));
     for (const st of STATS) {
-      box.appendChild(el('div', 'wrap', bar(STAT_KO[st], p.quality[st], QUALITY_MAX)));
+      box.appendChild(el('div', 'wrap', bar(STAT_KO[st], p.quality[st], QUALITY_MAX, { gamma: QUALITY_GAMMA })));
     }
-    box.appendChild(el('div', 'row', `<span>평론가</span><b>${p.critics.join(' · ')} = ${p.criticTotal}</b>`));
+    box.appendChild(el('div', 'row', `<span>평론가</span><b>${p.critics.join(' · ')} = ${p.criticTotal} / 40</b>`));
     box.appendChild(el('div', 'row', `<span>버그</span><b>${p.bugs}개</b>`));
     if (p.hallOfFame) box.appendChild(el('div', 'row', '<span>명예의 전당</span><b class="stars">등재</b>'));
 
-    const db = el('button', 'btn wide', '디버그 (스태미나 -1)');
+    // Buggy builds review worse; the panel says how many points are on the
+    // table so debugging reads as a score decision, not as housekeeping. The
+    // penalty is per critic, and there are four of them.
+    if (p.bugs > 0) {
+      const held = Math.round(Math.min(2.6, p.bugs * 0.11) * 4);
+      box.appendChild(el('div', 'item',
+        `<div class="d">버그 ${p.bugs}개가 평론가 점수를 <b style="color:var(--bad)">약 ${held}점</b> 깎고 있습니다. 고칠수록 점수가 올라갑니다.</div>`));
+    }
+    const db = el('button', 'btn wide', `디버그 (스태미나 -1) · 버그 ${p.bugs}개`);
     db.disabled = p.bugs <= 0 || g.company.stamina < 1;
-    db.onclick = () => { const r = g.debugProject(); if (!r.ok) this.toast(r.why, 'bad'); g.save(); };
+    db.onclick = () => {
+      const r = g.debugProject();
+      if (!r.ok) this.toast(r.why, 'bad');
+      else if (r.gained > 0) this.toast(`버그 ${r.fixed}개 수정 · 평론가 +${r.gained}점`, 'good');
+      g.save();
+    };
     box.appendChild(db);
 
     box.appendChild(el('h4', 'sec', '홍보'));
@@ -1174,15 +1262,23 @@ export class UI {
     if (!p || !p.pendingCards) return;
     const pc = p.pendingCards;
     if (pc.kind === 'content') {
+      const gen = GENRES.find((x) => x.id === p.genreId);
+      const anyKnown = pc.options.some((o) => this.knownCombo(p.genreId, o.id));
       this.openModal('회의 · 게임 내용', '무엇을 다룰까?',
-        '장르와의 궁합이 완성도를 크게 좌우합니다.',
+        anyKnown
+          ? `${gen ? gen.ko : ''}에 무엇을 얹을까요. 한 번 만들어 본 조합은 궁합이 보입니다.`
+          : `${gen ? gen.ko : ''}에 무엇을 얹을까요. 아직 만들어 본 적 없는 조합이라 결과는 만들어 봐야 압니다.`,
         pc.options.map((o) => {
-          const lb = comboLabel(o.combo);
+          const known = this.knownCombo(p.genreId, o.id);
+          const lb = known ? comboLabel(o.combo) : UNKNOWN_COMBO;
           const hot = this.g.company.trends && this.g.company.trends.contentId === o.id;
+          const desc = known
+            ? `장르 궁합 ×${o.combo.toFixed(2)}${hot ? ' · 이번 분기 유행 소재' : ''}`
+            : `아직 해본 적 없는 조합${hot ? ' · 이번 분기 유행 소재' : ''}`;
           return {
             name: o.ko + (hot ? ' 🔥' : ''),
-            desc: `장르 궁합 ×${o.combo.toFixed(2)}${hot ? ' · 이번 분기 유행 소재' : ''}`,
-            right: `<span class="pill ${lb.cls}">${lb.ko}</span>`,
+            desc,
+            right: `<span class="pill ${lb.cls}">${known ? lb.ko : '???'}</span>`,
             onPick: () => { this.g.pickCard(o.id); this.g.save(); },
           };
         }));
@@ -1203,7 +1299,9 @@ export class UI {
     const prev = this.g.releases[0];
     const bars = STATS.map((st) =>
       bar(STAT_KO[st], q[st], QUALITY_MAX,
-        prev && prev.quality ? { mark: prev.quality[st] } : {})).join('');
+        prev && prev.quality
+          ? { mark: prev.quality[st], gamma: QUALITY_GAMMA }
+          : { gamma: QUALITY_GAMMA })).join('');
     this.openModal('개발 완료', `「${p.title}」`,
       `<div class="grade">${p.criticTotal}</div>
        <div class="gsub">평론가 ${p.critics.join(' · ')} (40점 만점)${p.hallOfFame ? ' · <b class="stars">명예의 전당</b>' : ''}</div>
@@ -1217,9 +1315,12 @@ export class UI {
   }
 
   showRelease(r) {
+    const notes = (r.notes || [])
+      .map((n) => `<div class="verd ${n.cls}">${n.ko}</div>`).join('');
     this.openModal('출시', `「${r.title}」 출시!`,
       `<div class="grade">${num(r.users)}</div>
        <div class="gsub">초기 유저${r.trendHit ? ' · 🔥 유행을 탔다' : ''}</div>
+       ${notes}
        <div class="row"><span>플랫폼</span><b>${PLATFORMS.find((p) => p.id === r.platformId).ko}</b></div>
        <div class="row"><span>수익 모델</span><b>${MONETIZE.find((m) => m.id === r.monetizeId).ko}</b></div>
        <div class="row"><span>홍보</span><b>${(MARKETING.find((m) => m.id === r.marketingId) || {}).ko || '없음'}</b></div>

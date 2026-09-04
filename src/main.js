@@ -21,11 +21,13 @@ import { FURNITURE_BY_ID } from './game/furniture.js';
 import { Crew, Agent, ST } from './world/agents.js';
 import { Boss, bossSpot, preloadMonster, monsterFor, tauntFor } from './world/boss.js';
 import { Game } from './game/state.js';
+import { addMotivation } from './game/staff.js';
+import { FirstPerson, SPOT_KO } from './ui/firstperson.js';
 import { meetingScript, critLine, idleLine } from './game/dialogue.js';
 import { UI } from './ui/hud.js';
 import {
   TIERS, detectTier, isTouch, isMobile, viewportSize, trackViewport,
-  suppressBrowserGestures, goFullscreen,
+  suppressBrowserGestures, goFullscreen, shouldShowInstallGuide, wireInstallGuide,
 } from './ui/device.js';
 
 const $ = (id) => document.getElementById(id);
@@ -43,6 +45,16 @@ function bootStep(t) {
   if (b) b.textContent = t;
 }
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+/* What someone says on their way out. Picked by id so the same person always
+   leaves the same way. */
+const BYE_LINES = [
+  '그동안 감사했습니다!',
+  '다들 건강하세요.',
+  '좋은 회사였어요. 진심으로요.',
+  '다음에 또 뵙겠습니다.',
+  '짐은 다 챙겼습니다. 안녕히 계세요.',
+];
 
 const STAT_LABEL = {
   craze: '화제성', usability: '조작성', impact: '임팩트',
@@ -74,6 +86,15 @@ class View {
     this.place = null;              // the piece being positioned, if any
     this.gPlaced = null; this.gGhost = null; this.gZones = null;
     this.frameOpts = null;          // last frame's camera/cut state, for the skin pass
+    this.entrance = null;
+    this.cam = null;                // set once the camera exists, for first person
+    this.storey = STOREY;
+    this.fp = new FirstPerson(this);
+    // Ids the office is still animating even though the game has already
+    // dropped them from the roster, so syncAgents does not delete a body that
+    // is halfway to the door.
+    this.leaving = new Set();
+    this.arriving = new Set();
   }
 
   /* ---- world ---- */
@@ -83,6 +104,7 @@ class View {
     const built = buildOffice(Math.max(1, this.floorCount));
     this.desks = built.desks;
     this.rooms = built.rooms;
+    this.entrance = built.entrance;
 
     bootStep('앰비언트 오클루전 굽는 중');
     await nextFrame();
@@ -187,17 +209,15 @@ class View {
   syncAgents() {
     const live = new Set(this.game.staff.map((s) => s.id));
     for (const a of this.crew.all()) {
-      if (live.has(a.id)) continue;
-      disposeMesh(a.rig);
-      this.crew.remove(a.id);
-      for (const map of [this.tags, this.bubbles]) {
-        const el = map.get(a.id);
-        if (el) { el.remove(); map.delete(a.id); }
-      }
+      // Someone walking out of the building is no longer on the roster but is
+      // still on screen; dropOut() disposes them when they reach the door.
+      if (live.has(a.id) || this.leaving.has(a.id)) continue;
+      this.dropAgent(a);
     }
 
     for (const s of this.game.staff) {
       let a = this.crew.get(s.id);
+      const fresh = !a;
       if (!a) {
         a = new Agent(s, new Rig(s.look), (s.id * 2.399) % 6.28);
         this.crew.add(a);
@@ -216,11 +236,26 @@ class View {
       const d = this.deskOf(s);
       const moved = (a.home ? a.home.id : null) !== (d ? d.id : null);
       a.home = d;
-      // A newly hired or newly seated person appears at their desk rather than
-      // walking in from nowhere. Desks can now also be picked up mid-game, so
-      // a reassignment has to re-seat someone who is already placed — otherwise
-      // they carry on typing at a desk that is back in the bag.
-      if (d && (!a.placed || moved)) {
+      if (fresh && this.arriving.has(s.id) && this.entrance) {
+        // A new hire comes in through the front doors and walks to their desk.
+        this.arriving.delete(s.id);
+        const e = this.entrance;
+        a.placeAt(e.x, e.z, e.yaw, e.floor);
+        a.state = ST.STAND;
+        a.placed = true;
+        a.say('오늘부터 잘 부탁드립니다!', 3.4);
+        if (d) {
+          setTimeout(() => {
+            if (!this.crew.get(a.id)) return;
+            a.goTo({ x: d.seatX, z: d.seatZ, yaw: d.yaw, floor: d.floor, state: ST.SIT },
+              this.crew.navFor(a.floor));
+          }, 1100);
+        }
+      } else if (d && (!a.placed || moved)) {
+        // A newly seated person appears at their desk rather than walking in
+        // from nowhere. Desks can also be picked up mid-game, so a reassignment
+        // has to re-seat someone who is already placed — otherwise they carry
+        // on typing at a desk that is back in the bag.
         a.sitAt({ x: d.seatX, z: d.seatZ, yaw: d.yaw, floor: d.floor });
         a.placed = true;
       } else if (!d && (!a.placed || moved)) {
@@ -231,6 +266,62 @@ class View {
         a.placed = true;
       }
     }
+  }
+
+  dropAgent(a) {
+    disposeMesh(a.rig);
+    this.crew.remove(a.id);
+    this.leaving.delete(a.id);
+    for (const map of [this.tags, this.bubbles]) {
+      const el = map.get(a.id);
+      if (el) { el.remove(); map.delete(a.id); }
+    }
+  }
+
+  /* A hire is announced before the roster event, so the id is waiting when
+     syncAgents builds the body. */
+  walkIn(staff) {
+    if (!staff) return;
+    this.arriving.add(staff.id);
+    this.syncAgents();
+    const a = this.crew.get(staff.id);
+    if (a && this.entrance && this.floor !== this.entrance.floor) {
+      this.setFloor(this.entrance.floor);
+      if (ui) ui.renderFloors();
+    }
+  }
+
+  /* Someone who has left says goodbye, walks to the front doors and goes.
+     Deleting the body where it sat left a ghost typing at an empty desk, which
+     is the one thing a simulated office must never do. */
+  walkOut(staff) {
+    const a = staff && this.crew.get(staff.id);
+    if (!a) return;
+    const e = this.entrance;
+    this.leaving.add(a.id);
+    a.busy = false;
+    a.home = null;
+    a.cheerUntil = 0;
+    a.seatTarget = null;
+    a.say(BYE_LINES[a.id % BYE_LINES.length], 4.0);
+
+    const gone = () => {
+      if (e) { a.placeAt(e.outX, e.outZ, 0, e.floor); a.state = ST.STAND; }
+      setTimeout(() => this.dropAgent(a), 1500);
+    };
+    if (!e) { gone(); return; }
+    if (a.floor !== e.floor) {
+      // Down the lift, off screen, and out through the lobby.
+      a.floor = e.floor;
+      a.placeAt(31.5, 14.5, Math.PI, e.floor);
+      a.state = ST.STAND;
+    }
+    if (this.floor !== e.floor) { this.setFloor(e.floor); if (ui) ui.renderFloors(); }
+    setTimeout(() => {
+      if (!this.crew.get(a.id)) return;
+      a.goTo({ x: e.x, z: e.z, yaw: 0, floor: e.floor, state: ST.STAND },
+        this.crew.navFor(e.floor), gone);
+    }, 900);
   }
 
   deskOf(staffer) {
@@ -246,6 +337,8 @@ class View {
     // The piece being placed belongs to whichever storey is being looked at, so
     // changing floors mid-placement moves it rather than stranding it below.
     if (this.place) { this.buildZoneOverlay(); this.refreshGhost(); }
+    // The floor rail keeps working while walking around: you take the lift.
+    if (this.fp && this.fp.on && this.fp.floor !== this.floor) this.fp.setFloor(this.floor);
   }
 
   stepFloor(d) {
@@ -387,6 +480,9 @@ class View {
      an idea card back until the team has actually discussed it. A tap anywhere
      skips ahead. */
   playMeeting(phase, teamIds, vars) {
+    // Not while the player is walking around: hijacking the camera out of a
+    // first-person view is disorienting, and the team is right there anyway.
+    if (this.fp && this.fp.on) return Promise.resolve();
     if (!this.meetingScenes || !teamIds || !teamIds.length) return Promise.resolve();
     const mtg = this.crew.meetingOn(this.floor);
     if (!mtg) return Promise.resolve();
@@ -571,6 +667,7 @@ class View {
   /* ---- per-frame ---- */
   update(dt) {
     this.time += dt;
+    this.fp.update(dt);
     for (const s of this.game.staff) {
       const a = this.crew.get(s.id);
       if (a) a.mood = s.motivation;
@@ -745,6 +842,9 @@ async function boot() {
   cam.snap();
 
   ui = new UI(game, view);
+  view.cam = cam;
+  wireFirstPerson();
+
   // A fresh studio is asked for a name and handed its grant; a loaded one that
   // was mid-project gets its monster back, so reopening the tab does not leave
   // the battle bar counting down an idea with no body.
@@ -763,6 +863,12 @@ async function boot() {
 
   $('boot').classList.add('gone');
   setTimeout(() => $('boot').remove(), 600);
+
+  // On a phone the game really wants to be an installed app, so the first
+  // visit says how. Shown after boot rather than before it, so the office is
+  // already behind the card and the wait does not read as a second loading
+  // screen.
+  if (shouldShowInstallGuide()) wireInstallGuide($('a2hs'));
 
   let last = performance.now();
   function frame(now) {
@@ -799,7 +905,14 @@ function tick(dt) {
   // Hide every floor above the one being inspected, and the current floor's own
   // ceiling with it, so the dollhouse view can see in. The threshold sits just
   // above the wall tops: walls survive whole, the slab above them does not.
-  const floorY = view.floor * STOREY + BUILDING.wallH + 0.1;
+  //
+  // Standing inside the room is the opposite case: the ceiling and its lights
+  // are half of what makes it read as an office, so the cut moves up a storey
+  // and only the floors ABOVE this one come off.
+  const walking = view.fp && view.fp.on;
+  const floorY = walking
+    ? (view.fp.floor + 1) * STOREY + 0.35
+    : view.floor * STOREY + BUILDING.wallH + 0.1;
 
   // Stashed rather than passed through: the draw callback only receives the
   // uniform block and the pass name, and the skinned program needs the camera.
@@ -807,7 +920,7 @@ function tick(dt) {
     vp: cam.vp,
     eye: cam.eye,
     target: [cam.tx, cam.ty, cam.tz],
-    wallCut: view.wallCut,
+    wallCut: view.wallCut && !walking,
     floorY,
     time: view.time,
   };
@@ -815,6 +928,134 @@ function tick(dt) {
   renderer.render(opts, (L, pass) => view.draw(L, pass));
 
   view.drawOverlays(vp.w, vp.h);
+  if (view.fpTick) view.fpTick();
+}
+
+/* ══════════════════════════════════ 1인칭 ═══════════════════════════════════
+
+   The controller in ui/firstperson.js owns movement and collision and knows no
+   game rules; this is where walking around meets the company. Encouraging
+   someone is a real action with a real cost model — once per person per week,
+   so it is a routine you keep rather than a button you spam. */
+
+const FP_STAFF_LINES = [
+  '{name} 씨, 잘 하고 있어요.',
+  '{name} 씨, 오늘 컨디션 좋아 보이네요.',
+  '{name} 씨, 이번 건 기대하고 있습니다.',
+  '{name} 씨, 무리하지 말고 갑시다.',
+];
+const FP_SPOT_LINES = {
+  coffee: '커피 향이 좋다. 오후 회의는 이걸로 버틴다.',
+  water: '정수기 옆이 늘 제일 시끄럽다. 좋은 뜻으로.',
+  sofa: '누가 여기서 낮잠을 잤군.',
+  table: '점심 메뉴 이야기가 아직 끝나지 않은 모양이다.',
+  window: '창밖으로 도시가 보인다. 여기서 시작했지.',
+  printer: '아무도 종이를 채워 넣지 않는다.',
+  locker: '사물함에 누군가의 우산이 반년째 걸려 있다.',
+};
+
+function wireFirstPerson() {
+  const fp = view.fp;
+  const stick = $('fpStick');
+  const knob = stick ? stick.querySelector('.knob') : null;
+  const prompt = $('fpPrompt');
+  const sayEl = $('fpSay');
+  const act = $('fpAct');
+
+  fp.onToggle = (on) => {
+    if (!on) { cam.fp = null; cam.snap(); view.setFloor(view.floor); }
+    else { cam.fp = { x: fp.x, y: 0, z: fp.z, yaw: fp.yaw, pitch: fp.pitch }; }
+    ui.renderFloors();
+  };
+
+  /* Encouragement is capped per person per week: the week counter is the
+     company's own clock, so the limit survives a save and cannot be farmed by
+     walking in circles. */
+  fp.onInteract = (t) => {
+    const c = game.company;
+    const wk = `${c.year}-${c.month}-${c.week}`;
+    if (t.kind === 'staff') {
+      const s = game.staff.find((x) => x.id === t.id);
+      if (!s) return null;
+      if (s.pepTalk === wk) return `${s.name} 씨는 이번 주에 이미 이야기를 나눴다.`;
+      // Already maxed out: say so and do NOT spend the week's one visit, so a
+      // wasted walk across the office is never the player's fault.
+      if (s.motivation >= game.info().motivationCap) {
+        return `${s.name} 씨는 이미 의욕이 최고조다.`;
+      }
+      s.pepTalk = wk;
+      // 일벌레 only takes 0.4 of a point, so report what actually moved.
+      const gain = addMotivation(s, 1, c.rank);
+      t.agent.say('감사합니다, 사장님!', 2.6);
+      t.agent.reactWith('idea', 1.0);
+      game.emit('staff', null);
+      game.save();
+      const line = FP_STAFF_LINES[s.id % FP_STAFF_LINES.length].replace('{name}', s.name);
+      return `${line}  (의욕 +${gain})`;
+    }
+    if (t.kind === 'spot') return FP_SPOT_LINES[t.spot.kind] || SPOT_KO[t.spot.kind] || '';
+    if (t.kind === 'meeting') {
+      const p = game.project;
+      return p
+        ? `「${p.title}」 진행 중 — 남은 HP ${Math.round(p.hp).toLocaleString('ko-KR')}`
+        : '화이트보드는 비어 있다. 새 기획서를 뽑을 때가 됐다.';
+    }
+    return null;
+  };
+
+  const btn = $('fpBtn');
+  if (btn) { btn.onclick = () => fp.toggle(); btn.style.touchAction = 'manipulation'; }
+  const ex = $('fpExit');
+  if (ex) { ex.onclick = () => fp.exit(); ex.style.touchAction = 'manipulation'; }
+  if (act) act.onclick = () => fp.interact();
+
+  if (stick) {
+    let id = null;
+    const set = (e) => {
+      const r = stick.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const half = r.width / 2;
+      let dx = (e.clientX - cx) / half, dy = (e.clientY - cy) / half;
+      const l = Math.hypot(dx, dy);
+      if (l > 1) { dx /= l; dy /= l; }
+      fp.setStick(dx, dy);
+      if (knob) knob.style.transform = `translate(${dx * half * 0.55}px, ${dy * half * 0.55}px)`;
+    };
+    const clear = () => {
+      id = null;
+      fp.setStick(0, 0);
+      if (knob) knob.style.transform = '';
+    };
+    stick.addEventListener('pointerdown', (e) => {
+      id = e.pointerId;
+      try { stick.setPointerCapture(id); } catch (err) { /* ignore */ }
+      set(e);
+      e.preventDefault();
+    });
+    stick.addEventListener('pointermove', (e) => { if (e.pointerId === id) set(e); });
+    for (const t of ['pointerup', 'pointercancel', 'pointerleave']) {
+      stick.addEventListener(t, (e) => { if (e.pointerId === id) clear(); });
+    }
+  }
+
+  // The prompt, the action button and the subtitle are cheap enough to refresh
+  // every frame and always right, which a change-driven update would not be.
+  view.fpTick = () => {
+    if (!fp.on) return;
+    const f = fp.focus;
+    if (prompt) {
+      prompt.classList.toggle('on', !!f);
+      if (f) prompt.textContent = f.kind === 'staff' ? `${f.name} — 격려하기` : f.name;
+    }
+    if (act) {
+      act.disabled = !f;
+      act.textContent = f && f.kind === 'staff' ? '격려하기' : '살펴보기';
+    }
+    if (sayEl) {
+      sayEl.classList.toggle('on', !!fp.say);
+      if (fp.say) sayEl.textContent = fp.say.text;
+    }
+  };
 }
 
 /* One pointer orbits. Two pinch to zoom and drag to pan. Pointer Events cover
@@ -849,6 +1090,9 @@ function wirePointer() {
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     canvas.classList.add('drag');
     moved = 0;
+    // Walking: a drag on the canvas turns your head. The stick is its own DOM
+    // control, so the two can never be confused for one another.
+    if (view.fp.on) { view.fp.startLook(e.pointerId, e.clientX, e.clientY); firstGesture(); return; }
     const g = gather();
     if (g) { pinch = g.d; mid = g; }
     if (pts.size === 1) dragPlace(e);
@@ -860,8 +1104,11 @@ function wirePointer() {
     if (!prev) return;
     const nx = e.clientX, ny = e.clientY;
     moved += Math.abs(nx - prev.x) + Math.abs(ny - prev.y);
-    if (pts.size === 1 && !dragPlace(e)) cam.orbit(nx - prev.x, ny - prev.y);
     pts.set(e.pointerId, { x: nx, y: ny });
+    if (view.fp.on) { view.fp.moveLook(e.pointerId, nx, ny); return; }
+    // Placement mode claims one finger before the camera does: while a piece is
+    // in hand, dragging moves it. Two fingers still zoom and pan.
+    if (pts.size === 1 && !dragPlace(e)) cam.orbit(nx - prev.x, ny - prev.y);
 
     if (pts.size >= 2) {
       const g = gather();
@@ -874,6 +1121,14 @@ function wirePointer() {
   });
 
   const release = (e) => {
+    if (view.fp.on) {
+      view.fp.endLook(e.pointerId);
+      // A tap with nothing dragged reaches for whatever you are looking at.
+      if (moved < 8) view.fp.interact();
+      pts.delete(e.pointerId);
+      if (!pts.size) canvas.classList.remove('drag');
+      return;
+    }
     // A tap rather than a drag skips whatever cutscene is running.
     if (moved < 8 && pts.size === 1 && !view.place) view.skipMeeting();
     pts.delete(e.pointerId);
@@ -890,8 +1145,21 @@ function wirePointer() {
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
+    if (view.fp.on) return;
     cam.zoom(e.deltaY);
   }, { passive: false });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.target && e.target.tagName === 'INPUT') return;
+    const k = e.key.toLowerCase();
+    if (k === 'f') { e.preventDefault(); view.fp.toggle(); return; }
+    if (!view.fp.on) return;
+    if (k === 'e') { e.preventDefault(); view.fp.interact(); return; }
+    if (k === 'escape') { view.fp.exit(); return; }
+    view.fp.key(e, true);
+  });
+  window.addEventListener('keyup', (e) => { if (view.fp.on) view.fp.key(e, false); });
+  window.addEventListener('blur', () => view.fp.keys.clear());
 }
 
 /* Browsers only grant fullscreen and orientation lock from inside a user
