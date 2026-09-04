@@ -57,9 +57,11 @@
 </div>
 
 <!-- panel show/hide, first person, and fullscreen -->
+<!-- panel show/hide, fullscreen, and the first-person toggle -->
 <button id="menuBtn" class="iconbtn" aria-label="패널 열기/닫기"><span></span><span></span><span></span></button>
 <button id="fpBtn" class="iconbtn" aria-label="1인칭 시점">🚶</button>
 <button id="fsBtn" class="iconbtn" aria-label="전체화면">⛶</button>
+<button id="walkBtn" class="iconbtn" aria-label="1인칭 모드">🚶</button>
 
 <!-- ══ floor selector ══ -->
 <div id="floors"></div>
@@ -70,25 +72,50 @@
     <div class="tab on" data-tab="company">회사</div>
     <div class="tab" data-tab="staff">직원</div>
     <div class="tab" data-tab="dev">개발</div>
+    <div class="tab" data-tab="shop">상점</div>
+    <div class="tab" data-tab="dex">도감</div>
     <div class="tab" data-tab="live">운영</div>
     <div class="tab" data-tab="office">사무실</div>
   </div>
   <div id="panel"></div>
 </div>
 
-<!-- ══ development battle bar ══ -->
+<!-- ══ development battle bar — the boss fight ══ -->
 <div id="battle" class="card">
   <div class="bhead">
     <span class="bt2" id="bTitle">—</span>
     <span class="bmeta" id="bMeta"></span>
   </div>
+  <div class="bossline">
+    <span class="bico">👾</span>
+    <span class="bname" id="bBoss">아이디어</span>
+    <span class="bphase" id="bPhase"></span>
+  </div>
   <div class="hpwrap"><div class="hpbar" id="bHp"></div><span class="hptx" id="bHpTx"></span></div>
+  <!-- 집중 개발: 지나가는 마커를 금색 구간에서 멈추면 데미지가 크게 붙는다 -->
+  <div id="bFocus">
+    <div class="ftrack"><div class="fzone" id="bZone"></div><div class="fmark" id="bMark"></div></div>
+    <div class="fhint">금색 칸에서 <b>지금!</b> 을 누르세요</div>
+  </div>
   <div class="brow">
     <button class="btn primary" id="bTurn">개발 진행</button>
+    <button class="btn" id="bFocusBtn">집중</button>
     <button class="btn" id="bAuto">자동</button>
     <button class="btn" id="bBoss">👾 보스</button>
     <span class="bcost" id="bCost"></span>
   </div>
+  <!-- 도우미: 가방 속 소모품을 배틀 중에 바로 쓴다 -->
+  <div id="tray"></div>
+</div>
+
+<!-- ══ 개발 진행 상황 — 화면 오른쪽에 붙는 실시간 점수판 ══ -->
+<div id="prog" class="card">
+  <div class="pgh"><b id="pgTitle">—</b><span id="pgTurn"></span></div>
+  <div class="pgfun"><span>재미</span><b id="pgFun">0</b><i id="pgFunD"></i></div>
+  <div id="pgStats"></div>
+  <div class="pgrow"><span>🐞 예상 버그</span><b id="pgBugs">0</b></div>
+  <div class="pgrow"><span>✨ 번뜩임</span><b id="pgCrit">0</b></div>
+  <div class="pgt" id="pgTeam"></div>
 </div>
 
 <!-- ══ 튜토리얼: 다음에 할 일 한 줄 ══ -->
@@ -164,6 +191,12 @@
 
 <div id="toast" class="card"></div>
 <div id="hint">한 손가락 회전 · 두 손가락 확대 · 🚶 버튼으로 1인칭 시점</div>
+<div id="hint">한 손가락 회전 · 두 손가락 확대 · 층 버튼으로 이동</div>
+<!-- 1인칭에서만 보이는 안내와 나가기 -->
+<div id="walkbar">
+  <span class="wk">왼쪽 아래를 눌러 이동 · 오른쪽을 끌어 시점</span>
+  <button class="btn sm" id="walkExit">나가기</button>
+</div>
 
 <script type="module" src="./src/main.js"></script>
 <script>

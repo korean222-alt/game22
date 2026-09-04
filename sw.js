@@ -12,7 +12,7 @@
    handler below caches each on first use — so a first launch on mobile data
    stays small and the monster is instant every time after. */
 
-const CACHE = 'sds3d-v4';
+const CACHE = 'sds3d-v5';
 
 const ASSETS = [
   "./",
@@ -44,6 +44,7 @@ const ASSETS = [
   "./src/ui/device.js",
   "./src/ui/firstperson.js",
   "./src/ui/hud.js",
+  "./src/ui/joystick.js",
   "./src/ui/style.css",
   "./src/world/agents.js",
   "./src/world/boss.js",

@@ -1,8 +1,18 @@
-/* Orbit camera for the dollhouse view of the office tower.
+/* The camera. Two modes share one object so everything downstream — the
+   renderer's wall cut, the DOM label projection, desk picking — keeps working
+   without knowing which mode is on.
 
-   The target is a point on the floor currently being inspected; azimuth and
-   elevation orbit it and the wheel dollies in. Everything is critically damped
-   toward a goal rather than snapped, so switching floors glides. */
+   orbit  dollhouse view of the tower. The target is a point on the floor being
+          inspected; azimuth and elevation orbit it and the wheel dollies in.
+   walk   first person, standing on a floor. The joystick drives `walkMove()`
+          and a drag drives `look()`.
+
+   FACING CONVENTION (the same one the rigs use, on purpose)
+     yaw y  ->  forward = (sin y, cos y) in world XZ.
+     Screen-right is therefore (-cos y, sin y): with m4look's basis, looking
+     down +Z puts world -X on the right of the screen. Getting this backwards
+     is what makes a virtual stick feel like it is fighting you, so both
+     vectors are derived here, once, and nowhere else. */
 
 import { m4, m4mul, m4inv, m4persp, m4look, clamp, lerp } from '../core/math.js';
 
@@ -22,10 +32,21 @@ export class OrbitCamera {
     /* First person is a MODE of this camera rather than a second camera, so
        everything downstream — the projection helpers the DOM overlay uses, the
        ray picker, the renderer's uniform block — keeps working untouched. When
-       `fp` is set it is { x, y, z, yaw, pitch } in world space. */
+       `fp` is set it is { x, y, z, yaw, pitch } in world space.
+
+       Two branches built a walk mode independently. This one won because the
+       rest of the camera did not have to learn about it; the other's helpers
+       (`forward`, `walkVector`, `look`) are kept below because the joystick
+       reads them, and they now operate on `fp`. */
     this.fp = null;
     this.fpFov = 1.15;
   }
+
+  /* ---- walk helpers, driven by whatever is holding the stick ---- */
+  get wx() { return this.fp ? this.fp.x : this.tx; }
+  get wy() { return this.fp ? this.fp.y : this.ty; }
+  get wz() { return this.fp ? this.fp.z : this.tz; }
+  get wyaw() { return this.fp ? this.fp.yaw : this.az; }
 
   lookAt(x, y, z) { this.gx = x; this.gy = y; this.gz = z; }
   snap() { this.tx = this.gx; this.ty = this.gy; this.tz = this.gz; this.dist = this.goalDist; }

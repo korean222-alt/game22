@@ -12,6 +12,7 @@ import {
   RESEARCH, researchCost, CONTRACTS, contractPay, MARKETING,
   marketingCost, floorCost, comboScore,
   STARTUP_GRANT, rescueAmount, rescueMorale,
+  SHOP, shopItem, shopFor, GEAR_SLOTS, OVERTIME, DEX_SECTIONS, HP, bossFor, FOCUS_STAMINA,
 } from './data.js';
 import {
   FURNITURE_BY_ID, RESELL, comfortScore, comfortLevel, footprint, overlaps,
@@ -20,11 +21,12 @@ import { TUTORIAL, tutorialStep } from './tutorial.js';
 import {
   rollCandidates, proposalPower, giveItem, promote, canPromote,
   reincarnate, canReincarnate, addMotivation, abilities, power, role, seedIds, itemCost,
-  trainStamina, gainExp, expToNext,
+  trainStamina, gainExp, expToNext, syncHp, healHp, hpRatio, drainHp,
+  equipGear, unequipGear, canEquip, gearOf, isTired, isSpent, basePower,
 } from './staff.js';
 import {
   generateProposal, startProject, battleTurn, chooseCard, finishProject, debug,
-  turnCost, seedProjectIds,
+  turnCost, seedProjectIds, previewQuality, previewBugs, funScore,
 } from './project.js';
 import { TASKS, rollEvent, grantReward, rewardText } from './events.js';
 import {
@@ -88,6 +90,13 @@ export class Game {
       recentCombos: [],             // the last few genre|content keys shipped
       tasksDone: {},                // sales tasks already paid out
       eventsSeen: 0,
+      // 상점에서 산 소모품·장비가 쌓이는 가방. { itemId: 개수 }
+      // (가구 가방은 Game.bag 이다 — 이름은 같지만 다른 물건이고 다른 곳에 산다.)
+      bag: {},
+      // 도감. 본 것과 잡은 것이 여기에 남는다.
+      dex: { genres: {}, contents: {}, bosses: {}, items: {}, jobs: {} },
+      overtimeUsed: false,
+      spentOnShop: 0,
     };
     // Bought but not yet placed. The bag is what makes buying and placing two
     // separate decisions rather than one click that teleports a desk somewhere.
@@ -104,7 +113,8 @@ export class Game {
 
     // No founders. The studio opens as an empty floor with a grant in the bank,
     // so the first decisions — how many desks, who to seat at them — are the
-    // player's rather than a starting roster's.
+    // player's rather than a starting roster's. The other branch seeded five
+    // of them here; that is the thing the opening was rebuilt to remove.
     this.rollCandidates();
     this.rollTrends();
     this.note('오늘부터 사장님입니다. 책상을 사고 직원을 뽑으세요.');
@@ -312,6 +322,7 @@ export class Game {
     }
     if (!this.spend(c.hireCost)) return { ok: false, why: '자금 부족' };
     this.staff.push(c);
+    this.dexSee('jobs', c.job);
     this.candidates = this.candidates.filter((x) => x.id !== candidateId);
     this.note(`${c.name} (${JOBS[c.job].ko}) 입사.`, 'good');
     if (this.desks) this.assignDesks(this.desks);
@@ -365,6 +376,7 @@ export class Game {
     if (!c.ok) return c;
     const before = JOBS[s.job].ko;
     promote(s);
+    this.dexSee('jobs', s.job);
     this.note(`${s.name} 전직: ${before} → ${JOBS[s.job].ko}`, 'good');
     if (this.desks) this.assignDesks(this.desks);
     this.emit('staff', null);
@@ -376,6 +388,7 @@ export class Game {
     if (!s) return { ok: false };
     const r = reincarnate(s, newJob);
     if (r.ok) {
+      this.dexSee('jobs', newJob);
       this.note(`${s.name} 환생 → ${JOBS[newJob].ko}. 기본 재능은 남는다.`, 'good');
       if (this.desks) this.assignDesks(this.desks);
       this.emit('staff', null);
@@ -407,6 +420,7 @@ export class Game {
     const pr = generateProposal(this.rnd, author, this.totalPlanPower(), this.company.rank,
       this.company.research);
     this.proposals.unshift(pr);
+    this.dexSee('genres', pr.genreId);
     if (this.proposals.length > 8) this.proposals.pop();
     const g = GENRES.find((x) => x.id === pr.genreId);
     this.note(`${pr.authorName}의 기획서: 「${pr.title}」 ${g.ko} ★${pr.grade}`);
@@ -435,20 +449,31 @@ export class Game {
 
     this.proposals = this.proposals.filter((x) => x.id !== proposalId);
     this.project = p;
-    this.note(`「${p.title}」 개발 착수. 아이디어 HP ${p.hpMax.toLocaleString()}`, 'good');
+    this.dexSee('bosses', p.genreId);
+    this.note(`「${p.title}」 개발 착수. ${p.boss.ko} 아이디어 HP ${p.hpMax.toLocaleString()}`, 'good');
     this.emit('project', p);
     return { ok: true, project: p };
   }
 
-  devTurn() {
+  /* `opts.focus` is the multiplier the 집중 개발 timing bar produced. It costs
+     extra stamina, so a mistimed tap is a real loss rather than a free reroll. */
+  devTurn(opts = {}) {
     const p = this.project;
     if (!p) return { ok: false, why: '개발 중인 프로젝트가 없다' };
     if (p.pendingCards) return { ok: false, why: '아이디어를 먼저 고르세요' };
-    const cost = turnCost(p);
+    const focus = opts.focus || 0;
+    const cost = turnCost(p) + (focus ? FOCUS_STAMINA : 0);
     if (this.company.stamina < cost) return { ok: false, why: '스태미나 부족. 다음 주로 넘기세요.' };
     this.company.stamina -= cost;
 
-    const r = battleTurn(p, this.staffById(), this.rnd, this.ctx());
+    const r = battleTurn(p, this.staffById(), this.rnd, this.ctx(focus ? { focus } : {}));
+    for (const ev of r.events) {
+      if (ev.kind === 'boss') {
+        this.note(`${p.boss.ko}의 ${ev.ko}! ${ev.line}`, 'bad');
+      } else if (ev.kind === 'phase') {
+        this.note(`${ev.boss} ${ev.ko}! 약점이 드러났다 — 지금이 기회다.`, 'good');
+      }
+    }
     this.emit('battle', { project: p, events: r.events });
 
     if (p.hp <= 0 && !p.pendingCards) this._completeProject();
@@ -480,6 +505,7 @@ export class Game {
     this.company.researchPts += rp;
     let discovered = null;
     if (p.contentId) {
+      this.dexSee('contents', p.contentId);
       const key = `${p.genreId}|${p.contentId}`;
       const score = comboScore(p.genreId, p.contentId);
       const prev = this.company.discovered[key];
@@ -500,6 +526,16 @@ export class Game {
       const up = gainExp(s, xp);
       if (up) this.note(`${s.name} 경험치 상승 → Lv.${s.level}`, 'good');
     }
+    // 도감: 이 아이디어를 잡았다. 최고 점수와 최단 턴이 남는다.
+    const dex = this.company.dex.bosses;
+    const prevB = typeof dex[p.genreId] === 'object' ? dex[p.genreId] : null;
+    dex[p.genreId] = {
+      beaten: (prevB ? prevB.beaten : 0) + 1,
+      best: Math.max(prevB ? prevB.best : 0, p.criticTotal),
+      turns: prevB && prevB.turns ? Math.min(prevB.turns, p.turn) : p.turn,
+      title: p.title,
+    };
+
     this.project = null;
     this.finished = p;
     this.company.marketingId = 'none';
@@ -626,6 +662,228 @@ export class Game {
     this.emit('floors', this.company.floors);
     this.emit('staff', null);
     return { ok: true, floors: this.company.floors };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     상점 · 가방 · 체력
+     원작의 상점을 그대로 옮긴 자리다. 물건은 사면 **가방에 들어가고**, 쓸
+     때 효과가 난다. 음식은 직원 체력을, 음료는 회사 스태미나를, 장난감은
+     의욕을 올리고, 장비는 직원에게 장착돼 능력치와 품질 축을 영구히 올린다.
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  shopStock() { return shopFor(this.company.rank); }
+
+  bagCount(id) { return this.company.bag[id] || 0; }
+
+  bagList() {
+    return Object.entries(this.company.bag)
+      .filter(([, n]) => n > 0)
+      .map(([id, n]) => ({ item: shopItem(id), n }))
+      .filter((x) => x.item);
+  }
+
+  buyItem(id, qty = 1) {
+    const item = shopItem(id);
+    if (!item) return { ok: false, why: '없는 물건' };
+    if (this.company.rank < (item.rank || 1)) {
+      return { ok: false, why: `랭크 ${item.rank} 부터 살 수 있다` };
+    }
+    const n = Math.max(1, Math.floor(qty));
+    const cost = item.price * n;
+    if (!this.spend(cost)) return { ok: false, why: '자금 부족' };
+    this.company.bag[id] = this.bagCount(id) + n;
+    this.company.spentOnShop = (this.company.spentOnShop || 0) + cost;
+    this.dexSee('items', id);
+    this.note(`${item.emoji} ${item.ko}${n > 1 ? ` ×${n}` : ''} 구입 — 가방에 넣었다.`);
+    this.emit('bag', { id, n });
+    return { ok: true, item };
+  }
+
+  /* Use one item out of the bag. Food and toys want a target; drinks, tools and
+     anything marked `all` do not. Nothing is consumed unless it actually did
+     something, so a mis-tap never eats an item. */
+  useItem(id, staffId = null) {
+    const item = shopItem(id);
+    if (!item) return { ok: false, why: '없는 물건' };
+    if (this.bagCount(id) <= 0) return { ok: false, why: '가방에 없다' };
+    if (item.kind === 'gear') return { ok: false, why: '장비는 직원에게 장착하세요' };
+
+    const c = this.company;
+    let msg = null;
+
+    if (item.kind === 'drink') {
+      if (c.stamina >= c.staminaMax) return { ok: false, why: '스태미나가 이미 가득하다' };
+      c.stamina = Math.min(c.staminaMax, c.stamina + item.stam);
+      msg = `${item.emoji} ${item.ko} — 스태미나 ${c.stamina}/${c.staminaMax}`;
+    } else if (item.kind === 'tool' && item.bugs) {
+      const p = this.finished;
+      if (!p || p.bugs <= 0) return { ok: false, why: '고칠 버그가 없다' };
+      const fixed = Math.min(p.bugs, item.bugs);
+      p.bugs -= fixed;
+      msg = `${item.emoji} ${item.ko} — 버그 ${fixed}개 수정 (남은 ${p.bugs}개)`;
+      this.emit('finished', p);
+    } else if (item.kind === 'tool' && item.crit) {
+      const p = this.project;
+      if (!p) return { ok: false, why: '개발 중인 게임이 없다' };
+      p.critBonus = (p.critBonus || 0) + item.crit;
+      msg = `${item.emoji} ${item.ko} — 번뜩임 확률 +${Math.round(item.crit * 100)}%p`;
+      this.emit('project', p);
+    } else if (item.all) {
+      // 전 직원 대상: 피자 한 판, 다트 보드.
+      let touched = 0;
+      for (const st of this.staff) {
+        if (item.hp) { if (healHp(st, item.hp) > 0) touched++; }
+        if (item.mot) { addMotivation(st, item.mot, c.rank); touched++; }
+      }
+      if (!touched) return { ok: false, why: '지금은 효과가 없다' };
+      msg = `${item.emoji} ${item.ko} — 전 직원에게 돌렸다`;
+      this.emit('staff', null);
+    } else {
+      const st = this.staff.find((x) => x.id === staffId);
+      if (!st) return { ok: false, why: '누구에게 줄지 고르세요' };
+      let did = 0;
+      if (item.hp) did += healHp(st, item.hp);
+      if (item.mot) { addMotivation(st, item.mot, c.rank); did += 1; }
+      if (!did) return { ok: false, why: '체력이 이미 가득하다' };
+      msg = `${item.emoji} ${st.name} — ${item.ko} (체력 ${st.hp}/${st.hpMax})`;
+      this.emit('staff', null);
+    }
+
+    this.company.bag[id] = this.bagCount(id) - 1;
+    if (msg) this.note(msg, 'good');
+    this.emit('bag', { id, n: -1 });
+    return { ok: true, item };
+  }
+
+  /* 장비를 직원에게 채운다. 가방에서 하나 빠지고, 그 사람의 능력치와 그가
+     밀어 올리는 품질 축이 영구히 오른다. */
+  equipItem(staffId, id) {
+    const st = this.staff.find((x) => x.id === staffId);
+    const item = shopItem(id);
+    if (!st || !item) return { ok: false, why: '대상이 없다' };
+    if (this.bagCount(id) <= 0) return { ok: false, why: '가방에 없다' };
+    const chk = canEquip(st, id);
+    if (!chk.ok) return chk;
+    equipGear(st, id);
+    this.company.bag[id] = this.bagCount(id) - 1;
+    this.note(`${item.emoji} ${st.name}에게 ${item.ko} 지급 — ${item.desc}`, 'good');
+    this.emit('staff', null);
+    this.emit('bag', { id, n: -1 });
+    return { ok: true };
+  }
+
+  unequipItem(staffId, id) {
+    const st = this.staff.find((x) => x.id === staffId);
+    if (!st) return { ok: false };
+    const r = unequipGear(st, id);
+    if (!r.ok) return r;
+    this.company.bag[id] = this.bagCount(id) + 1;   // 가방으로 돌아온다
+    this.emit('staff', null);
+    this.emit('bag', { id, n: 1 });
+    return { ok: true };
+  }
+
+  /* ---------- 야근 ----------
+     "다음 주로 넘기는 것 말고는 스태미나를 채울 방법이 없다" 를 없애는 두
+     번째 길. 돈과 직원의 체력·의욕을 스태미나로 바꾼다. 주 1회 — 이것이
+     기본 루프를 대체해 버리면 주간 클록이 의미를 잃는다. */
+  overtimeCost() { return Math.round(OVERTIME.payPerHead * this.staff.length * (1 + this.company.rank * 0.12)); }
+
+  canOvertime() {
+    const c = this.company;
+    if (c.overtimeUsed) return { ok: false, why: '이번 주 야근은 이미 했다' };
+    if (c.stamina >= c.staminaMax) return { ok: false, why: '스태미나가 가득하다' };
+    if (!this.staff.length) return { ok: false, why: '직원이 없다' };
+    if (c.money < this.overtimeCost()) return { ok: false, why: '야근 수당이 부족하다' };
+    return { ok: true };
+  }
+
+  overtime() {
+    const chk = this.canOvertime();
+    if (!chk.ok) return chk;
+    const c = this.company;
+    const cost = this.overtimeCost();
+    this.spend(cost);
+    const gain = Math.max(1, Math.round(c.staminaMax * OVERTIME.stamina));
+    c.stamina = Math.min(c.staminaMax, c.stamina + gain);
+    for (const st of this.staff) {
+      drainHp(st, st.hpMax * OVERTIME.hpCost);
+      addMotivation(st, -OVERTIME.motCost, c.rank);
+    }
+    c.overtimeUsed = true;
+    this.note(`야근! 스태미나 +${gain} · 수당 ₩${cost.toLocaleString()} · 전원 체력과 의욕이 깎였다.`, 'bad');
+    this.emit('staff', null);
+    this.emit('week', { income: 0, costs: cost });
+    return { ok: true, gain };
+  }
+
+  /* ---------- 체력 ---------- */
+  restTeam() {
+    for (const s of this.staff) syncHp(s);
+  }
+
+  tiredStaff() { return this.staff.filter((s) => isTired(s)); }
+
+  /* The team member most in need of a meal — what the battle tray hands food to. */
+  neediest(ids = null) {
+    const pool = ids ? this.staff.filter((s) => ids.includes(s.id)) : this.staff;
+    let worst = null;
+    for (const s of pool) {
+      syncHp(s);
+      if (s.hp >= s.hpMax) continue;
+      if (!worst || hpRatio(s) < hpRatio(worst)) worst = s;
+    }
+    return worst;
+  }
+
+  /* ---------- 도감 ---------- */
+  dexSee(section, key) {
+    const d = this.company.dex || (this.company.dex = {});
+    const bag = d[section] || (d[section] = {});
+    if (!bag[key]) bag[key] = true;
+  }
+
+  dexCount(section) {
+    const d = (this.company.dex || {})[section] || {};
+    return Object.keys(d).length;
+  }
+
+  dexProgress() {
+    let have = 0, total = 0;
+    for (const sec of DEX_SECTIONS) {
+      have += this.dexCount(sec.id);
+      total += sec.total();
+    }
+    // 조합 도감도 한 항목으로 친다: 발견한 조합 수 / 전체 조합 수.
+    have += Object.keys(this.company.discovered || {}).length;
+    total += GENRES.length * CONTENTS.length;
+    return { have, total, pct: total ? Math.round(have / total * 100) : 0 };
+  }
+
+  /* ---------- 진행 상황 ----------
+     개발 화면 옆에 띄우는 숫자 한 벌. UI 가 직접 계산하지 않고 여기서
+     받아가므로, 화면에 뜬 값과 완성 결과가 어긋날 수 없다. */
+  devProgress() {
+    const p = this.project;
+    if (!p) return null;
+    const q = previewQuality(p);
+    return {
+      quality: q,
+      fun: funScore(q),
+      bugs: previewBugs(p, this.staffById(), this.ctx()),
+      gain: p.lastGain || null,
+      turn: p.turn,
+      crits: p.crits,
+      attacks: p.attacks || 0,
+      phase: p.phase || 0,
+      weak: p.weak || 0,
+      team: p.team.map((id) => {
+        const s = this.staff.find((x) => x.id === id);
+        if (!s) return null;
+        syncHp(s);
+        return { id: s.id, name: s.name, hp: s.hp, hpMax: s.hpMax, tired: isTired(s), spent: isSpent(s) };
+      }).filter(Boolean),
+    };
   }
 
   /* ---------- 연구 ---------- */
@@ -797,14 +1055,19 @@ export class Game {
     }
 
     c.stamina = c.staminaMax;
+    c.overtimeUsed = false;
 
     // Idle staff drift back toward a neutral mood; a shipped game is what
-    // actually raises motivation. A comfortable office pushes the other way —
-    // this is what the furniture is for, and why 쾌적도 is worth spending on
-    // once you have more people than the grant could seat.
+    // actually raises motivation. A week off also restores health, and a
+    // comfortable office pushes morale the other way — which is what the
+    // furniture is for, and why 쾌적도 is worth spending on once you have more
+    // people than the grant could seat.
     const cm = this.comfort();
     for (const s of this.staff) {
-      if (this.project && this.project.team.includes(s.id)) continue;
+      syncHp(s);
+      const idle = !this.project || !this.project.team.includes(s.id);
+      healHp(s, s.hpMax * (idle ? HP.weekly + 0.2 : HP.weekly));
+      if (!idle) continue;
       if (this.rnd() < cm.moodGain) addMotivation(s, 1, c.rank);
       else if (s.motivation > 3 && this.rnd() > 0.85) s.motivation -= 1;
     }
@@ -909,7 +1172,31 @@ export class Game {
           pr.criticBase = pr.critics.map((v) => v + pen);
         }
       }
+      c.bag = c.bag || {};
+      c.dex = c.dex || {};
+      for (const k of ['genres', 'contents', 'bosses', 'items', 'jobs']) c.dex[k] = c.dex[k] || {};
+      c.overtimeUsed = !!c.overtimeUsed;
+      c.spentOnShop = c.spentOnShop || 0;
       if (!c.trends) g.rollTrends();
+      // Saves written before staff had health or equipment: give everyone a
+      // pool sized to who they are now, and a project the boss it was missing.
+      for (const st of [...g.staff, ...g.candidates]) {
+        st.gear = st.gear || [];
+        syncHp(st);
+        g.company.dex.jobs[st.job] = true;
+      }
+      for (const pj of [g.project, g.finished]) {
+        if (!pj) continue;
+        if (!pj.boss) {
+          const b = bossFor(pj.genreId);
+          pj.boss = { id: pj.genreId, ko: b.ko, shape: b.shape, col: b.col, accent: b.accent };
+        }
+        pj.phase = pj.phase || 0;
+        pj.weak = pj.weak || 0;
+        pj.bugExtra = pj.bugExtra || 0;
+        pj.critBonus = pj.critBonus || 0;
+        pj.attacks = pj.attacks || 0;
+      }
       // Ids must not collide with anything the save already used.
       seedIds(Math.max(0, ...g.staff.map((s) => s.id), ...g.candidates.map((s) => s.id)) + 1);
       seedProjectIds(Date.now() % 100000);
@@ -933,6 +1220,8 @@ export class Game {
 
 export {
   STATS, JOBS, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, RESEARCH, CONTRACTS, MARKETING,
+  SHOP,
   abilities, power, role, rankInfo, RANK_UP_FANS, itemCost, trainStamina, floorCost,
   expToNext, STARTUP_GRANT, TUTORIAL, TASKS, rewardText,
+  hpRatio, isTired, isSpent, gearOf, basePower, shopItem, GEAR_SLOTS,
 };

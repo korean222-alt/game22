@@ -10,7 +10,7 @@ import { initGL, upload, disposeMesh } from './core/gl.js';
 import { MeshBuilder, splitGlass } from './core/meshbuilder.js';
 import { bakeAO, NavGrid } from './core/bake.js';
 import { clamp, mulberry32 } from './core/math.js';
-import { Renderer } from './render/renderer.js';
+import { Renderer, LIGHT_ORDER } from './render/renderer.js';
 import { SkinnedPass } from './render/skinned.js';
 import { OrbitCamera } from './render/camera.js';
 import { Rig } from './char/rig.js';
@@ -22,6 +22,7 @@ import { Crew, Agent, ST } from './world/agents.js';
 import { Boss, bossSpot, preloadMonster, monsterFor, tauntFor } from './world/boss.js';
 import { Game } from './game/state.js';
 import { addMotivation } from './game/staff.js';
+import * as staffMod from './game/staff.js';
 import { FirstPerson, SPOT_KO } from './ui/firstperson.js';
 import { meetingScript, critLine, idleLine } from './game/dialogue.js';
 import { UI } from './ui/hud.js';
@@ -61,6 +62,16 @@ const STAT_LABEL = {
   social: '소셜', retention: '지속성',
 };
 
+/* 화면 설정은 세이브(회사 상태)와 수명이 다르다 — 기기의 성질이지 회사의
+   기록이 아니다. 그래서 별도 키에, 실패해도 조용히 넘어가게 저장한다. */
+const PREF_KEY = 'socialdev3d.prefs.v1';
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch (e) { return {}; }
+}
+function savePrefs(p) {
+  try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch (e) { /* private mode */ }
+}
+
 /* ══════════════════════════════════════ view ══════════════════════════════ */
 
 class View {
@@ -81,15 +92,23 @@ class View {
     this.meetingScenes = true;      // player-facing toggle
     this.camSaved = null;
     this._skip = null;
+    /* ---- 개발 배틀의 보스 ---- */
     this.boss = null;               // the idea currently being fought
     this.bossEl = null;
+    this.bossProject = null;
+    this.bossFloor = 0;
+
+    /* ---- 가구 배치 ---- */
     this.place = null;              // the piece being positioned, if any
     this.gPlaced = null; this.gGhost = null; this.gZones = null;
     this.frameOpts = null;          // last frame's camera/cut state, for the skin pass
+
+    /* ---- 1인칭 ---- */
     this.entrance = null;
     this.cam = null;                // set once the camera exists, for first person
     this.storey = STOREY;
     this.fp = new FirstPerson(this);
+    this.prefs = loadPrefs();
     // Ids the office is still animating even though the game has already
     // dropped them from the roster, so syncAgents does not delete a body that
     // is halfway to the door.
@@ -329,6 +348,90 @@ class View {
     return this.desks.find((d) => d.id === staffer.deskId) || null;
   }
 
+  /* ══════════════════════ 개발 배틀의 보스 ══════════════════════
+     아이디어에 형체를 준다. 팀의 책상 한복판 위에 떠서, 맞으면 흔들리고,
+     페이즈가 오르면 커지고, 완성되면 사라진다. 순수 연출이다 — 규칙은
+     game/project.js 안에서만 돈다. */
+  /* 프로젝트당 한 번만 만든다. 'project' 이벤트는 턴마다 오므로, 매번
+     새로 지으면 프레임마다 VBO 를 버리고 다시 올리게 된다. */
+  ensureBoss(project) {
+    if (!project) { this.clearBoss(); return; }
+    if (this.boss && !this.boss.dead && this.bossProject === project.id) return;
+    this.spawnBoss(project);
+  }
+
+  /* 모델은 네트워크에서 온다. 로딩 중에 프로젝트가 끝나거나 바뀌었을 수
+     있으므로, 돌아왔을 때 아직 같은 프로젝트인지 확인하고 붙인다.
+     .glb 가 끝내 오지 않아도 전투는 예전 그대로 돌아간다. */
+  async spawnBoss(project) {
+    this.clearBoss();
+    if (!project) return;
+    const def = monsterFor(project);
+    const want = project.id;
+    this.bossProject = want;
+    const model = await preloadMonster(def);
+    if (!model || this.bossProject !== want || this.game.project !== project) return;
+
+    this.boss = new Boss(def, model);
+    this.boss.phase = project.phase || 0;
+    this.boss.scale = 1 + (project.phase || 0) * 0.08;
+    const spot = this.bossSpot(project);
+    this.boss.setAnchor(spot[0], spot[1], spot[2], this.bossFloor);
+    this.boss.faceTo(this.bossFaceYaw());
+    this.boss.yaw = this.boss.goalYaw;
+    this.boss.say(tauntFor(def, this.rnd), 3.4);
+    if (!this.bossEl) {
+      this.bossEl = document.createElement('div');
+      this.bossEl.className = 'bosstag';
+      ov.appendChild(this.bossEl);
+    }
+    return this.boss;
+  }
+
+  clearBoss() {
+    if (this.boss) this.boss.dispose();
+    this.boss = null;
+    this.bossProject = null;
+    if (this.bossEl) this.bossEl.style.display = 'none';
+  }
+
+  /* 팀이 앉아 있는 자리들의 무게중심. 아무도 자리가 없으면 그 층 한복판. */
+  bossSpot(project) {
+    let sx = 0, sz = 0, n = 0, floor = this.floor;
+    for (const id of project.team) {
+      const st = this.game.staff.find((x) => x.id === id);
+      const d = st && this.deskOf(st);
+      if (!d) continue;
+      sx += d.x; sz += d.z; n++;
+      floor = d.floor;
+    }
+    // 팀이 앉은 층에, 그 층의 고정 아레나 자리로. 무게중심을 쓰면 데몬이
+    // 자기를 때리는 책상 위에 서게 된다 — 통로 교차점이 어느 층에서나
+    // 비어 있는 것이 보장된 유일한 바닥이다.
+    this.bossFloor = floor;
+    const spot = bossSpot(floor);
+    return [spot.x, spot.y, spot.z];
+  }
+
+  /* 눈이 카메라를 향하게. 궤도 모드에서는 방위각, 1인칭에서는 내 위치. */
+  bossFaceYaw() {
+    if (!this.boss) return 0;
+    if (this.walk) return Math.atan2(cam.wx - this.boss.x, cam.wz - this.boss.z);
+    return cam.az;
+  }
+
+  /* 보스를 화면에 잡아준다. 개발 착수와 페이즈 전환에서 부른다. */
+  focusBoss(dist = 40) {
+    if (!this.boss || this.walk) return;
+    if (this.bossFloor !== undefined && this.bossFloor !== this.floor) {
+      this.setFloor(this.bossFloor);
+      ui.renderFloors();
+    }
+    cam.lookAt(this.boss.x, this.boss.y - 1.5, this.boss.z);
+    cam.goalDist = dist;
+    cam.el = 0.42;
+  }
+
   /* ---- camera / floor ---- */
   setFloor(f) {
     this.floor = clamp(f, 0, this.floorCount - 1);
@@ -565,57 +668,15 @@ class View {
     cam.az = c.az;
   }
 
-  /* ---- the boss ----
-     The idea being fought gets a body. Which species depends on the project's
-     HP, so a feature-phone puzzle and a console cross-release do not look like
-     the same job. Loading is asynchronous and entirely optional: if the .glb
-     never arrives the battle plays exactly as it did before. */
-  async spawnBoss(project) {
-    this.clearBoss();
-    if (!project) return;
-    const def = monsterFor(project);
-    this._bossWanted = project.id;
-    const model = await preloadMonster(def);
-    // The player may have finished or abandoned the project while it loaded.
-    if (!model || this._bossWanted !== project.id || !this.game.project) return;
-    const floor = this.teamFloor(project);
-    this.boss = new Boss(def, model, bossSpot(floor));
-    this.boss.say(tauntFor(def, this.rnd), 3.4);
-    if (!this.bossEl) {
-      this.bossEl = document.createElement('div');
-      this.bossEl.className = 'bosstag';
-      ov.appendChild(this.bossEl);
-    }
-    return this.boss;
-  }
-
-  clearBoss() {
-    this._bossWanted = null;
-    if (this.boss) { this.boss.dispose(); this.boss = null; }
-    if (this.bossEl) { this.bossEl.style.display = 'none'; }
-  }
-
-  /* The storey most of the team sits on, so the fight happens where the people
-     are rather than always on the ground floor. */
-  teamFloor(project) {
-    const tally = new Map();
-    for (const id of (project && project.team) || []) {
-      const a = this.crew.get(id);
-      if (!a) continue;
-      tally.set(a.floor, (tally.get(a.floor) || 0) + 1);
-    }
-    let best = this.floor, n = -1;
-    for (const [f, c] of tally) if (c > n) { n = c; best = f; }
-    return Math.min(best, this.floorCount - 1);
-  }
-
-  focusBoss() {
-    if (!this.boss) return false;
-    if (this.boss.floor !== this.floor) { this.setFloor(this.boss.floor); ui.renderFloors(); }
-    cam.lookAt(this.boss.x, this.boss.floor * STOREY + this.boss.def.height * 0.55, this.boss.z);
-    cam.goalDist = Math.min(cam.goalDist, 42);
-    return true;
-  }
+  /* ══════════════════════ 1인칭 ══════════════════════
+     두 갈래가 각자 1인칭을 만들었다. 남긴 쪽은 `ui/firstperson.js` — 카메라
+     바깥에 있어서 궤도 카메라가 걷기를 알 필요가 없고, 조이스틱도 자기
+     DOM 을 쓴다. 여기 있던 조이스틱·walk 카메라 구현은 그래서 걷어냈다.
+     `walk` 는 그 시절 호출부가 아직 읽는 이름이라 별칭으로 남긴다. */
+  get walk() { return this.fp.on; }
+  toggleWalk() { this.fp.toggle(); }
+  enterWalk() { this.fp.enter(this.floor); }
+  exitWalk() { this.fp.exit(); }
 
   /* ---- effects driven by game events ---- */
   startWork(teamIds) {
@@ -625,19 +686,61 @@ class View {
 
   playBattle({ project, events }) {
     this.startWork(project.team);
+    this.ensureBoss(project);
     let total = 0, anyCrit = false;
     for (const ev of events) {
-      if (ev.kind !== 'hit' && ev.kind !== 'crit') continue;
-      total += ev.damage;
-      if (ev.kind === 'crit') anyCrit = true;
-      const a = this.crew.get(ev.staffId);
-      if (!a) continue;
-      a.reactWith(ev.kind === 'crit' ? 'idea' : 'type', ev.kind === 'crit' ? 1.5 : 0.7);
-      if (ev.kind === 'crit') a.say(critLine(this.rnd), 2.0, 'idea');
+      if (ev.kind === 'hit' || ev.kind === 'crit') {
+        total += ev.damage;
+        if (ev.kind === 'crit') anyCrit = true;
+        const a = this.crew.get(ev.staffId);
+        if (!a) continue;
+        a.reactWith(ev.kind === 'crit' ? 'idea' : 'type', ev.kind === 'crit' ? 1.5 : 0.7);
+        if (ev.kind === 'crit') a.say(critLine(this.rnd), 2.0, 'idea');
+        if (this.boss) this.boss.hit(ev.kind === 'crit' ? 1.4 : 0.55);
+        // 데미지 숫자는 맞은 쪽 — 보스 위로 뜬다. 때린 사람 위에 뜨면
+        // 누가 맞고 있는지가 화면에서 사라진다.
+        const src = this.boss
+          ? { x: this.boss.x + (this.rnd() - 0.5) * 5, y: this.boss.y + 1.5 + this.rnd() * 2, z: this.boss.z + (this.rnd() - 0.5) * 4 }
+          : { x: a.x, y: a.floor * STOREY + 6.4, z: a.z };
+        this.effects.push({
+          ...src, text: ev.damage, crit: ev.kind === 'crit',
+          stat: ev.stat, life: 0, ttl: 1.15, el: null,
+        });
+      } else if (ev.kind === 'boss') {
+        // 반격: 보스가 부풀었다가 팀원들 머리 위로 붉은 숫자가 뜬다.
+        if (this.boss) this.boss.rage(this.boss.phase);
+        for (const h of ev.hits || []) {
+          const a = this.crew.get(h.staffId);
+          if (!a) continue;
+          a.reactWith('shock', 1.2);
+          a.say(ev.line, 2.2);
+          this.effects.push({
+            x: a.x, y: a.floor * STOREY + 6.4, z: a.z,
+            text: '-' + h.damage, hurt: true, stat: null, life: 0, ttl: 1.3, el: null,
+          });
+        }
+        this.effects.push({
+          x: this.boss ? this.boss.x : 0, y: (this.boss ? this.boss.y : 0) + 5.2,
+          z: this.boss ? this.boss.z : 0,
+          text: ev.ko, boss: true, life: 0, ttl: 1.8, el: null,
+        });
+      } else if (ev.kind === 'phase') {
+        if (this.boss) { this.boss.rage((this.boss.phase || 0) + 1); this.boss.scale = 1 + (this.boss.phase || 0) * 0.08; }
+        this.focusBoss(38);
+        this.effects.push({
+          x: this.boss ? this.boss.x : 0, y: (this.boss ? this.boss.y : 0) + 6.0,
+          z: this.boss ? this.boss.z : 0,
+          text: ev.ko + ' — 약점!', boss: true, life: 0, ttl: 2.2, el: null,
+        });
+      }
+    }
+    // The turn's total, over the monster's head. The per-staffer numbers say
+    // who contributed; this one says how the fight is going.
+    if (this.boss && total > 0) {
       this.effects.push({
-        x: a.x, y: a.floor * STOREY + 6.4, z: a.z,
-        text: ev.damage, crit: ev.kind === 'crit',
-        stat: ev.stat, life: 0, ttl: 1.15, el: null,
+        x: this.boss.x, y: this.boss.headY + 1.2, z: this.boss.z,
+        text: total, crit: anyCrit, stat: null, big: true,
+        life: 0, ttl: 1.5, el: null,
       });
     }
 
@@ -657,6 +760,7 @@ class View {
   }
 
   celebrate(teamIds) {
+    if (this.boss) this.boss.kill();
     for (const a of this.crew.all()) a.busy = false;
     for (const id of teamIds || []) {
       const a = this.crew.get(id);
@@ -675,6 +779,7 @@ class View {
     this.crew.update(dt, this.time, this.rnd);
 
     if (this.boss) {
+      this.boss.faceTo(this.bossFaceYaw());
       this.boss.update(dt);
       if (this.boss.dead) this.clearBoss();
     }
@@ -738,9 +843,11 @@ class View {
     for (const e of this.effects) {
       if (!e.el) {
         e.el = document.createElement('div');
-        e.el.className = 'dmg' + (e.crit ? ' crit' : '') + (e.boss ? ' big' : '');
-        const label = e.boss ? '' : (e.crit ? '번뜩임!' : (e.stat ? STAT_LABEL[e.stat] : ''));
-        e.el.innerHTML = `${e.boss ? '-' : ''}${Math.round(e.text).toLocaleString('ko-KR')}${label ? `<span class="sk">${label}</span>` : ''}`;
+        e.el.className = 'dmg' + (e.crit ? ' crit' : '') + (e.hurt ? ' hurt' : '')
+          + (e.boss ? ' bossmsg' : '') + (e.big ? ' big' : '');
+        const label = e.crit ? '번뜩임!' : (e.hurt ? '체력' : (e.stat ? STAT_LABEL[e.stat] : ''));
+        const txt = typeof e.text === 'number' ? Math.round(e.text).toLocaleString('ko-KR') : e.text;
+        e.el.innerHTML = `${txt}${label && !e.boss ? `<span class="sk">${label}</span>` : ''}`;
         ov.appendChild(e.el);
       }
       const p = cam.project(e.x, e.y, e.z, w, h);
@@ -811,6 +918,7 @@ async function boot() {
   document.body.classList.toggle('touch', isTouch());
   document.body.dataset.tier = tier;
 
+  const prefs = loadPrefs();
   renderer = new Renderer(canvas, {
     shadowSize: quality.shadowSize,
     bloomLevels: quality.bloomLevels,
@@ -821,6 +929,8 @@ async function boot() {
     grain: quality.grain,
     aberration: quality.aberration,
     vignette: quality.vignette,
+    // 기본이 'bright' 다. 실기기에서 예전 기본값은 밖에서 거의 안 보였다.
+    brightness: prefs.brightness || 'bright',
   });
   skinPass = new SkinnedPass(renderer);
   cam = new OrbitCamera();
@@ -841,6 +951,18 @@ async function boot() {
   view.setFloor(0);
   cam.snap();
 
+  view.setBrightness = (name) => {
+    const applied = renderer.setBrightness(name);
+    view.prefs.brightness = applied;
+    savePrefs(view.prefs);
+    return applied;
+  };
+  view.brightness = () => renderer.brightness;
+  view.brightnessSteps = LIGHT_ORDER;
+
+  // 저장된 게임을 이어서 열었는데 개발 중이었다면, 보스도 같이 돌아온다.
+  if (game.project) view.ensureBoss(game.project);
+
   ui = new UI(game, view);
   view.cam = cam;
   wireFirstPerson();
@@ -852,12 +974,14 @@ async function boot() {
   if (game.project) view.spawnBoss(game.project);
 
   window.__game = game;                 // console handles while balancing
+  window.__staffMod = staffMod;         // tools/battle.mjs reads power/abilities here
   window.__view = view;
   window.__ui = ui;
   window.__renderer = renderer;
   window.__cam = cam;
 
   wirePointer();
+  wireWalkKeys();
   suppressBrowserGestures(canvas);
   trackViewport(resize);
 
@@ -1104,13 +1228,14 @@ function wirePointer() {
     if (!prev) return;
     const nx = e.clientX, ny = e.clientY;
     moved += Math.abs(nx - prev.x) + Math.abs(ny - prev.y);
+
     pts.set(e.pointerId, { x: nx, y: ny });
     if (view.fp.on) { view.fp.moveLook(e.pointerId, nx, ny); return; }
     // Placement mode claims one finger before the camera does: while a piece is
     // in hand, dragging moves it. Two fingers still zoom and pan.
     if (pts.size === 1 && !dragPlace(e)) cam.orbit(nx - prev.x, ny - prev.y);
 
-    if (pts.size >= 2) {
+    if (pts.size >= 2 && !view.fp.on) {
       const g = gather();
       if (g) {
         if (pinch > 0 && g.d > 0) cam.zoom((pinch - g.d) * 2.0);
@@ -1160,6 +1285,25 @@ function wirePointer() {
   });
   window.addEventListener('keyup', (e) => { if (view.fp.on) view.fp.key(e, false); });
   window.addEventListener('blur', () => view.fp.keys.clear());
+}
+
+/* 데스크톱에서는 WASD 로 걷는다. 조이스틱과 같은 벡터로 들어가므로
+   이동 코드는 하나뿐이다. */
+function wireWalkKeys() {
+  const map = { w: 'fwd', s: 'back', a: 'left', d: 'right', arrowup: 'fwd', arrowdown: 'back', arrowleft: 'left', arrowright: 'right' };
+  const set = (e, on) => {
+    if (e.target && e.target.tagName === 'INPUT') return;
+    const k = e.key.toLowerCase();
+    if (k === 'f' && on) { view.fp.toggle(); return; }
+    if (!view.walk) return;
+    const slot = map[k];
+    if (!slot) return;
+    e.preventDefault();
+    view.keys[slot] = on;
+  };
+  window.addEventListener('keydown', (e) => set(e, true));
+  window.addEventListener('keyup', (e) => set(e, false));
+  window.addEventListener('blur', () => { view.keys = { fwd: false, back: false, left: false, right: false }; });
 }
 
 /* Browsers only grant fullscreen and orientation lock from inside a user

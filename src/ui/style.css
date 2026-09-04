@@ -347,8 +347,11 @@ h4.sec:first-child{margin-top:0}
 #toast.show{opacity:1}
 #toast.good{color:var(--good)}
 #toast.bad{color:var(--bad)}
-/* while a battle is running the toast moves above the bar rather than under it */
-body.in-battle #toast{bottom:calc(var(--sab) + var(--gap) + 106px)}
+/* while a battle is running the toast moves above the bar rather than under it.
+   보스 줄과 도우미 트레이가 붙으면서 배틀 바가 높아졌다 — 예전 106px 로는
+   토스트가 HP 바를 덮는다. */
+body.in-battle #toast{bottom:calc(var(--sab) + var(--gap) + 188px)}
+@media (max-height:470px){ body.in-battle #toast{bottom:calc(var(--sab) + var(--gap) + 168px)} }
 
 #hint{
   position:fixed;bottom:calc(var(--sab) + 10px);right:calc(var(--sar) + var(--rail-w) + var(--gap) + 4px);
@@ -734,3 +737,207 @@ body.touch #fpHelp{display:none}
   .fpbtn{padding:9px 13px;font-size:11.5px;min-height:38px}
   #fpSay{bottom:calc(var(--sab) + 124px);font-size:11.5px}
 }
+/* ═══════════════════════════════════════════════════════════════════════════
+   보스전 · 진행 패널 · 상점 · 도감 · 1인칭
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 탭이 일곱 개가 됐다. 폰 가로에서 246px 안에 다 들어가지 않으므로
+      가로 스크롤로 흘린다. flex:none 이 없으면 글자가 세로로 접힌다. ── */
+#tabs{overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+#tabs::-webkit-scrollbar{display:none}
+.tab{flex:1 0 auto;min-width:44px;padding:10px 9px;white-space:nowrap}
+
+/* ── 보스 줄 ── */
+.bossline{display:flex;align-items:center;gap:6px;margin:2px 0 5px;font-size:11px}
+.bossline .bico{font-size:13px;filter:drop-shadow(0 0 6px rgba(232,176,85,.5))}
+.bossline .bname{font-weight:800;color:#ffd9a0}
+.bossline .bphase{
+  margin-left:auto;font-size:9.5px;font-weight:800;letter-spacing:.4px;
+  padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.10);color:var(--dim);
+}
+.bossline .bphase.weak{background:rgba(232,176,85,.26);color:var(--gold);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+
+/* ── 집중 개발: 타이밍 바 ── */
+#bFocus{display:none;margin-top:8px}
+#bFocus.on{display:block}
+.ftrack{
+  position:relative;height:16px;border-radius:8px;overflow:hidden;
+  background:rgba(255,255,255,.08);border:1px solid var(--edge);
+}
+.fzone{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,rgba(232,176,85,.35),rgba(232,176,85,.75));}
+.fmark{position:absolute;top:-2px;bottom:-2px;width:4px;border-radius:2px;background:#fff;box-shadow:0 0 8px rgba(255,255,255,.8)}
+.fhint{font-size:9.5px;color:var(--dim);margin-top:3px;text-align:center}
+.fhint b{color:var(--gold)}
+
+/* ── 도우미 트레이: 배틀 중에 가방 속 소모품을 바로 쓴다 ── */
+#tray{display:flex;gap:5px;margin-top:8px;overflow-x:auto;scrollbar-width:none}
+#tray::-webkit-scrollbar{display:none}
+#tray:empty{display:none}
+.tray-i{
+  flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  width:40px;height:40px;border-radius:9px;cursor:pointer;
+  background:rgba(255,255,255,.07);border:1px solid var(--edge);
+}
+.tray-i:active{background:rgba(232,176,85,.20)}
+.tray-i .e{font-size:15px;line-height:1}
+.tray-i .n{font-size:8.5px;color:var(--dim);font-weight:800;margin-top:1px}
+.tray-i.off{opacity:.35}
+
+/* ── 진행 상황 패널 ──
+   개발 중에만 뜬다. 층 버튼 왼쪽, HUD 아래. 폭을 고정하는 이유는 숫자가
+   커질 때 패널이 들썩이면 눈이 따라가지 못하기 때문이다. */
+#prog{
+  position:fixed;z-index:10;display:none;
+  top:calc(var(--sat) + var(--hud-h) + var(--gap) + 4px);
+  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  width:158px;padding:8px 9px;
+  font-size:10.5px;line-height:1.4;
+  /* 배틀 바 위에서 끝나야 한다. 둘이 겹치면 점수판과 조작이 서로를 가린다. */
+  max-height:calc(var(--vh) - var(--sat) - var(--hud-h) - 200px);
+  overflow:hidden;
+}
+body.in-battle #prog{display:block}
+body.meeting #prog,body.walking #prog{display:none}
+.pgh{display:flex;justify-content:space-between;align-items:baseline;gap:5px;margin-bottom:5px}
+.pgh b{font-size:11px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pgh span{font-size:9px;color:var(--dim);flex:none}
+.pgfun{
+  display:flex;align-items:baseline;gap:5px;padding:4px 7px;margin-bottom:6px;border-radius:8px;
+  background:linear-gradient(90deg,rgba(232,176,85,.18),rgba(232,176,85,.04));
+  border:1px solid rgba(232,176,85,.24);
+}
+.pgfun span{font-size:9px;color:var(--dim);letter-spacing:1px}
+.pgfun b{font-size:17px;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums}
+.pgfun i{font-size:9.5px;font-style:normal;color:var(--good);margin-left:auto;font-weight:800}
+.pgs{display:flex;align-items:center;gap:4px;margin:3px 0}
+.pgs .l{width:34px;color:var(--dim);flex:none;font-size:9px}
+.pgs .b{flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.10);overflow:hidden}
+.pgs .f{height:100%;border-radius:3px;background:var(--sky);transition:width .45s cubic-bezier(.2,.8,.2,1)}
+.pgs .v{width:26px;text-align:right;font-variant-numeric:tabular-nums;font-weight:700;flex:none}
+.pgs .d{width:22px;text-align:right;font-size:9px;color:var(--good);font-weight:800;flex:none}
+.pgrow{display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:2px}
+.pgrow b{color:var(--txt);font-variant-numeric:tabular-nums}
+.pgt{margin-top:6px;border-top:1px solid var(--edge);padding-top:5px}
+.pgm{display:flex;align-items:center;gap:4px;margin:3px 0;font-size:9.5px}
+.pgm .n{width:44px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none}
+.pgm .b{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.10);overflow:hidden}
+.pgm .f{height:100%;border-radius:2px;background:var(--good);transition:width .3s ease}
+.pgm.tired .f{background:var(--warn)}
+.pgm.spent .f{background:var(--bad)}
+.pgm .s{flex:none;font-size:8.5px;color:var(--warn);font-weight:800}
+
+/* 폭이 좁은 기기에서는 진행 패널이 화면의 절반을 먹는다. 접어서 재미와
+   버그만 남긴다 — 그 둘이 이 패널의 핵심이다. */
+/* 폰 가로(≤470px 높이)에서는 배틀 바와 나란히 설 자리가 없다. 팀 체력
+   목록을 접고 재미·품질·버그만 남긴다 — 그 셋이 이 패널의 핵심이다. */
+@media (max-height:470px),(max-width:700px){
+  #prog{width:134px;padding:6px 7px;font-size:10px}
+  #prog .pgt{display:none}
+  .pgfun b{font-size:15px}
+}
+
+/* ── 체력 데미지 / 보스 대사 ── */
+.dmg.hurt{color:#ff8a7a;font-size:14px}
+.dmg.bossmsg{
+  font-size:15px;color:#ffd9a0;letter-spacing:.5px;
+  text-shadow:0 2px 10px rgba(0,0,0,.9),0 0 18px rgba(232,176,85,.5);
+}
+
+/* ── 상점 ── */
+.shopcat{display:flex;gap:4px;margin-bottom:7px;overflow-x:auto;scrollbar-width:none}
+.shopcat::-webkit-scrollbar{display:none}
+.shopcat .c{
+  flex:none;padding:6px 10px;border-radius:999px;font-size:10.5px;font-weight:700;cursor:pointer;
+  background:rgba(255,255,255,.06);border:1px solid var(--edge);color:var(--dim);
+}
+.shopcat .c.on{background:rgba(232,176,85,.20);border-color:rgba(232,176,85,.5);color:var(--gold)}
+.sitem{
+  display:flex;align-items:center;gap:8px;padding:8px 9px;margin-bottom:5px;border-radius:10px;
+  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.07);
+}
+.sitem .e{font-size:20px;flex:none;width:26px;text-align:center}
+.sitem .m{flex:1;min-width:0}
+.sitem .m .t{font-weight:700;font-size:11.5px}
+.sitem .m .d{font-size:9.5px;color:var(--dim);line-height:1.4;margin-top:1px}
+.sitem .m .p{font-size:10px;color:var(--gold);font-weight:800;margin-top:2px}
+.sitem .btn{flex:none}
+.sitem.locked{opacity:.45}
+.bagline{
+  display:flex;align-items:center;gap:6px;padding:7px 9px;margin-bottom:5px;border-radius:9px;
+  background:rgba(111,176,220,.09);border:1px solid rgba(111,176,220,.22);
+}
+.bagline .e{font-size:16px}
+.bagline .t{flex:1;font-size:11px;font-weight:700}
+.bagline .q{font-size:10px;color:var(--sky);font-weight:800}
+.gearpill{
+  display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px;margin:2px 3px 0 0;
+  font-size:9.5px;font-weight:700;background:rgba(201,143,208,.18);color:#e2b6e8;
+}
+
+/* 체력 막대 (직원 카드) */
+.hpline{display:flex;align-items:center;gap:5px;margin-top:4px;font-size:9.5px}
+.hpline .b{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.10);overflow:hidden}
+.hpline .f{height:100%;border-radius:3px;background:var(--good);transition:width .3s ease}
+.hpline.tired .f{background:var(--warn)}
+.hpline.spent .f{background:var(--bad)}
+.hpline .v{flex:none;font-variant-numeric:tabular-nums;color:var(--dim)}
+
+/* ── 도감 ── */
+.dexhead{
+  display:flex;align-items:center;gap:9px;padding:9px 11px;margin-bottom:8px;border-radius:11px;
+  background:linear-gradient(120deg,rgba(232,176,85,.16),rgba(111,176,220,.10));
+  border:1px solid rgba(232,176,85,.24);
+}
+.dexhead .big{font-size:22px;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums}
+.dexhead .sub{font-size:10px;color:var(--dim);line-height:1.4}
+.dexgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:4px;margin-bottom:4px}
+.dexc{
+  aspect-ratio:1;border-radius:9px;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:2px;padding:3px;text-align:center;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);
+}
+.dexc .i{font-size:16px;line-height:1}
+.dexc .n{font-size:8.5px;font-weight:700;line-height:1.15;overflow:hidden}
+.dexc .s{font-size:8px;color:var(--gold);font-weight:800}
+.dexc.got{background:rgba(232,176,85,.13);border-color:rgba(232,176,85,.30)}
+.dexc.miss{opacity:.34}
+.dexc.miss .i{filter:grayscale(1)}
+
+/* ── 1인칭 ──
+   .iconbtn 은 기본이 display:none 이고 body.touch 에서만 켜진다. 1인칭
+   토글은 데스크톱에서도 있어야 하므로 여기서 따로 켠다. */
+#walkBtn{display:flex;bottom:calc(var(--sab) + 8px);left:calc(var(--sal) + 52px);font-size:17px}
+body.walking #walkBtn{background:rgba(232,176,85,.22);border-color:rgba(232,176,85,.5)}
+body.walking #side,body.walking #hud,body.walking #brand,body.walking #battle{
+  opacity:0;pointer-events:none;transition:opacity .2s ease;
+}
+body.walking #hint{display:none}
+
+/* 뜨는 조이스틱. 누른 자리에 생기고, 반경 밖으로 끌어도 손잡이는 원 안에
+   머문다. pointer-events 는 없다 — 실제 입력은 캔버스가 받는다. */
+.stick{
+  position:absolute;width:108px;height:108px;margin:-54px 0 0 -54px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.30);background:rgba(16,18,23,.30);
+  -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);
+  pointer-events:none;z-index:12;
+}
+.stick .knob{
+  position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
+  border-radius:50%;background:rgba(232,176,85,.55);border:2px solid rgba(255,255,255,.55);
+  box-shadow:0 3px 12px rgba(0,0,0,.4);
+}
+#walkbar{
+  position:fixed;display:none;z-index:13;
+  left:50%;transform:translateX(-50%);
+  bottom:calc(var(--sab) + 10px);
+  align-items:center;gap:10px;padding:6px 10px;border-radius:999px;
+  background:rgba(16,18,23,.78);border:1px solid var(--edge);
+  -webkit-backdrop-filter:blur(9px);backdrop-filter:blur(9px);
+}
+body.walking #walkbar{display:flex}
+#walkbar .wk{font-size:10px;color:var(--dim)}
+@media (max-width:700px){ #walkbar .wk{display:none} }
+
+/* 가까이 있는 직원 이름표는 1인칭에서 더 크게 — 걷다가 누구인지 알아야 한다 */
+body.walking .nm{font-size:11px;padding:2px 8px}

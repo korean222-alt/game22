@@ -18,8 +18,20 @@ import {
 const SCENE_UNIFORMS = [
   'uVP', 'uLightVP', 'uSun', 'uSunCol', 'uSkyCol', 'uGndCol', 'uHorizCol', 'uFogCol',
   'uAmb', 'uFogFar', 'uHL', 'uShadow', 'uSTexel', 'uEyeXZ', 'uTgtXZ', 'uCut', 'uFloorY',
-  'uStorey', 'uEye', 'uRes', 'uGlassMode', 'uTime', 'uExposure',
+  'uStorey', 'uEye', 'uRes', 'uGlassMode', 'uTime', 'uExposure', 'uFill',
 ];
+
+/* 밝기 프리셋. 하나의 손잡이가 세 값을 같이 움직인다 — 노출만 올리면 하이라이트가
+   타고, 앰비언트만 올리면 대비가 사라진다. 셋을 같이 올려야 "밝다"가 된다.
+   기본값이 `normal` 이 아니라 `bright` 인 이유는 실기기 테스트 때문이다:
+   폰 화면을 밖에서 보면 예전 기본값은 거의 검게 보였다. */
+export const LIGHT_PRESETS = {
+  dim: { exposure: 1.00, ambient: 0.44, fill: 0.085, vignette: 1.00 },
+  normal: { exposure: 1.16, ambient: 0.58, fill: 0.17, vignette: 0.80 },
+  bright: { exposure: 1.34, ambient: 0.74, fill: 0.30, vignette: 0.55 },
+  max: { exposure: 1.52, ambient: 0.92, fill: 0.46, vignette: 0.30 },
+};
+export const LIGHT_ORDER = ['dim', 'normal', 'bright', 'max'];
 
 const BLOOM_LEVELS_DEFAULT = 5;
 
@@ -74,12 +86,27 @@ export class Renderer {
     this.horizonColor = new Float32Array([0.52, 0.50, 0.47]);
     this.fogColor = new Float32Array([0.60, 0.63, 0.68]);
     this.ambient = 0.44;
+    this.fill = 0.085;
     this.fogFar = 260;
+    this.vignetteBase = this.vignette;
+    this.setBrightness(opts.brightness || 'bright');
 
     this.lightVP = m4(); this._lView = m4(); this._lProj = m4();
     this.lightTarget = [0, 0, 0];
     this.lightRadius = 60;
     this.fitLight();
+  }
+
+  /* The player-facing 밝기 setting. Everything it touches is a grading value,
+     so it is safe to change at any time — no target is reallocated. */
+  setBrightness(name) {
+    const p = LIGHT_PRESETS[name] || LIGHT_PRESETS.bright;
+    this.brightness = LIGHT_PRESETS[name] ? name : 'bright';
+    this.exposure = p.exposure;
+    this.ambient = p.ambient;
+    this.fill = p.fill;
+    this.vignette = this.vignetteBase * p.vignette;
+    return this.brightness;
   }
 
   _initShadow() {
@@ -191,6 +218,7 @@ export class Renderer {
     gl.uniform3fv(L.uHorizCol, this.horizonColor);
     gl.uniform3fv(L.uFogCol, this.fogColor);
     gl.uniform1f(L.uAmb, this.ambient);
+    gl.uniform1f(L.uFill, this.fill);
     gl.uniform1f(L.uFogFar, this.fogFar);
     gl.uniform1f(L.uExposure, this.exposure);
     gl.uniform1f(L.uTime, opts.time);
