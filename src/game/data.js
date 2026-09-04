@@ -256,6 +256,51 @@ export function rankInfo(rank) {
    before the second Christmas. */
 export const RANK_UP_FANS = (rank) => Math.round(900 * Math.pow(2.2, rank - 1));
 
+/* ---------- 창업 지원금 ----------
+   A studio now opens with no staff and no furniture, so the opening move is
+   spending this on desks and the people to sit at them. Sized against the
+   opening costs rather than picked round: three basic desks (₩27,000), three
+   rookie hires (about ₩20,000), a feature-phone project (₩25,000) and a couple
+   of months of payroll still leaves room to make the office liveable — and not
+   so much room that the first decision is free. */
+export const STARTUP_GRANT = 180000;
+
+/* ---------- 긴급 지원금 ----------
+   The design rule is that a player is never permanently stuck. A studio that
+   runs its balance negative gets rescued rather than deleted — but each rescue
+   is smaller than the last and costs the roster's morale, so living on them is
+   visibly a losing way to play. The floor means there is always a next chance.
+
+   Contracts remain the cheap way out: they cost stamina, not pride. */
+export const RESCUE_FIRST = 120000;
+export const RESCUE_DECAY = 0.72;
+export const RESCUE_FLOOR = 30000;
+
+/* `need` is what it actually costs this studio to get moving again — the
+   cheapest project it could start plus a month of running costs. Without it the
+   grants shrink below the price of a game and the studio ends up permanently
+   solvent and permanently unable to do anything, which is the same dead end as
+   bankruptcy with extra steps. The headless sloppy-play run is what caught it. */
+export function rescueAmount(count, need = 0) {
+  const decayed = Math.max(RESCUE_FLOOR, RESCUE_FIRST * Math.pow(RESCUE_DECAY, count));
+  return Math.round(Math.max(decayed, need) / 1000) * 1000;
+}
+
+/* Morale is the price. It rises with each rescue: the first is a lifeline, the
+   fourth is the staff reading about the company in the news. */
+export function rescueMorale(count) { return -(1 + Math.min(3, count)); }
+
+/* ---------- 초봉 할인 ----------
+   Rank 1-2 applicants are graduates: cheaper to hire and cheaper to keep, so a
+   studio with a grant and no staff can actually field a team on day one. The
+   discount disappears as the company becomes somewhere people want to work. */
+export function hireDiscount(rank) {
+  if (rank <= 1) return 0.40;
+  if (rank === 2) return 0.60;
+  if (rank === 3) return 0.80;
+  return 1;
+}
+
 /* ---------- items ---------- */
 /* `level` is how many levels the gift is worth; the price is derived from the
    recipient's current level rather than being flat, so late-career growth is

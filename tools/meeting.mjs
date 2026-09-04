@@ -28,6 +28,35 @@ const step = async (label, fn) => {
   catch (e) { console.log(`✗ ${label}: ${e.message}`); return false; }
 };
 
+/* ---- staff the studio ----
+   The office now opens empty: no desks, no people, and a naming popup on top.
+   This scene needs a team, so get through the opening and furnish a floor
+   before any of the meeting choreography can be tested at all. */
+await step('창업 · 책상 · 채용', async () => {
+  const r = await page.evaluate(async () => {
+    const g = window.__game, v = window.__view, ui = window.__ui;
+    if (!g.company.founded) g.found('회의 스튜디오');
+    ui.closeModal();
+    g.company.money = 5_000_000;
+    const spots = [[10, 9], [17, 9], [10, 15], [17, 15], [10, 24]];
+    for (const [x, z] of spots) {
+      g.buyFurniture('desk');
+      const uid = g.bag[g.bag.length - 1].uid;
+      g.placeFurniture(uid, 0, x, z, 0, v.placeChecks());
+    }
+    v.rebuildFurniture();
+    for (let i = 0; i < 5 && g.freeDesks() > 0; i++) {
+      if (!g.candidates.length) g.rollCandidates();
+      if (!g.hire(g.candidates[0].id).ok) g.rollCandidates();
+    }
+    v.syncAgents();
+    return { staff: g.staff.length, desks: g.deskCount(), agents: v.crew.agents.size };
+  });
+  await page.waitForTimeout(500);
+  if (r.agents < 3) throw new Error(`에이전트 ${r.agents}명`);
+  return `책상 ${r.desks} · 직원 ${r.staff} · 에이전트 ${r.agents}`;
+});
+
 /* ---- pathing sanity: can an agent reach the meeting room at all? ---- */
 await step('경로 탐색', async () => {
   const r = await page.evaluate(() => {

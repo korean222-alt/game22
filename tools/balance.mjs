@@ -5,15 +5,61 @@ globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: 
 const { Game } = await import(new URL('../src/game/state.js', import.meta.url));
 const { MARKETING, RESEARCH, CONTRACTS, JOBS } = await import(new URL('../src/game/data.js', import.meta.url));
 const { power } = await import(new URL('../src/game/staff.js', import.meta.url));
-const { buildOffice } = await import(new URL('../src/world/office.js', import.meta.url));
+const { placeZones, inPlaceZone } = await import(new URL('../src/world/office.js', import.meta.url));
+const { buildPlaced } = await import(new URL('../src/world/placed.js', import.meta.url));
+const { FURNITURE_BY_ID } = await import(new URL('../src/game/furniture.js', import.meta.url));
 
 const won = (n) => Math.round(n).toLocaleString('en-US');
 const YEARS = Number(process.argv[3] || 5);
 const g = new Game(Number(process.argv[2] || 12345));
+g.found('밸런스 스튜디오');
 
-// Real desks from the real generator, so floor roles are what the game sees.
-const built = buildOffice(5);
-g.assignDesks(built.desks);
+/* The office starts bare, so the AI has to furnish it before it can hire. Slots
+   are laid out inside the same bays the placement UI offers, spaced by a desk's
+   footprint plus an aisle.
+
+   `clearOfWalls` is stubbed true: that test needs the building's collision grid,
+   which only exists once WebGL has built the world. The zone test alone is
+   enough here — the bays are carved to be clear of the architecture. */
+const CHECKS = { zoneOk: inPlaceZone, clearOfWalls: () => true };
+
+function slotsFor(floor) {
+  const out = [];
+  for (const r of placeZones(floor)) {
+    for (let x = r.x0 + 3; x + 3 <= r.x1; x += 7) {
+      for (let z = r.z0 + 2.6; z + 2.6 <= r.z1; z += 6) out.push([x, z]);
+    }
+  }
+  return out;
+}
+const slots = new Map();
+function nextSlot(floor) {
+  if (!slots.has(floor)) slots.set(floor, slotsFor(floor));
+  const list = slots.get(floor);
+  const used = new Set(g.company.placed.filter((p) => p.floor === floor).map((p) => `${p.x},${p.z}`));
+  return list.find(([x, z]) => !used.has(`${x},${z}`)) || null;
+}
+
+/* Buy and place one piece on the lowest floor with room. Returns false when the
+   money is not there or every bay is full. */
+function furnish(id) {
+  const def = FURNITURE_BY_ID.get(id);
+  if (!def || g.company.money < def.price) return false;
+  for (let f = 0; f < g.company.floors; f++) {
+    const slot = nextSlot(f);
+    if (!slot) continue;
+    if (!g.buyFurniture(id).ok) return false;
+    const uid = g.bag[g.bag.length - 1].uid;
+    const r = g.placeFurniture(uid, f, slot[0], slot[1], 0, CHECKS);
+    if (!r.ok) { g.sellFurniture(uid); return false; }
+    syncDesks();
+    return true;
+  }
+  return false;
+}
+
+function syncDesks() { g.assignDesks(buildPlaced(g.company.placed).desks); }
+syncDesks();
 
 const rows = [];
 const bugSamples = [], dbgSamples = [];
@@ -23,13 +69,19 @@ for (let week = 0; week < YEARS * 48; week++) {
   // ── grow the office when it comfortably pays for itself ──
   if (g.canBuyFloor().ok && c.money > g.nextFloorCost() * 3.2) {
     g.buyFloor();
-    g.assignDesks(built.desks);
+    syncDesks();
   }
 
+  // ── furnish: a desk to hire into, then comfort once there is slack ──
+  if (g.freeDesks() === 0 && g.staff.length < g.info().staffCap) {
+    furnish(c.money > 400000 ? 'deskDual' : 'desk');
+  }
+  if (c.money > 250000 && g.comfort().score < 60) furnish('plant') || furnish('coffee');
+
   // ── hire when we can afford the person several times over ──
-  if (g.candidates.length && g.staff.length < g.info().staffCap) {
+  if (g.candidates.length && g.staff.length < g.info().staffCap && g.freeDesks() > 0) {
     const best = g.candidates.slice().sort((a, b) => b.talent - a.talent)[0];
-    if (c.money > best.hireCost * 6) { g.hire(best.id); g.assignDesks(built.desks); }
+    if (c.money > best.hireCost * 6) { g.hire(best.id); syncDesks(); }
   }
 
   // ── research: buy the cheapest available upgrade ──

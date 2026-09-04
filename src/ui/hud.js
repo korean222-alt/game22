@@ -10,12 +10,17 @@
    the card and result flows await the 3D scene before opening a modal. */
 
 import {
-  JOBS, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, STATS, STAT_KO, METHODS,
+  JOBS, JOB_ABILITY, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, STATS, STAT_KO, METHODS,
   RESEARCH, CONTRACTS, MARKETING, TRAITS, FLOOR_UPKEEP,
   comboScore, comboLabel, rankInfo, RANK_UP_FANS, researchEffect,
+  STARTUP_GRANT, hireDiscount,
 } from '../game/data.js';
+import {
+  FURNITURE, FURNITURE_BY_ID, FURNITURE_CATS, RESELL, comfortLabel,
+} from '../game/furniture.js';
 import { abilities, power, role, itemCost, trainStamina, traitsOf, expToNext } from '../game/staff.js';
-import { turnCost } from '../game/project.js';
+import { turnCost, projectQuality, ideaHp } from '../game/project.js';
+import { monsterFor } from '../game/monsters.js';
 import { FLOOR_PLANS } from '../world/office.js';
 import { isTouch, isFullscreen, goFullscreen, exitFullscreen } from './device.js';
 
@@ -29,6 +34,31 @@ const el = (tag, cls, html) => {
 const won = (n) => '₩' + Math.round(n).toLocaleString('ko-KR');
 const num = (n) => Math.round(n).toLocaleString('ko-KR');
 const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+
+/* ---- the stat bars ----
+   Every bar in the game reads against a stated maximum, and the maximum is
+   written down here rather than being guessed per call site. That is what was
+   wrong with them: quality runs 1-999 but the bars divided it by 4, so every
+   game above 400 drew a full bar and the five axes of a good release were
+   indistinguishable — the graph stopped carrying information exactly when it
+   started mattering. The in-development bars had the opposite failure: they
+   were normalised against the largest of the five, so the best axis was always
+   100% and the picture never changed as the project grew.
+
+   `bar` takes a value and its scale and draws one row. Nothing else does. */
+const QUALITY_MAX = 999;        // finishProject clamps every axis to this
+const ABILITY_MAX = 120;        // a tier-2 job at max level with items sits near here
+
+function bar(label, value, max, opts = {}) {
+  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  const cls = opts.cls ? ' ' + opts.cls : '';
+  const shown = opts.text !== undefined ? opts.text : num(value);
+  return `<div class="sb${cls}"><span class="lb">${label}</span>`
+    + `<span class="bar"><span class="fill" style="width:${pct.toFixed(1)}%"></span>`
+    + (opts.mark !== undefined
+      ? `<i class="mk" style="left:${Math.max(0, Math.min(100, (opts.mark / max) * 100)).toFixed(1)}%"></i>` : '')
+    + `</span><span class="vv">${shown}</span></div>`;
+}
 
 export class UI {
   constructor(game, view) {
@@ -73,6 +103,14 @@ export class UI {
       $('bAuto').classList.toggle('primary', this.auto);
       if (this.auto) this._autoTick();
     };
+    const boss = $('bBoss');
+    if (boss) {
+      boss.onclick = () => {
+        if (!this.view.focusBoss()) this.toast('아이디어가 아직 나타나지 않았습니다.', 'bad');
+        else this.togglePanel(true);
+      };
+      boss.style.touchAction = 'manipulation';
+    }
   }
 
   _wireModal() {
@@ -129,10 +167,93 @@ export class UI {
     if (type === 'rank') this.showRankUp(payload);
     if (type === 'finished') this._finishedFlow(payload);
     if (type === 'floors') this.view.setFloorCount(payload).then(() => this.renderFloors());
+    if (type === 'rescue') this.showRescue(payload);
+    // A hire, a departure or a desk reshuffle changes who exists and where they
+    // sit. The office starts empty now, so every person in the building arrived
+    // through one of these — without this the first hire is invisible until
+    // something else happens to rebuild the world.
+    if (type === 'staff' || type === 'desks') this.view.syncAgents();
     this.renderHUD();
     this.renderBattle();
     if (type !== 'log') this.renderPanel();
+    this.renderTutorial();
     this._cardFlow();
+  }
+
+  /* ---------- the opening ----------
+     A new studio has no name, no staff and no furniture. This is the ceremony
+     that fixes the first of those and pays for the other two: a name box, then
+     the grant, then the tutorial takes over. A save that has already been
+     founded skips straight past. */
+  openingFlow() {
+    const c = this.g.company;
+    if (c.founded) { this.renderTutorial(); return; }
+    this.askCompanyName();
+  }
+
+  askCompanyName() {
+    const suggest = ['픽셀하트', '코코아 스튜디오', '나인볼트', '달빛상자', '스튜디오 여백', '토끼굴 게임즈'];
+    const pick = suggest[Math.floor(Math.random() * suggest.length)];
+    $('mTag').textContent = '창업';
+    $('mTitle').textContent = '회사 이름을 정하세요';
+    $('mBody').innerHTML =
+      `<p style="color:var(--dim);font-size:12px;margin-bottom:10px">
+         오늘부터 사장님입니다. 이 이름으로 게임을 출시하게 됩니다.</p>
+       <input id="coInput" class="tin" maxlength="18" placeholder="${pick}" autocomplete="off">
+       <p style="color:var(--dim);font-size:11px;margin-top:8px">최대 18자. 나중에는 바꿀 수 없습니다.</p>`;
+    $('mOpts').innerHTML = '';
+    $('mOk').style.display = '';
+    $('mOk').textContent = '설립하기';
+    this.modalOnOk = () => {
+      const input = $('coInput');
+      const name = (input && input.value.trim()) || pick;
+      this.g.found(name);
+      this.showGrant(name);
+    };
+    $('modal').classList.add('show');
+    setTimeout(() => { const i = $('coInput'); if (i) i.focus(); }, 60);
+  }
+
+  showGrant(name) {
+    this.openModal('창업 지원금', `「${name}」 설립!`,
+      `<div class="grade">${won(STARTUP_GRANT)}</div>
+       <div class="gsub">창업 지원금이 입금되었습니다</div>
+       <p style="font-size:12px;line-height:1.6;margin-top:10px">
+         사무실은 비어 있고 직원도 없습니다. 이 돈으로
+         <b>책상을 사서 배치하고</b>, 그 자리에 <b>직원을 뽑으면</b> 회사가 굴러가기 시작합니다.<br><br>
+         지금은 <b>신입 할인</b> 기간이라 채용비가 ${Math.round((1 - hireDiscount(1)) * 100)}% 쌉니다.</p>`,
+      null, () => { this.openTab('office'); this.renderTutorial(); });
+  }
+
+  showRescue({ amount, debt, count, morale }) {
+    this.openModal('긴급 지원금', '자금이 바닥났습니다',
+      `<div class="grade">${won(amount)}</div>
+       <div class="gsub">${count}번째 지원 · 부족분 ${won(debt)}</div>
+       <p style="font-size:12px;line-height:1.6;margin-top:10px">
+         투자자가 급한 불을 꺼줬습니다. 회사는 문을 닫지 않습니다 — 대신
+         <b>직원 의욕 ${morale}</b>. 다음 지원금은 더 적습니다.<br><br>
+         회사 탭의 <b>계약 일감</b>은 스태미나만 쓰고 확실한 현금이 들어옵니다.
+         지원금에 기대는 것보다 언제나 쌉니다.</p>`);
+  }
+
+  /* ---------- tutorial ----------
+     A single line above the panel naming the next thing to do. It is not a
+     wizard and it blocks nothing: the step it shows is derived from committed
+     state, so doing things out of order simply skips ahead. */
+  renderTutorial() {
+    const box = $('tut');
+    if (!box) return;
+    const step = this.g.tutorialStep();
+    if (!step || !this.g.company.founded) { box.classList.remove('show'); return; }
+    box.classList.add('show');
+    box.innerHTML = `<div class="tt">${step.title}</div><div class="tb">${step.body}</div>`;
+    const go = el('button', 'btn sm primary', '이동');
+    go.onclick = () => this.openTab(step.tab);
+    const skip = el('button', 'btn sm', '건너뛰기');
+    skip.onclick = () => { this.g.skipTutorial(); this.renderTutorial(); };
+    const row = el('div', 'trow');
+    row.append(go, skip);
+    box.appendChild(row);
   }
 
   /* Variables the meeting dialogue interpolates. */
@@ -247,9 +368,12 @@ export class UI {
     }
     bar.classList.add('show');
     document.body.classList.add('in-battle');
-    const gen = GENRES.find((x) => x.id === p.genreId);
+    // Tolerant of a project missing its lookups: a save written by another
+    // build should degrade to a placeholder, not take the whole HUD down.
+    const gen = GENRES.find((x) => x.id === p.genreId) || { ko: '?' };
+    const mon = monsterFor(p);
     $('bTitle').textContent = `「${p.title}」`;
-    const bits = [gen.ko, `★${p.proposal.grade}`, `${p.turn}턴`];
+    const bits = [mon.ko, gen.ko, `★${p.proposal ? p.proposal.grade : '?'}`, `${p.turn}턴`];
     if (p.contentId) {
       const c = CONTENTS.find((x) => x.id === p.contentId);
       const lb = comboLabel(comboScore(p.genreId, p.contentId));
@@ -380,6 +504,11 @@ export class UI {
     const g = this.g, info = g.info();
 
     box.appendChild(el('h4', 'sec', `직원 ${g.staff.length} / ${info.staffCap}명`));
+    if (!g.staff.length) {
+      box.appendChild(el('div', 'item',
+        '<div class="d">아직 직원이 없습니다. 아래에서 채용하세요. '
+        + '<b>빈 책상이 있어야</b> 뽑을 수 있으니, 사무실 탭에서 책상을 먼저 사고 배치하세요.</div>'));
+    }
     for (const s of g.staff) {
       const ab = abilities(s);
       const inTeam = g.project && g.project.team.includes(s.id);
@@ -399,7 +528,14 @@ export class UI {
       box.appendChild(it);
     }
 
-    box.appendChild(el('h4', 'sec', '채용'));
+    const free = g.freeDesks();
+    const disc = hireDiscount(g.company.rank);
+    box.appendChild(el('h4', 'sec',
+      `채용 <span class="hint">빈 책상 ${free}자리${disc < 1 ? ` · 신입 할인 -${Math.round((1 - disc) * 100)}%` : ''}</span>`));
+    if (free <= 0) {
+      box.appendChild(el('div', 'item',
+        '<div class="d" style="color:var(--warn)">빈 책상이 없습니다. 사무실 탭에서 책상을 사서 배치하면 채용할 수 있습니다.</div>'));
+    }
     if (!g.candidates.length) {
       box.appendChild(el('div', 'item', '<div class="d">지금은 지원자가 없다. 다음 주에 다시 확인하세요.</div>'));
     }
@@ -409,7 +545,7 @@ export class UI {
       const traitTags = traitsOf(cand)
         .map((t) => `<span class="pill" title="${t.desc}">${t.ko}</span>`).join('');
       it.innerHTML = `<div class="t"><span class="n">${cand.name}</span>
-        <span class="j">Lv.${cand.level}</span></div>
+        <span class="j">Lv.${cand.level}${cand.rookie ? ' · <span class="pill great">신입</span>' : ''}</span></div>
         <div class="d"><span class="pill ${role(cand)}">${JOBS[cand.job].ko}</span>${traitTags}<br>
         기획 ${ab.plan} · 개발 ${ab.prog} · 그래픽 ${ab.graph} · 사운드 ${ab.sound} · 소셜 ${ab.social}<br>
         재능 ×${cand.talent.toFixed(2)} · 주급 ${won(cand.salary * 0.6)}</div>`;
@@ -418,8 +554,13 @@ export class UI {
       }
       const b = el('button', 'btn sm', `채용 ${won(cand.hireCost)}`);
       b.style.marginTop = '6px';
-      b.disabled = g.company.money < cand.hireCost || g.staff.length >= info.staffCap;
-      b.onclick = () => { const r = g.hire(cand.id); if (!r.ok) this.toast(r.why, 'bad'); g.save(); };
+      b.disabled = g.company.money < cand.hireCost || g.staff.length >= info.staffCap || free <= 0;
+      b.onclick = () => {
+        const r = g.hire(cand.id);
+        if (!r.ok) this.toast(r.why, 'bad');
+        this.renderTutorial();
+        g.save();
+      };
       it.appendChild(b);
       box.appendChild(it);
     }
@@ -432,15 +573,18 @@ export class UI {
     const g = this.g;
     const d = el('div');
     d.style.marginTop = '7px';
+    // The five abilities share one axis so they can be compared with each
+    // other; the driving ability for this person's job is highlighted, because
+    // it is the only one the battle multiplies by.
+    const drive = JOB_ABILITY[s.job];
     for (const [k, ko] of [['plan', '기획'], ['prog', '개발'], ['graph', '그래픽'], ['sound', '사운드'], ['social', '소셜']]) {
-      d.appendChild(el('div', 'sb',
-        `<span class="lb">${ko}</span><span class="bar"><span class="fill" style="width:${Math.min(100, ab[k])}%"></span></span><span class="vv">${ab[k]}</span>`));
+      d.appendChild(el('div', 'wrap',
+        bar(ko, ab[k], ABILITY_MAX, { cls: k === drive ? 'drive' : '' })));
     }
     if (s.level < s.maxLevel) {
       const need = expToNext(s);
       const have = s.exp || 0;
-      d.appendChild(el('div', 'sb',
-        `<span class="lb">경험치</span><span class="bar"><span class="fill" style="width:${Math.min(100, Math.round(have / need * 100))}%"></span></span><span class="vv">${have}/${need}</span>`));
+      d.appendChild(el('div', 'wrap', bar('경험치', have, need, { cls: 'exp', text: `${have}/${need}` })));
     }
     d.appendChild(el('div', 'row', `<span>재능</span><b>×${s.talent.toFixed(2)}</b>`));
     d.appendChild(el('div', 'row', `<span>주급</span><b>${won(s.salary * 0.6)}</b>`));
@@ -615,10 +759,23 @@ export class UI {
       if (!r.ok) { this.toast(r.why, 'bad'); return; }
       this.draft = null;
       this.view.startWork(g.project.team);
+      // The monster loads while the kickoff meeting plays, so by the time the
+      // player is back on the floor the idea is standing there waiting.
+      this.view.spawnBoss(g.project);
       this._kickoff(g.project);
+      this.renderTutorial();
       g.save();
     };
     box.appendChild(go);
+
+    const hpMax = ideaHp({
+      genreId: pr.genreId, platformId: d.platformId, grade: pr.grade,
+      seriesN: seriesOf ? seriesOf.seriesN + 1 : 1, rank: g.company.rank,
+    });
+    const mon = monsterFor({ hpMax });
+    box.appendChild(el('div', 'item',
+      `<div class="t"><span class="n">상대할 아이디어</span><span class="j">${mon.ko}</span></div>
+       <div class="d">${mon.desc}<br>아이디어 HP <b>${num(hpMax)}</b></div>`));
   }
 
   async _kickoff(p) {
@@ -649,14 +806,18 @@ export class UI {
         `<span>개발 방식</span><b>${(METHODS.find((m) => m.id === p.methodId) || {}).ko || '-'}</b>`));
     }
 
-    box.appendChild(el('h4', 'sec', '누적 품질'));
-    const denom = Math.max(1, p.turn * Math.max(1, p.team.length));
-    const shown = STATS.map((st) => Math.round(180 * (1 - Math.exp(-(p.raw[st] / denom) / 40)) + (p.raw[st] / denom) * 0.35));
-    const mx = Math.max(1, ...shown);
-    STATS.forEach((st, i) => {
-      box.appendChild(el('div', 'sb',
-        `<span class="lb">${STAT_KO[st]}</span><span class="bar"><span class="fill" style="width:${shown[i] / mx * 100}%"></span></span><span class="vv">${shown[i]}</span>`));
-    });
+    /* Projected quality, on the same 0-999 axis the finished game will use.
+       This is the same curve finishProject applies, fed with the contribution
+       accumulated so far — so the bars during development and the bars on the
+       results screen mean the same thing, and watching one axis lag behind
+       tells you which discipline the team is missing while there is still time
+       to notice. The old version normalised against the biggest of the five,
+       which drew a full bar for the leader no matter how weak the project was. */
+    box.appendChild(el('h4', 'sec', '예상 품질 <span class="hint">(완성 시 · 999점 만점)</span>'));
+    const projected = projectQuality(p);
+    for (const st of STATS) {
+      box.appendChild(el('div', 'wrap', bar(STAT_KO[st], projected[st], QUALITY_MAX)));
+    }
 
     box.appendChild(el('h4', 'sec', '팀'));
     for (const id of p.team) {
@@ -675,8 +836,7 @@ export class UI {
       `<div class="t"><span class="n">「${p.title}」</span><span class="stars">${stars(p.proposal.grade)}</span></div>
        <div class="d">${p.genreKo} × ${p.contentKo} · ${p.methodKo}</div>`));
     for (const st of STATS) {
-      box.appendChild(el('div', 'sb',
-        `<span class="lb">${STAT_KO[st]}</span><span class="bar"><span class="fill" style="width:${Math.min(100, p.quality[st] / 4)}%"></span></span><span class="vv">${p.quality[st]}</span>`));
+      box.appendChild(el('div', 'wrap', bar(STAT_KO[st], p.quality[st], QUALITY_MAX)));
     }
     box.appendChild(el('div', 'row', `<span>평론가</span><b>${p.critics.join(' · ')} = ${p.criticTotal}</b>`));
     box.appendChild(el('div', 'row', `<span>버그</span><b>${p.bugs}개</b>`));
@@ -761,7 +921,26 @@ export class UI {
   /* ---------- 사무실 ---------- */
   panelOffice(box) {
     const g = this.g, c = g.company;
-    box.appendChild(el('h4', 'sec', '사무실'));
+
+    /* 배치 상태 — the office at a glance: seats, who is sitting, how nice it is */
+    const cm = g.comfort();
+    const lb = comfortLabel(cm.score);
+    box.appendChild(el('h4', 'sec', '사무실 현황'));
+    for (const [k, v] of [
+      ['책상', `${g.deskCount()}개 (빈자리 ${g.freeDesks()})`],
+      ['직원', `${g.staff.length}명`],
+      ['쾌적도', `<span class="pill ${lb.cls}">${lb.ko}</span> ${cm.score}`],
+      ['기획력 보너스', `×${cm.planBonus.toFixed(2)}`],
+    ]) box.appendChild(el('div', 'row', `<span>${k}</span><b>${v}</b>`));
+    box.appendChild(el('div', 'item',
+      '<div class="d">가구를 사면 <b>가방</b>에 들어갑니다. <b>배치</b>를 눌러 바닥의 파란 구역에 놓으세요. '
+      + '책상 하나에 직원 한 명이 앉습니다. 쾌적도가 높으면 직원 의욕이 잘 유지되고 기획력이 오릅니다.</div>'));
+
+    this.panelBag(box);
+    this.panelShop(box);
+    this.panelPlaced(box);
+
+    box.appendChild(el('h4', 'sec', '층'));
     box.appendChild(el('div', 'item',
       `<div class="d">층은 <b>랭크가 허가</b>하고 <b>돈으로 산다</b>. 입주한 층은 매주 유지비가 나가므로,
        확장은 인건비와 저울질해야 하는 결정이다.<br><br>
@@ -813,6 +992,148 @@ export class UI {
       box.appendChild(el('div', 'row',
         `<span>${i + 1}F ${FLOOR_PLANS[i].short}</span><b>${people.map((s) => s.name).join(', ') || '비어 있음'}</b>`));
     }
+  }
+
+  /* ---------- 가방 ----------
+     Bought but not yet standing anywhere. Placing from here is what opens the
+     placement mode, so this list is the entry point to the whole system. */
+  panelBag(box) {
+    const g = this.g;
+    box.appendChild(el('h4', 'sec', `가방 ${g.bag.length}개`));
+    if (!g.bag.length) {
+      box.appendChild(el('div', 'item', '<div class="d">비어 있습니다. 아래 가구점에서 구입하세요.</div>'));
+      return;
+    }
+    // One row per kind rather than per item: six identical desks are six lines
+    // of noise, and "place one of these" is the only action any of them offer.
+    const groups = new Map();
+    for (const b of g.bag) {
+      if (!groups.has(b.id)) groups.set(b.id, []);
+      groups.get(b.id).push(b);
+    }
+    for (const [id, items] of groups) {
+      const def = FURNITURE_BY_ID.get(id);
+      if (!def) continue;
+      const it = el('div', 'item');
+      it.innerHTML = `<div class="t"><span class="n">${def.ko}</span>
+        <span class="j">${items.length}개</span></div><div class="d">${def.desc}</div>`;
+      const row = el('div', 'brow2');
+      const put = el('button', 'btn sm primary', '배치');
+      put.onclick = () => {
+        if (!this.view.startPlacing(items[0].uid)) return;
+        this.togglePanel(true);
+        this.renderPlaceBar();
+      };
+      const sell = el('button', 'btn sm', `처분 ${won(def.price * RESELL)}`);
+      sell.onclick = () => { g.sellFurniture(items[0].uid); g.save(); };
+      row.append(put, sell);
+      it.appendChild(row);
+      box.appendChild(it);
+    }
+  }
+
+  /* ---------- 가구점 ---------- */
+  panelShop(box) {
+    const g = this.g;
+    box.appendChild(el('h4', 'sec', '가구점'));
+    this.shopCat = this.shopCat || 'work';
+    const tabs = el('div', 'chips');
+    for (const cat of FURNITURE_CATS) {
+      const b = el('button', 'btn sm' + (this.shopCat === cat.id ? ' primary' : ''), cat.ko);
+      b.onclick = () => { this.shopCat = cat.id; this.renderPanel(); };
+      tabs.appendChild(b);
+    }
+    box.appendChild(tabs);
+
+    for (const def of FURNITURE.filter((f) => f.cat === this.shopCat)) {
+      const it = el('div', 'item');
+      const tags = [];
+      if (def.seats) tags.push('<span class="pill great">자리 +1</span>');
+      if (def.comfort) tags.push(`<span class="pill">쾌적 +${def.comfort}</span>`);
+      if (def.plan) tags.push('<span class="pill">기획</span>');
+      if (def.social) tags.push('<span class="pill">소셜</span>');
+      it.innerHTML = `<div class="t"><span class="n">${def.ko}</span>
+        <span class="j">${won(def.price)}</span></div>
+        <div class="d">${tags.join('')}<br>${def.desc}</div>`;
+      const b = el('button', 'btn sm', '구입');
+      b.style.marginTop = '6px';
+      b.disabled = g.company.money < def.price;
+      b.onclick = () => { const r = g.buyFurniture(def.id); if (!r.ok) this.toast(r.why, 'bad'); g.save(); };
+      it.appendChild(b);
+      box.appendChild(it);
+    }
+  }
+
+  /* ---------- 배치된 가구 ----------
+     Picking a piece back up is free and always available, so a bad layout is
+     never permanent — which is what makes experimenting with one safe. */
+  panelPlaced(box) {
+    const g = this.g;
+    const placed = g.company.placed;
+    box.appendChild(el('h4', 'sec', `배치된 가구 ${placed.length}개`));
+    if (!placed.length) {
+      box.appendChild(el('div', 'item', '<div class="d">아직 아무것도 놓지 않았습니다.</div>'));
+      return;
+    }
+    for (let f = 0; f < g.company.floors; f++) {
+      const on = placed.filter((p) => p.floor === f);
+      if (!on.length) continue;
+      box.appendChild(el('div', 'row',
+        `<span>${f + 1}F ${FLOOR_PLANS[f].short}</span><b>${on.length}개</b>`));
+      for (const p of on) {
+        const def = FURNITURE_BY_ID.get(p.id);
+        if (!def) continue;
+        const it = el('div', 'combo');
+        it.innerHTML = `<span>${def.ko}</span>`;
+        const b = el('button', 'btn sm', '회수');
+        b.onclick = () => {
+          g.pickUpFurniture(p.uid);
+          this.view.rebuildFurniture();
+          g.save();
+        };
+        it.appendChild(b);
+        box.appendChild(it);
+      }
+    }
+  }
+
+  /* ---------- 배치 모드 툴바 ----------
+     Lives outside the panel because the panel is closed while placing: the
+     whole point of the mode is to see the floor. */
+  renderPlaceBar() {
+    const bar2 = $('placebar');
+    if (!bar2) return;
+    const p = this.view.place;
+    if (!p) { bar2.classList.remove('show'); document.body.classList.remove('placing'); return; }
+
+    // Built once and then updated in place: this refreshes on every pointer
+    // move, and rebuilding the buttons under the player's finger would drop
+    // the drag on some browsers.
+    if (!this._pb) {
+      const info = el('div', 'pinfo');
+      const rot = el('button', 'btn sm', '⟳ 회전');
+      rot.onclick = () => { this.view.rotatePlace(); this.renderPlaceBar(); };
+      const ok = el('button', 'btn sm primary', '여기에 놓기');
+      ok.onclick = () => {
+        const r = this.view.commitPlace();
+        if (!r.ok) { this.toast(r.why || '실패', 'bad'); return; }
+        this.g.save();
+        this.renderPlaceBar();
+        this.renderPanel();
+        this.renderTutorial();
+        this.toast('배치했습니다.', 'good');
+      };
+      const cancel = el('button', 'btn sm danger', '취소');
+      cancel.onclick = () => { this.view.stopPlacing(); this.renderPlaceBar(); this.togglePanel(false); };
+      bar2.innerHTML = '';
+      bar2.append(info, rot, ok, cancel);
+      this._pb = { info, rot, ok, cancel };
+    }
+    bar2.classList.add('show');
+    const def = FURNITURE_BY_ID.get(p.id);
+    this._pb.info.innerHTML = `<b>${def ? def.ko : ''}</b>`
+      + `<span class="${p.valid ? 'ok' : 'no'}">${p.valid ? '놓을 수 있습니다' : (p.why || '여기엔 안 됩니다')}</span>`;
+    this._pb.ok.disabled = !p.valid;
   }
 
   /* ---------- modals ---------- */
@@ -877,8 +1198,12 @@ export class UI {
 
   showFinished(p) {
     const q = p.quality;
+    // The best axis of the studio's previous release is marked on each bar, so
+    // "is this better than last time" is answerable without remembering.
+    const prev = this.g.releases[0];
     const bars = STATS.map((st) =>
-      `<div class="sb"><span class="lb">${STAT_KO[st]}</span><span class="bar"><span class="fill" style="width:${Math.min(100, q[st] / 4)}%"></span></span><span class="vv">${q[st]}</span></div>`).join('');
+      bar(STAT_KO[st], q[st], QUALITY_MAX,
+        prev && prev.quality ? { mark: prev.quality[st] } : {})).join('');
     this.openModal('개발 완료', `「${p.title}」`,
       `<div class="grade">${p.criticTotal}</div>
        <div class="gsub">평론가 ${p.critics.join(' · ')} (40점 만점)${p.hallOfFame ? ' · <b class="stars">명예의 전당</b>' : ''}</div>

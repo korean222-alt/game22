@@ -45,6 +45,23 @@ export function randomTitle(rnd) {
   return pick(rnd, TITLE_WORDS_A) + ' ' + pick(rnd, TITLE_WORDS_B);
 }
 
+/* One staffer's per-turn contribution on one axis, mapped onto the 1-999 band.
+   Exported because the development panel draws the same projection mid-fight:
+   a bar during development and the same bar on the results screen have to mean
+   the same thing, and they only do if there is one curve. */
+export function qualityCurve(x) {
+  return Math.max(1, Math.min(QCAP, Math.round(QCAP * (1 - Math.exp(-x / QSCALE)))));
+}
+
+/* What the five axes would score if the project finished on this turn. */
+export function projectQuality(project) {
+  const turns = Math.max(1, project.turn);
+  const size = Math.max(1, project.team.length);
+  const out = {};
+  for (const st of STATS) out[st] = qualityCurve(project.raw[st] / (turns * size));
+  return out;
+}
+
 /* ---------- proposals ----------
    Grade is a 1-5 star roll weighted by the whole company's planning power, so
    hiring planners and putting them on the planning floor visibly pays off. */
@@ -67,23 +84,39 @@ export function generateProposal(rnd, author, totalPlanPower, rank, research) {
 }
 
 /* ---------- starting a project ---------- */
-export function startProject({ proposal, platformId, monetizeId, team, rank, seriesOf }) {
-  const genre = GENRES.find((g) => g.id === proposal.genreId);
-  const platform = PLATFORMS.find((p) => p.id === platformId);
-  const money = MONETIZE.find((m) => m.id === monetizeId);
-  const seriesN = seriesOf ? seriesOf.seriesN + 1 : 1;
 
+/* The idea's hit points. Exported because the setup screen previews which
+   monster you are about to face, and that has to be the same number the fight
+   actually uses — a preview computed from its own copy of this formula is a
+   preview that lies the moment either is touched. */
+export function ideaHp({ genreId, platformId, grade, seriesN = 1, rank = 1 }) {
+  const genre = GENRES.find((g) => g.id === genreId);
+  const platform = PLATFORMS.find((p) => p.id === platformId);
+  if (!genre || !platform) return 0;
   // Sequels are worth more but cost more to make, exactly as the original
   // scales HP, damage and stamina with series length.
   const seriesMult = 1 + (seriesN - 1) * 0.55;
-  const gradeMult = 0.75 + proposal.grade * 0.25;
+  const gradeMult = 0.75 + grade * 0.25;
   // Big enough that a project spans several weeks of stamina rather than one
   // sitting: a release should be an event, not a weekly chore. Rank is in the
   // product because a studio's damage per turn compounds far faster than the
   // platform ladder raises HP — without it, a mature company finishes a game
   // every week and the calendar stops meaning anything.
   const rankScale = 1 + (Math.max(1, rank) - 1) * 0.11;
-  const hp = Math.round(8600 * genre.hp * platform.hp * seriesMult * gradeMult * rankScale);
+  return Math.round(8600 * genre.hp * platform.hp * seriesMult * gradeMult * rankScale);
+}
+
+export function startProject({ proposal, platformId, monetizeId, team, rank, seriesOf }) {
+  const genre = GENRES.find((g) => g.id === proposal.genreId);
+  const platform = PLATFORMS.find((p) => p.id === platformId);
+  const money = MONETIZE.find((m) => m.id === monetizeId);
+  const seriesN = seriesOf ? seriesOf.seriesN + 1 : 1;
+
+  const seriesMult = 1 + (seriesN - 1) * 0.55;
+  const gradeMult = 0.75 + proposal.grade * 0.25;
+  const hp = ideaHp({
+    genreId: proposal.genreId, platformId, grade: proposal.grade, seriesN, rank,
+  });
 
   return {
     id: 'gp' + (_pid++),
@@ -273,11 +306,7 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
   // for the last stretch, and no single lever that runs away with the game.
   const turns = Math.max(1, project.turn);
   const size = Math.max(1, project.team.length);
-  const quality = {};
-  for (const st of STATS) {
-    const x = project.raw[st] / (turns * size);
-    quality[st] = Math.max(1, Math.min(999, Math.round(QCAP * (1 - Math.exp(-x / QSCALE)))));
-  }
+  const quality = projectQuality(project);
   project.rawPerSlot = STATS.reduce((a, st) => a + project.raw[st] / (turns * size), 0) / STATS.length;
 
   const avg = STATS.reduce((a, s) => a + quality[s], 0) / STATS.length;
@@ -337,16 +366,27 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
   return { quality, bugs, critics, criticTotal, author };
 }
 
-/* Spend stamina to remove bugs before release. */
+/* Spend stamina to remove bugs before release.
+
+   Each pass clears a FRACTION of what is left as well as a flat amount from the
+   team's programmers. The flat term alone made debugging a chore exactly when
+   it hurt most: a rookie team ships a game with sixty bugs because its
+   usability is low, and at six bugs a pass that is ten stamina of button
+   pressing — not a decision, a tax on being new. The fraction keeps a cleanup
+   at roughly the same handful of passes whatever the count, while the flat term
+   still means a team with real programmers finishes sooner. */
+const DEBUG_FRACTION = 0.3;
+
 export function debug(project, staffById, rnd) {
   if (!project.done || project.bugs <= 0) return { fixed: 0 };
-  let fixed = 0;
+  let flat = 0;
   for (const id of project.team) {
     const s = staffById.get(id);
     if (!s) continue;
-    if (JOB_ABILITY[s.job] === 'prog') fixed += 2 + Math.floor(ability(s, 'prog') / 12);
-    else fixed += 1;
+    if (JOB_ABILITY[s.job] === 'prog') flat += 2 + Math.floor(ability(s, 'prog') / 12);
+    else flat += 1;
   }
+  let fixed = Math.max(flat, Math.round(project.bugs * DEBUG_FRACTION));
   fixed = Math.max(1, Math.round(fixed * (0.7 + rnd() * 0.6)));
   fixed = Math.min(project.bugs, fixed);
   project.bugs -= fixed;

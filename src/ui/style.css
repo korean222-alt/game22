@@ -242,9 +242,34 @@ h4.sec:first-child{margin-top:0}
 
 .sb{display:flex;align-items:center;gap:6px;margin:4px 0;font-size:10.5px}
 .sb .lb{width:44px;color:var(--dim);flex:none}
-.sb .bar{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.10);overflow:hidden}
-.sb .fill{height:100%;border-radius:3px;background:var(--sky);transition:width .5s cubic-bezier(.2,.8,.2,1)}
-.sb .vv{width:30px;text-align:right;font-variant-numeric:tabular-nums;flex:none}
+/* `overflow:hidden` on the track would clip the previous-release marker, so
+   the fill rounds its own corners instead of being masked by the track. */
+.sb .bar{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.10);position:relative}
+.sb .fill{
+  position:absolute;left:0;top:0;height:100%;border-radius:3px;background:var(--sky);
+  transition:width .5s cubic-bezier(.2,.8,.2,1);
+}
+.sb .vv{width:38px;text-align:right;font-variant-numeric:tabular-nums;flex:none}
+/* the ability the battle actually multiplies by, and the experience track */
+.sb.drive .fill{background:var(--gold)}
+.sb.drive .lb{color:var(--gold)}
+.sb.exp .fill{background:var(--good)}
+/* where the previous release scored on this axis */
+.sb .mk{
+  position:absolute;top:-3px;width:2px;height:12px;border-radius:1px;
+  background:rgba(255,255,255,.55);transform:translateX(-1px);
+}
+.hint{font-weight:400;color:var(--dim);font-size:9.5px;letter-spacing:0}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+.brow2{display:flex;gap:6px;margin-top:7px}
+.brow2 .btn{flex:1}
+/* text input, used by the company-name box */
+.tin{
+  width:100%;padding:11px 12px;border-radius:10px;font-size:15px;font-family:inherit;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:var(--txt);
+  -webkit-user-select:text;user-select:text;
+}
+.tin:focus{outline:none;border-color:var(--gold);background:rgba(232,176,85,.10)}
 
 /* ── battle bar ──
    Anchored to the band right of the panel, so opening or closing the panel
@@ -330,7 +355,46 @@ body.in-battle #toast{bottom:calc(var(--sab) + var(--gap) + 106px)}
   z-index:9;font-size:9.5px;color:rgba(30,32,36,.55);
   text-shadow:0 1px 0 rgba(255,255,255,.4);pointer-events:none;
 }
-body.in-battle #hint{display:none}
+body.in-battle #hint,body.placing #hint{display:none}
+
+/* ── tutorial line ──
+   One instruction at a time, above the panel. It never blocks anything: the
+   step it names comes from committed state, so a player who works ahead simply
+   finds it has moved on. */
+#tut{
+  position:fixed;
+  left:calc(var(--sal) + var(--panel-cur) + var(--gap)*2);
+  top:calc(var(--sat) + var(--hud-h) + var(--gap)*2);
+  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  margin:0 auto;max-width:430px;z-index:12;padding:10px 13px;
+  display:none;
+  transition:left .26s cubic-bezier(.2,.85,.25,1);
+}
+#tut.show{display:block}
+#tut .tt{font-size:12.5px;font-weight:800;color:var(--gold);margin-bottom:3px}
+#tut .tb{font-size:10.5px;color:var(--dim);line-height:1.55}
+#tut .trow{display:flex;gap:6px;margin-top:8px}
+body.placing #tut,body.in-battle #tut{display:none}
+
+/* ── placement toolbar ──
+   Takes the battle bar's slot: the two never run at once, and it is the one
+   place on screen a thumb reaches while the other hand drags the floor. */
+#placebar{
+  position:fixed;
+  left:calc(var(--sal) + var(--gap));
+  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  bottom:calc(var(--sab) + var(--gap));
+  margin:0 auto;max-width:520px;z-index:14;padding:9px 12px;
+  display:none;align-items:center;gap:8px;
+}
+#placebar.show{display:flex}
+#placebar .btn{flex:0 0 auto}
+.pinfo{display:flex;flex-direction:column;gap:2px;margin-right:auto;min-width:0}
+.pinfo b{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pinfo .ok{font-size:10px;color:var(--good)}
+.pinfo .no{font-size:10px;color:var(--bad)}
+/* the panel is closed while placing, so the toolbar owns the bottom edge */
+body.placing #toast{bottom:calc(var(--sab) + var(--gap) + 62px)}
 
 /* ── world-space overlays ── */
 .nm{
@@ -371,6 +435,32 @@ body.in-battle #hint{display:none}
 }
 .dmg.crit{font-size:21px;color:var(--gold)}
 .dmg .sk{display:block;font-size:9px;font-weight:700;opacity:.85;text-align:center;margin-top:-2px}
+/* the turn's total, floated off the monster rather than off a desk */
+.dmg.big{font-size:26px;color:#ffd6c0;letter-spacing:-.5px}
+.dmg.big.crit{font-size:31px;color:var(--gold)}
+
+/* ── the boss monster's plate ── */
+.bosstag{
+  position:absolute;transform:translate(-50%,-100%);pointer-events:none;
+  min-width:112px;text-align:center;
+}
+.bosstag .bn{
+  font-size:11px;font-weight:800;color:#ffe4c8;letter-spacing:.5px;
+  text-shadow:0 1px 4px rgba(0,0,0,.85);
+}
+.bosstag .bbar{
+  height:5px;border-radius:3px;margin:3px auto 0;width:104px;
+  background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.22);overflow:hidden;
+}
+.bosstag .bbar i{
+  display:block;height:100%;background:linear-gradient(90deg,#d0644c,#e8b055);
+  transition:width .45s cubic-bezier(.2,.8,.2,1);
+}
+.bosstag .btaunt{
+  margin-top:5px;display:inline-block;max-width:190px;
+  background:rgba(22,14,14,.92);border:1px solid rgba(208,100,76,.55);
+  border-radius:9px;padding:4px 8px;font-size:10px;color:#f0d0c4;line-height:1.4;
+}
 @keyframes fly{
   0%{opacity:0;transform:translate(-50%,-50%) scale(.5)}
   18%{opacity:1;transform:translate(-50%,-50%) scale(1.15)}

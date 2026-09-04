@@ -9,11 +9,16 @@
 
 import {
   JOBS, PLATFORMS, MONETIZE, GENRES, CONTENTS, STATS, rankInfo, RANK_UP_FANS, ITEMS,
-  STARTING_JOBS, RESEARCH, researchCost, CONTRACTS, contractPay, MARKETING,
+  RESEARCH, researchCost, CONTRACTS, contractPay, MARKETING,
   marketingCost, floorCost, comboScore,
+  STARTUP_GRANT, rescueAmount, rescueMorale,
 } from './data.js';
 import {
-  makeStaff, rollCandidates, proposalPower, giveItem, promote, canPromote,
+  FURNITURE_BY_ID, RESELL, comfortScore, comfortLevel, footprint, overlaps,
+} from './furniture.js';
+import { TUTORIAL, tutorialStep } from './tutorial.js';
+import {
+  rollCandidates, proposalPower, giveItem, promote, canPromote,
   reincarnate, canReincarnate, addMotivation, abilities, power, role, seedIds, itemCost,
   trainStamina, gainExp, expToNext,
 } from './staff.js';
@@ -27,7 +32,14 @@ import {
 } from './economy.js';
 import { mulberry32 } from '../core/math.js';
 
-const SAVE_KEY = 'socialdev3d.save.v1';
+/* Bumped from v1 deliberately rather than migrated. A v1 save was written by a
+   build that generated the desks with the floor and handed you five founders;
+   in this one desks exist only because the player bought them, so a v1 roster
+   would load with every staffer assigned to a desk that no longer exists and
+   standing in the lobby. Starting those saves over is the honest outcome, and
+   the old key is dropped so it does not sit in storage forever. */
+const SAVE_KEY = 'socialdev3d.save.v2';
+const LEGACY_KEYS = ['socialdev3d.save.v1'];
 
 export class Game {
   constructor(seed = Date.now() & 0x7fffffff) {
@@ -40,12 +52,15 @@ export class Game {
   on(fn) { this.listeners.push(fn); return () => { this.listeners = this.listeners.filter((f) => f !== fn); }; }
   emit(type, payload) { for (const fn of this.listeners) fn(type, payload); }
 
-  reset() {
+  reset(opts = {}) {
     const info = rankInfo(1);
     this.company = {
-      name: '스튜디오 게임22',
-      money: 260000,
-      coins: 20,
+      name: opts.name || '이름 없는 스튜디오',
+      // The grant IS the starting capital. There is no separate opening
+      // balance: everything the studio owns on turn one came from it, which is
+      // what makes the number legible when the popup shows it.
+      money: STARTUP_GRANT,
+      coins: 5,
       rank: 1,
       fans: 0,
       stamina: info.staminaMax,
@@ -63,7 +78,16 @@ export class Game {
       discovered: {},               // combo log: "genre|content" -> best score
       contract: null,               // { id, weeksLeft, pay, research }
       marketingId: 'none',
+      // Furniture the player has put down: { uid, id, floor, x, z, rot }.
+      // Desks come from here, so an empty list means nobody can be hired yet.
+      placed: [],
+      rescues: 0,                   // how many emergency grants have been taken
+      founded: false,               // the naming + grant ceremony has happened
+      tutorialDone: false,
     };
+    // Bought but not yet placed. The bag is what makes buying and placing two
+    // separate decisions rather than one click that teleports a desk somewhere.
+    this.bag = [];
     this.staff = [];
     this.proposals = [];
     this.project = null;         // the project currently in development
@@ -73,14 +97,33 @@ export class Game {
     this.history = [];
     this.log = [];
 
-    // Five founders, one of each discipline, so every system is reachable on
-    // turn one instead of gated behind a hire.
-    for (const job of STARTING_JOBS) {
-      this.staff.push(makeStaff(this.rnd, job, { talent: 0.95 + this.rnd() * 0.3, level: 3 }));
-    }
+    // No founders. The studio opens as an empty floor with a grant in the bank,
+    // so the first decisions — how many desks, who to seat at them — are the
+    // player's rather than a starting roster's.
     this.rollCandidates();
     this.rollTrends();
-    this.note('오늘부터 사장님입니다. 기획서를 뽑고 개발을 시작하세요.');
+    this.note('오늘부터 사장님입니다. 책상을 사고 직원을 뽑으세요.');
+  }
+
+  /* The naming ceremony: sets the company name and hands over the grant, once.
+     Called from the opening popup and by nothing else, so a save that has
+     already been founded can never be handed a second grant. */
+  found(name) {
+    const c = this.company;
+    if (c.founded) return { ok: false, why: '이미 창업했습니다' };
+    c.name = (name || '').trim().slice(0, 18) || '이름 없는 스튜디오';
+    c.founded = true;
+    this.note(`「${c.name}」 설립. 창업 지원금 ₩${STARTUP_GRANT.toLocaleString()}이 입금되었다.`, 'good');
+    this.emit('founded', { name: c.name, grant: STARTUP_GRANT });
+    return { ok: true, name: c.name, grant: STARTUP_GRANT };
+  }
+
+  /* ---------- tutorial ---------- */
+  tutorialStep() { return tutorialStep(this); }
+
+  skipTutorial() {
+    this.company.tutorialDone = true;
+    this.emit('tutorial', null);
   }
 
   note(text, kind = 'info') {
@@ -125,10 +168,98 @@ export class Game {
     this.company.totalEarned += n;
   }
 
+  /* ---------- 가구 ----------
+     Buying puts a piece in the bag; placing takes it out and pins it to a
+     floor. Keeping those separate is what makes the placement mode a mode:
+     the shop is a spending decision, the floor is a spatial one, and a player
+     who buys six desks can lay them out at leisure. */
+  buyFurniture(id) {
+    const def = FURNITURE_BY_ID.get(id);
+    if (!def) return { ok: false, why: '없는 가구' };
+    if (!this.spend(def.price)) return { ok: false, why: '자금 부족' };
+    const item = { uid: 'f' + (this._fuid = (this._fuid || 0) + 1) + '_' + Date.now().toString(36), id };
+    this.bag.push(item);
+    this.note(`${def.ko} 구입. 가방에서 배치하세요.`, 'good');
+    this.emit('furniture', { bought: item });
+    return { ok: true, item };
+  }
+
+  /* Selling from the bag only. A placed piece has to be picked up first, which
+     keeps "where is my stuff" answerable: it is on a floor, or in the bag. */
+  sellFurniture(uid) {
+    const i = this.bag.findIndex((b) => b.uid === uid);
+    if (i < 0) return { ok: false, why: '가방에 없다' };
+    const def = FURNITURE_BY_ID.get(this.bag[i].id);
+    const back = Math.round((def ? def.price : 0) * RESELL);
+    this.bag.splice(i, 1);
+    this.earn(back);
+    this.note(`${def ? def.ko : '가구'} 처분. ₩${back.toLocaleString()} 회수.`);
+    this.emit('furniture', null);
+    return { ok: true, back };
+  }
+
+  /* Can this piece stand here? `zoneOk` and `clearOfWalls` are supplied by the
+     view, which owns the floor plan and the collision grid; everything the
+     simulation can answer for itself — is it in the bag, does it hit another
+     piece — is answered here so the rules live in one place. */
+  canPlace(uid, floor, x, z, rot, checks = {}) {
+    const item = this.bag.find((b) => b.uid === uid);
+    if (!item) return { ok: false, why: '가방에 없는 가구' };
+    const def = FURNITURE_BY_ID.get(item.id);
+    if (!def) return { ok: false, why: '없는 가구' };
+    if (floor >= this.company.floors) return { ok: false, why: '입주하지 않은 층' };
+    const f = footprint(def, rot);
+    if (checks.zoneOk && !checks.zoneOk(floor, x, z, f.w, f.d)) {
+      return { ok: false, why: '배치할 수 없는 자리 (파란 구역 안에만)' };
+    }
+    if (checks.clearOfWalls && !checks.clearOfWalls(floor, x, z, f.w, f.d)) {
+      return { ok: false, why: '벽이나 기존 설비와 겹칩니다' };
+    }
+    // A rug lies on the floor and is walked over, so it only fights other rugs.
+    const cand = { x, z, rot };
+    for (const p of this.company.placed) {
+      if (p.floor !== floor) continue;
+      const other = FURNITURE_BY_ID.get(p.id);
+      if (!other) continue;
+      if (def.flat && !other.flat) continue;
+      if (other.flat && !def.flat) continue;
+      if (overlaps(cand, def, p, other)) return { ok: false, why: '다른 가구와 겹칩니다' };
+    }
+    return { ok: true, def };
+  }
+
+  placeFurniture(uid, floor, x, z, rot, checks) {
+    const chk = this.canPlace(uid, floor, x, z, rot, checks);
+    if (!chk.ok) return chk;
+    const i = this.bag.findIndex((b) => b.uid === uid);
+    const [item] = this.bag.splice(i, 1);
+    this.company.placed.push({ uid: item.uid, id: item.id, floor, x, z, rot: rot & 3 });
+    this.emit('furniture', { placed: item.uid });
+    return { ok: true };
+  }
+
+  /* Back into the bag, free. Undoing a placement must not cost anything or the
+     mode becomes something players avoid using. */
+  pickUpFurniture(uid) {
+    const i = this.company.placed.findIndex((p) => p.uid === uid);
+    if (i < 0) return { ok: false };
+    const [p] = this.company.placed.splice(i, 1);
+    this.bag.push({ uid: p.uid, id: p.id });
+    this.emit('furniture', { pickedUp: p.uid });
+    return { ok: true };
+  }
+
+  comfort() {
+    return comfortLevel(comfortScore(this.company.placed), this.staff.length);
+  }
+
   /* ---------- desks ---------- */
   /* Assign every staffer to a desk on a floor matching their discipline where
      one is free. The separation of planners from developers is not cosmetic:
-     proposalPower pays a bonus for sitting on the matching floor. */
+     proposalPower pays a bonus for sitting on the matching floor.
+
+     `desks` now comes from the player's placed furniture rather than the floor
+     generator, so this runs again on every placement change. */
   assignDesks(desks) {
     this.desks = desks;
     const open = desks.filter((d) => d.floor < this.company.floors);
@@ -153,11 +284,25 @@ export class Game {
     this.candidates = rollCandidates(this.rnd, this.company.rank, 3);
   }
 
+  /* Desks on floors the company actually occupies. This is the real headcount
+     ceiling now — rank raises the cap, but a desk is what fills a seat. */
+  deskCount() {
+    return (this.desks || []).filter((d) => d.floor < this.company.floors).length;
+  }
+
+  freeDesks() { return Math.max(0, this.deskCount() - this.staff.length); }
+
   hire(candidateId) {
     const c = this.candidates.find((x) => x.id === candidateId);
     if (!c) return { ok: false, why: '없는 후보' };
     if (this.staff.length >= this.info().staffCap) {
       return { ok: false, why: `정원 초과 (랭크 ${this.company.rank} 정원 ${this.info().staffCap}명)` };
+    }
+    // Somewhere to sit comes before someone to sit there. It is the one rule
+    // that ties the office to the roster, and it is why the game opens in the
+    // furniture shop rather than on the hiring board.
+    if (this.freeDesks() <= 0) {
+      return { ok: false, why: '빈 책상이 없습니다. 사무실 탭에서 책상을 사서 배치하세요.' };
     }
     if (!this.spend(c.hireCost)) return { ok: false, why: '자금 부족' };
     this.staff.push(c);
@@ -229,7 +374,11 @@ export class Game {
   /* Total planning power across every floor, matching the original's rule that
      all floors' writers feed the proposal grade. */
   totalPlanPower() {
-    return this.staff.reduce((a, s) => a + proposalPower(s, this.floorRoleOf(s)), 0);
+    // A whiteboard on the wall and somewhere decent to sit are worth a little
+    // planning power. Small on purpose: furniture supports a good roster, it
+    // does not replace one.
+    return this.staff.reduce((a, s) => a + proposalPower(s, this.floorRoleOf(s)), 0)
+      * this.comfort().planBonus;
   }
 
   makeProposal() {
@@ -540,24 +689,22 @@ export class Game {
     c.stamina = c.staminaMax;
 
     // Idle staff drift back toward a neutral mood; a shipped game is what
-    // actually raises motivation.
+    // actually raises motivation. A comfortable office pushes the other way —
+    // this is what the furniture is for, and why 쾌적도 is worth spending on
+    // once you have more people than the grant could seat.
+    const cm = this.comfort();
     for (const s of this.staff) {
-      if (!this.project || !this.project.team.includes(s.id)) {
-        if (s.motivation > 3 && this.rnd() > 0.85) s.motivation -= 1;
-      }
+      if (this.project && this.project.team.includes(s.id)) continue;
+      if (this.rnd() < cm.moodGain) addMotivation(s, 1, c.rank);
+      else if (s.motivation > 3 && this.rnd() > 0.85) s.motivation -= 1;
     }
 
-    if (c.money < 0) {
-      this.note(`자금이 마이너스입니다 (₩${c.money.toLocaleString()}). 계약 일감으로 급한 불을 끄세요.`, 'bad');
-      if (c.money < -120000) {
-        // The safety net the design doc asks for: a studio is never PERMANENTLY
-        // stuck at zero. It is deliberately not free money — the roster's
-        // morale takes the hit, so repeated rescues visibly cost you output.
-        c.money = 40000;
-        for (const s of this.staff) addMotivation(s, -2, c.rank);
-        this.note('스폰서가 급한 불을 꺼줬다. 직원들의 의욕이 떨어졌다.', 'bad');
-      }
+    // A warning before the cliff, so the rescue never arrives as a surprise.
+    if (c.money >= 0 && c.money < costs * 2 && this.releases.every((r) => !r.managing)) {
+      this.note(`자금이 얼마 남지 않았습니다 (₩${c.money.toLocaleString()}). 계약 일감을 받으세요.`, 'bad');
     }
+    if (c.money < 0) this._rescue();
+
     if (income > 0) this.note(`주간 정산: 매출 ₩${income.toLocaleString()} / 비용 ₩${costs.toLocaleString()}`);
     if (this.rnd() > 0.72) this.rollCandidates();
 
@@ -565,13 +712,37 @@ export class Game {
     return { income, costs };
   }
 
+  /* ---------- 긴급 지원금 ----------
+     The studio does not go bankrupt. It gets one more chance, and then another,
+     each smaller than the last and each costing the roster's morale — so the
+     grants are a slope you can feel yourself sliding down rather than a wall
+     you hit once. The emit is what the UI turns into the popup; the money moves
+     here either way, so a player who dismisses the modal is still rescued. */
+  _rescue() {
+    const c = this.company;
+    const debt = -c.money;
+    // Enough to start the cheapest game available and keep the lights on for a
+    // month. A grant smaller than a project leaves the studio alive but unable
+    // to act, which is the one outcome the safety net exists to prevent.
+    const cheapest = Math.min(...this.availablePlatforms().map((p) => p.cost));
+    const need = Math.round(cheapest * 1.8 + weeklyCosts(c, this.staff) * 4);
+    const amount = rescueAmount(c.rescues, need);
+    const morale = rescueMorale(c.rescues);
+    c.rescues += 1;
+    c.money = amount;
+    for (const s of this.staff) addMotivation(s, morale, c.rank);
+    this.note(`긴급 지원금 ₩${amount.toLocaleString()} 지급 (${c.rescues}번째). 직원 의욕 ${morale}.`, 'bad');
+    this.emit('rescue', { amount, debt, count: c.rescues, morale });
+    return { amount, count: c.rescues };
+  }
+
   /* ---------- save / load ---------- */
   serialize() {
     return JSON.stringify({
-      v: 1, seed: this.seed,
+      v: 2, seed: this.seed,
       company: this.company, staff: this.staff, proposals: this.proposals,
       project: this.project, finished: this.finished, releases: this.releases,
-      candidates: this.candidates, history: this.history,
+      candidates: this.candidates, history: this.history, bag: this.bag,
     });
   }
 
@@ -586,7 +757,10 @@ export class Game {
 
   static load() {
     let raw;
-    try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return null; }
+    try {
+      raw = localStorage.getItem(SAVE_KEY);
+      for (const k of LEGACY_KEYS) localStorage.removeItem(k);
+    } catch (e) { return null; }
     if (!raw) return null;
     try {
       const d = JSON.parse(raw);
@@ -594,6 +768,7 @@ export class Game {
       g.company = d.company; g.staff = d.staff; g.proposals = d.proposals;
       g.project = d.project; g.finished = d.finished; g.releases = d.releases;
       g.candidates = d.candidates || []; g.history = d.history || [];
+      g.bag = d.bag || [];
       g.log = [];
       // Saves written before these systems existed load with sane defaults
       // rather than crashing on a missing field.
@@ -604,6 +779,10 @@ export class Game {
       c.discovered = c.discovered || {};
       c.marketingId = c.marketingId || 'none';
       c.contract = c.contract || null;
+      c.placed = c.placed || [];
+      c.rescues = c.rescues || 0;
+      c.founded = c.founded ?? true;
+      c.tutorialDone = c.tutorialDone ?? false;
       if (!c.trends) g.rollTrends();
       // Ids must not collide with anything the save already used.
       seedIds(Math.max(0, ...g.staff.map((s) => s.id), ...g.candidates.map((s) => s.id)) + 1);
@@ -617,12 +796,17 @@ export class Game {
   }
 
   static clearSave() {
-    try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* private mode */ }
+    try {
+      localStorage.removeItem(SAVE_KEY);
+      for (const k of LEGACY_KEYS) localStorage.removeItem(k);
+    } catch (e) { /* private mode */ }
   }
+
+  static get SAVE_KEY() { return SAVE_KEY; }
 }
 
 export {
   STATS, JOBS, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, RESEARCH, CONTRACTS, MARKETING,
   abilities, power, role, rankInfo, RANK_UP_FANS, itemCost, trainStamina, floorCost,
-  expToNext,
+  expToNext, STARTUP_GRANT, TUTORIAL,
 };

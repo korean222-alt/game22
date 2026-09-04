@@ -1,0 +1,6 @@
+# Test-harness output. The Playwright tools write PNGs beside the repo by
+# default; point OUT= somewhere else if you want to keep them.
+flow-final.png
+meet-*.png
+probe.png
+shot-*.png

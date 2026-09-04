@@ -247,6 +247,11 @@ export class Renderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
+    // The colour pass may have left another program bound — the boss monsters
+    // draw through their own skinned shader. Uniform state is per-program, so
+    // without rebinding, uGlassMode would be set on whatever ran last and the
+    // windows would draw opaque (or not at all).
+    gl.useProgram(this.pScene);
     gl.uniform1f(this.LS.uGlassMode, 1);
     draw(this.LS, 'glass');
     gl.uniform1f(this.LS.uGlassMode, 0);
