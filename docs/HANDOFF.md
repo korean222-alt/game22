@@ -6,7 +6,7 @@
 여기에는 그 셋에 안 들어가는 것 — 코드 규약, 함정, 튜닝 손잡이의 위치,
 테스트 돌리는 법 — 만 적는다.
 
-마지막 갱신: 2026-09-03 · 브랜치 `claude/social-game-story-3d-b3kfse`
+마지막 갱신: 2026-09-04 · 브랜치 `claude/game-dev-gameplay-employee-upgrade-5xbbst`
 
 ---
 
@@ -19,11 +19,13 @@
 python3 -m http.server 8123     # 빌드 스텝 없음. ES 모듈이라 정적 서버만 필요
 node tools/balance.mjs 12345 10 # 밸런스 시뮬레이션 (브라우저 불필요)
 node tools/flow.mjs             # 전체 플로우 브라우저 테스트 (19개 검사)
+node tools/battle.mjs           # 보스전·상점·체력·도감·1인칭 (19개 검사)
 ```
 
-한 바퀴가 전부 돈다: 기획서 → 회의 → 개발 배틀 → 아이디어 카드 →
+한 바퀴가 전부 돈다: 기획서 → 회의 → **보스전** → 아이디어 카드 →
 완성 → 디버그 → 홍보 → 출시 → 운영 → 팬 → 랭크 → 층 구매 → 다시.
-저장/불러오기, 직원 육성·전직·환생·특성, 연구·계약·유행까지 들어가 있다.
+저장/불러오기, 직원 육성·전직·환생·특성, 연구·계약·유행,
+**직원 체력 · 상점과 가방 · 장비 · 도감 · 1인칭 걷기**까지 들어가 있다.
 
 ---
 
@@ -32,13 +34,13 @@ node tools/flow.mjs             # 전체 플로우 브라우저 테스트 (19개
 ```
 src/
   core/     math gl color meshbuilder bake        순수 유틸. 게임도 렌더도 모름
-  render/   shaders renderer camera               PBR 파이프라인
+  render/   shaders renderer camera               PBR 파이프라인 (카메라는 궤도/1인칭 겸용)
   char/     rig poses                             16본 스켈레톤
-  world/    palette props office agents           지오메트리 + 직원 상태 기계
+  world/    palette props office agents boss      지오메트리 + 직원 상태 기계 + 보스
   game/     data state staff project economy dialogue   순수 시뮬레이션 (DOM/WebGL 없음)
-  ui/       hud device style.css                  DOM 오버레이
+  ui/       hud device joystick style.css         DOM 오버레이 + 가상 스틱
   main.js                                         셋을 묶는 View + 부트스트랩
-tools/      balance sloppy flow meeting probe     테스트 하네스 (아래 5장)
+tools/      balance sloppy flow meeting probe battle   테스트 하네스 (아래 5장)
 ```
 
 **경계가 이 프로젝트의 전부다.** `game/` 이 DOM 을 모르기 때문에 밸런스를
@@ -50,7 +52,11 @@ tools/      balance sloppy flow meeting probe     테스트 하네스 (아래 5�
 
 | 하고 싶은 것 | 고칠 곳 |
 |---|---|
-| 밸런스 숫자 | **`game/data.js` 하나뿐** — 장르/플랫폼/직업/랭크/아이템/특성/연구/홍보/계약/층값 |
+| 밸런스 숫자 | **`game/data.js` 하나뿐** — 장르/플랫폼/직업/랭크/아이템/특성/연구/홍보/계약/층값/**체력(HP)/보스 기술/상점(SHOP)/야근** |
+| 보스 외형·연출 | `world/boss.js` (실루엣 5종 + FACE 표) · 배치와 이벤트 반응은 `main.js` `View.playBattle` |
+| 진행 패널 숫자 | `game/project.js` `previewQuality/previewBugs/funScore` → `state.devProgress()` → `ui/hud.js` `renderProgress()` |
+| 1인칭 이동·충돌 | `main.js` `View.updateWalk` · 방향 규약은 `render/camera.js` `walkVector/forward/right` **한 곳뿐** |
+| 밝기 | `render/renderer.js` `LIGHT_PRESETS` + 셰이더의 `uFill` |
 | 품질·평론 곡선 | `game/project.js` 상단 `QCAP QSCALE CBASE CSPAN CSCALE` |
 | 유저 수 · 매출 · 팬 | `game/economy.js` `releaseGame()` |
 | 새 시스템 | `game/state.js` 에 액션 추가 → `ui/hud.js` 에 패널 추가 |
@@ -211,6 +217,36 @@ HP 에 **선형이면 안 된다.** 예전에 중반 프로젝트에 163개가 �
 
 ---
 
+### 3.8 체력 경제 (이번에 들어온 축)
+
+```js
+HP = { turnCost: 0.030, weekly: 0.70, tired: 0.40, minMult: 0.50,
+       attackEvery: 4, bugCap: 8 }        // data.js
+hpMax = 56 + level*3.2 + talent*26 + 환생*12
+```
+
+숫자의 근거는 **후반에만 조이는 것**이다. 초반은 스태미나가 병목이라
+체력이 남고, 후반에는 주당 38 스태미나 × 3% = 한 주에 한 풀 이상을 쓰는데
+회복은 70% 뿐이라 음식이 실제 전력이 된다. `minMult` 가 0 이 아닌 이유는
+설계 원칙 그대로다 — **굶은 팀은 느려질 뿐 멈추면 안 된다.**
+
+`power()` 안에 `staminaMult(s)` 가 들어 있으므로 체력은 데미지와 품질에
+**동시에** 걸린다. 이걸 바꾸면 3.1 의 도달 곡선이 통째로 움직인다.
+바꿨으면 반드시 `balance.mjs` 를 3개 시드로 다시 돌릴 것.
+
+**보스의 반격이 남기는 버그는 `bugCap`(8) 에서 멈춘다.** 상한이 없으면
+긴 프로젝트일수록 버그가 선형으로 쌓여 디버그가 노가다가 된다 — 3.7 이
+경고하는 바로 그 실패 모드다. 기본 곡선도 체력 도입에 맞춰
+`8 + 12·log2` → `7 + 10·log2` 로 내렸다 (중앙값 21~24개, 디버그 1~2회).
+
+### 3.9 상점과 장비
+
+장비는 `staff.js` 의 `gearAbility()`(능력치)와 `gearAxis()`(품질 축) 둘로
+들어간다. **품질 축 쪽이 핵심이다** — 사운드 담당의 피아노가 완성작의
+화제성·임팩트를 실제로 올리기 때문에 "누구에게 무엇을 사줄까"가 선택이 된다.
+새 장비를 추가할 때는 `axis` 합이 0.2 를 넘지 않게 할 것: 한 사람이 3칸을
+같은 축으로 채우면 그것만으로 품질이 배가 된다.
+
 ## 4. 알려진 함정 (다음 사람이 또 밟을 것들)
 
 | 함정 | 실제로 일어난 일 |
@@ -226,6 +262,12 @@ HP 에 **선형이면 안 된다.** 예전에 중반 프로젝트에 163개가 �
 | 900px 이상 뷰포트에서 패널이 접혀 시작 | 테스트는 `body.classList.remove('panel-hidden')` 로 명시적으로 열 것 |
 | SwiftShader 에서 1~2fps | 소프트웨어 래스터라이저 + DPR 2 + 5단 블룸. **실기기 문제 아님.** 테스트는 딜레이 대신 폴링할 것 |
 | 서버가 프로세스 그룹 종료로 죽음 | `setsid` 로 띄울 것 |
+| 보스의 눈을 몸통 안에 박음 | 실루엣마다 표면 위치가 다르다. `boss.js` 의 `FACE` 표를 쓸 것 — 한 값으로 통일했더니 구형 보스가 그냥 덩어리로 보였다 |
+| 1인칭 시작 좌표를 손으로 박음 | 가구 안에서 시작하면 "조이스틱이 안 먹는다" 로 보인다. `enterWalk()` 이 빈 칸을 찾아준다. 테스트도 그 좌표를 쓸 것 |
+| 대각선 이동을 한 번에 시도 | 벽에 스치는 순간 완전히 멈춘다. X 먼저, 안 되면 Z 만 — `updateWalk` 참고 |
+| `.iconbtn` 은 기본이 `display:none` | `body.touch` 에서만 켜진다. 새 아이콘 버튼은 CSS 에서 따로 켤 것 (`#walkBtn`) |
+| 특성의 버그 배율을 곱만 하고 안 가둠 | 다섯 명이 전부 올빼미면 1.4^5 = 5.4배. 지금은 팀 전체 배율을 [0.35, 2.2] 로 클램프 |
+| 배틀 바가 높아졌는데 토스트 위치를 안 옮김 | 토스트가 HP 바를 덮는다. `body.in-battle #toast` 의 bottom 값 |
 
 ---
 
@@ -249,7 +291,12 @@ node tools/sloppy.mjs  [시드]          # 최악의 플레이, 파산 방지선
 node tools/probe.mjs      # 부팅만 (에러/단계별 타이밍/월드 통계)
 node tools/meeting.mjs    # 경로탐색 → 회의 시작 → 착석 → 말풍선 → 복귀
 node tools/flow.mjs       # 전체 19개 검사. 지금 19/19 통과
+node tools/battle.mjs     # 보스전·상점·장비·체력·도감·1인칭. 지금 19/19 통과
 ```
+
+`battle.mjs` 는 조이스틱을 **방향까지** 검사한다. 스틱이 도는지가 아니라
+미는 쪽으로 실제로 가는지, 벽에서 멈추는지, 손을 떼면 벡터가 0 이 되는지를
+본다 — "1인칭이 이상하게 간다" 는 셋 중 하나가 깨진 것이다.
 
 환경변수: `PLAYWRIGHT=` (기본 `/opt/node22/.../playwright/index.mjs`),
 `PORT=` 또는 `BASE=`, `OUT=` (스크린샷 저장 위치).
@@ -300,6 +347,11 @@ ls src/*/*.js src/*.js | sed 's|^|"./|;s|$|",|' | sort   # sw.js 의 목록과 �
    명예의 전당 목록에서 바로 속편을 만들 수 있게.
 5. **사운드** — 지금 완전 무음. 클릭/크리티컬/출시 정도만 있어도 크다.
    WebAudio 로 절차적 생성하면 에셋 파일 없이 갈 수 있다 (프로젝트 원칙 유지).
+5b. **외부 3D 에셋(GLB) 도입 여부** — Kenney Furniture Kit / Quaternius
+   몬스터·캐릭터 같은 CC0 팩을 쓰자는 제안이 있다. 지금 구조는 텍스처도
+   의존성도 없는 절차적 지오메트리라, 도입하려면 **glTF 파서 + 스킨 애니메이션
+   + 수 MB 의 바이너리 + 라이선스 표기**가 붙는다. 오프라인 즉시 실행이라는
+   성질과 맞바꾸는 결정이므로, 하려면 "가구만 먼저"처럼 범위를 좁혀서 할 것.
 6. **후반 성장** — 지금 `x` 가 ~450 에서 정체한다. 환생(재능 ×1.12)이
    유일한 돌파구인데 UI 유도가 약하다. 10년 넘게 가는 세이브를 원하면
    여기가 병목이다.
@@ -316,10 +368,11 @@ ls src/*/*.js src/*.js | sed 's|^|"./|;s|$|",|' | sort   # sw.js 의 목록과 �
 ## 8. 커밋 이력
 
 ```
+(this)   개발 보스전 · 직원 체력 · 상점/가방/장비 · 도감 · 1인칭 · 밝기
+fbdf465  인수인계 문서 + 테스트 하네스를 저장소로
 eab23bc  회의실 회의 · 사무실 확장 · 분석 문서의 시스템 · 밸런스 재조정
 3c026c2  모바일 가로 모드 + PWA
 bface46  소셜게임 스토리 3D: WebGL2 PBR 리메이크 뼈대
 ```
 
-세 커밋 모두 브랜치 `claude/social-game-story-3d-b3kfse` 에 있다.
 PR 은 아직 열지 않았다.

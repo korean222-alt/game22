@@ -1,8 +1,18 @@
-/* Orbit camera for the dollhouse view of the office tower.
+/* The camera. Two modes share one object so everything downstream — the
+   renderer's wall cut, the DOM label projection, desk picking — keeps working
+   without knowing which mode is on.
 
-   The target is a point on the floor currently being inspected; azimuth and
-   elevation orbit it and the wheel dollies in. Everything is critically damped
-   toward a goal rather than snapped, so switching floors glides. */
+   orbit  dollhouse view of the tower. The target is a point on the floor being
+          inspected; azimuth and elevation orbit it and the wheel dollies in.
+   walk   first person, standing on a floor. The joystick drives `walkMove()`
+          and a drag drives `look()`.
+
+   FACING CONVENTION (the same one the rigs use, on purpose)
+     yaw y  ->  forward = (sin y, cos y) in world XZ.
+     Screen-right is therefore (-cos y, sin y): with m4look's basis, looking
+     down +Z puts world -X on the right of the screen. Getting this backwards
+     is what makes a virtual stick feel like it is fighting you, so both
+     vectors are derived here, once, and nowhere else. */
 
 import { m4, m4mul, m4inv, m4persp, m4look, clamp, lerp } from '../core/math.js';
 
@@ -18,6 +28,38 @@ export class OrbitCamera {
 
     this.vp = m4(); this.proj = m4(); this.view = m4(); this.inv = m4();
     this.eye = [0, 0, 0];
+
+    /* ---- walk mode ---- */
+    this.mode = 'orbit';
+    this.wx = 30; this.wy = 5.2; this.wz = 30;
+    this.wyaw = 0; this.wpitch = -0.05;
+    this.eyeHeight = 5.2;
+    this.walkFov = 1.02;          // wide: a phone screen held at arm's length
+    this.bobT = 0; this.bobAmp = 0;
+  }
+
+  /* Unit forward and screen-right vectors for the current walk yaw. */
+  forward() { return [Math.sin(this.wyaw), Math.cos(this.wyaw)]; }
+  right() { return [-Math.cos(this.wyaw), Math.sin(this.wyaw)]; }
+
+  setWalk(x, y, z, yaw) {
+    this.wx = x; this.wy = y; this.wz = z;
+    if (yaw !== undefined) this.wyaw = yaw;
+  }
+
+  /* A joystick vector in SCREEN space (x right, y down, already clamped to the
+     unit disc) turned into a world-space step. Up on the stick is forward, and
+     forward is where you are looking — anything else reads as broken. */
+  walkVector(jx, jy) {
+    const f = this.forward(), r = this.right();
+    return [f[0] * -jy + r[0] * jx, f[1] * -jy + r[1] * jx];
+  }
+
+  /* Drag to look. Dragging right turns the view right, which means the yaw
+     that produced `forward` has to DECREASE — see the facing note above. */
+  look(dx, dy) {
+    this.wyaw -= dx * 0.0055;
+    this.wpitch = clamp(this.wpitch - dy * 0.0042, -1.15, 1.05);
   }
 
   lookAt(x, y, z) { this.gx = x; this.gy = y; this.gz = z; }
@@ -48,6 +90,7 @@ export class OrbitCamera {
   }
 
   update(dt, asp) {
+    if (this.mode === 'walk') return this._updateWalk(dt, asp);
     // Frame-rate independent damping: the 1-exp form keeps the same feel at
     // 30fps and 144fps, which a raw lerp(a,b,0.1) does not.
     const k = 1 - Math.exp(-dt * 9);
@@ -64,6 +107,28 @@ export class OrbitCamera {
 
     m4look(this.view, e[0], e[1], e[2], this.tx, this.ty, this.tz, 0, 1, 0);
     m4persp(this.proj, this.fov, asp, 0.5, 1200);
+    m4mul(this.vp, this.proj, this.view);
+    m4inv(this.inv, this.vp);
+  }
+
+  _updateWalk(dt, asp) {
+    // A head bob tied to how fast you are actually moving. Without it walking
+    // across a static room reads as sliding, and the bob is the cheapest thing
+    // that says "you are a person in this office".
+    this.bobT += dt * 9.0 * this.bobAmp;
+    const bob = Math.sin(this.bobT) * 0.10 * this.bobAmp;
+    const e = this.eye;
+    e[0] = this.wx; e[1] = this.wy + bob; e[2] = this.wz;
+
+    const cp = Math.cos(this.wpitch), sp = Math.sin(this.wpitch);
+    const f = this.forward();
+    this.tx = e[0] + f[0] * cp * 10;
+    this.ty = e[1] + sp * 10;
+    this.tz = e[2] + f[1] * cp * 10;
+    this.gx = this.tx; this.gy = this.ty; this.gz = this.tz;
+
+    m4look(this.view, e[0], e[1], e[2], this.tx, this.ty, this.tz, 0, 1, 0);
+    m4persp(this.proj, this.walkFov, asp, 0.22, 1200);
     m4mul(this.vp, this.proj, this.view);
     m4inv(this.inv, this.vp);
   }

@@ -373,3 +373,157 @@ export function floorCost(n) {
   return Math.round(320000 * Math.pow(3.0, n - 2));
 }
 export const FLOOR_UPKEEP = 9000;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   개발 = 보스전 · 상점과 가방 · 직원 체력 · 도감
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ---------- 직원 체력 ----------
+   원작의 하트 게이지를 규칙으로 옮긴 것. 개발 턴마다 팀원이 체력을 쓰고,
+   보스(아이디어)의 반격이 체력을 크게 깎는다. 체력이 바닥난 직원은 데미지가
+   크게 줄지만 0이 되지는 않는다 — "영구히 막히는 상태"를 만들지 않는다는
+   설계 원칙 때문이다. 회복은 세 갈래: 주간 휴식, 상점 음식, 휴게실 회복. */
+export const HP = {
+  base: 56, perLevel: 3.2, talent: 26, perReborn: 12,
+  turnCost: 0.030,        // 한 턴에 쓰는 최대 체력 비율 (한 풀로 ~33턴)
+  weekly: 0.70,           // 다음 주로 넘길 때 회복되는 비율
+  tired: 0.40,            // 이 아래로 떨어지면 '지침'
+  minMult: 0.50,          // 체력 0에서의 데미지 배율 (0이 되면 게임이 멈춘다)
+  attackEvery: 4,         // 보스가 반격하는 주기(턴)
+  bugCap: 8,              // 반격이 남길 수 있는 버그의 상한
+};
+
+/* 숫자의 근거: 후반 프로젝트는 40턴 안팎이고 한 주에 20~38 스태미나가 나온다.
+   턴당 3% + 반격을 합치면 프로젝트 하나가 체력 한 풀 반쯤을 먹고, 주간 회복은
+   70% 다. 즉 **후반에는 밥을 사주는 쪽이 확실히 빠르지만, 안 사줘도 진행은
+   된다.** 이 균형이 상점을 선택지로 만든다 — 없으면 세금이 된다. */
+
+/* 체력 비율 → 데미지 배율. 0.45 위는 손해가 없고, 거기서 아래로 완만하게
+   떨어진다. 배고픈 팀은 느려질 뿐 멈추지 않는다. */
+export function hpMult(ratio) {
+  if (ratio >= HP.tired) return 1;
+  const t = Math.max(0, ratio) / HP.tired;
+  return HP.minMult + (1 - HP.minMult) * t;
+}
+
+/* ---------- 보스 = 아이디어 ----------
+   개발은 진행 바가 아니라 싸움이다. 장르마다 상대하는 아이디어의 성격이
+   다르고, 이름과 색과 형태가 붙으면 "이번엔 뭘 잡는가"가 기억에 남는다.
+   shape 는 world/boss.js 가 읽는 실루엣 종류다. */
+export const BOSSES = {
+  puzzle: { ko: '퍼즐 골렘', shape: 'cube', col: '#59b6d8', accent: '#ffd66e', line: '한 조각도 맞지 않는다!' },
+  rpg: { ko: '대마왕 시나리오', shape: 'spike', col: '#8c5ad8', accent: '#ffcf5a', line: '설정만 300페이지다!' },
+  action: { ko: '콤보 야수', shape: 'spike', col: '#d85a4a', accent: '#ffe08a', line: '손맛이 안 난다!' },
+  sim: { ko: '스프레드시트 크라켄', shape: 'cube', col: '#4a9a7a', accent: '#d8f06a', line: '수치가 끝없이 늘어난다!' },
+  card: { ko: '확률의 신', shape: 'orb', col: '#d85a9a', accent: '#ffe08a', line: '밸런스가 무너진다!' },
+  shoot: { ko: '탄막 드론', shape: 'drone', col: '#5a7ad8', accent: '#ff8a5a', line: '프레임이 떨어진다!' },
+  racing: { ko: '폭주 엔진', shape: 'drone', col: '#d88a3a', accent: '#ffe08a', line: '물리가 터진다!' },
+  rhythm: { ko: '박자 요괴', shape: 'orb', col: '#c95ad8', accent: '#8affd8', line: '싱크가 밀린다!' },
+  board: { ko: '룰북 대왕', shape: 'cube', col: '#9a7a4a', accent: '#ffe6a0', line: '규칙이 또 늘었다!' },
+  sports: { ko: '규칙의 심판', shape: 'spike', col: '#4aa85a', accent: '#ffffff', line: '판정이 애매하다!' },
+  adv: { ko: '미완성 시나리오', shape: 'ghost', col: '#6a6ad8', accent: '#ffd66e', line: '결말이 안 나온다!' },
+  strategy: { ko: '밸런스 마왕', shape: 'spike', col: '#7a5ad8', accent: '#5affc8', line: '한 유닛이 너무 세다!' },
+  raise: { ko: '육성 트리', shape: 'ghost', col: '#4ab8a8', accent: '#ffe08a', line: '분기가 폭발한다!' },
+  idle: { ko: '무한 루프', shape: 'orb', col: '#8a8a9a', accent: '#8affd8', line: '아무 일도 일어나지 않는다!' },
+  mmo: { ko: '서버 리바이어던', shape: 'drone', col: '#3a6ad8', accent: '#ff5a5a', line: '동접이 감당이 안 된다!' },
+  party: { ko: '파티 광대', shape: 'ghost', col: '#d8a03a', accent: '#ff6ad8', line: '아무도 안 웃는다!' },
+};
+
+export function bossFor(genreId) {
+  return BOSSES[genreId] || { ko: '이름 없는 아이디어', shape: 'orb', col: '#8a8a9a', accent: '#ffd66e', line: '형체가 잡히지 않는다!' };
+}
+
+/* 보스의 반격. `hp` 는 대상 직원 최대 체력에 대한 비율, `bugs` 는 이 공격이
+   완성작에 남기는 버그 수다. 3턴마다 하나가 나오고, 페이즈가 바뀔 때는
+   반드시 큰 것이 나온다. */
+export const BOSS_MOVES = [
+  { id: 'spec', ko: '사양 변경', hp: 0.07, bugs: 1, targets: 2, line: '기획이 또 바뀌었다!' },
+  { id: 'bug', ko: '버그 폭주', hp: 0.05, bugs: 2, targets: 1, line: '재현이 안 되는 버그다!' },
+  { id: 'deadline', ko: '납기 압박', hp: 0.09, bugs: 0, targets: 3, line: '출시일이 앞당겨졌다!' },
+  { id: 'crash', ko: '컴퓨터 응답 없음', hp: 0.08, bugs: 1, targets: 1, line: '저장을 안 했다…' },
+  { id: 'review', ko: '리뷰 폭격', hp: 0.06, bugs: 1, targets: 2, line: '내부 평가가 최악이다!' },
+];
+export const BOSS_RAGE = { id: 'rage', ko: '격노', hp: 0.13, bugs: 2, targets: 4, line: '아이디어가 형태를 바꾼다!' };
+
+/* 페이즈. HP 비율이 이 아래로 내려가면 페이즈가 오르고, 아이디어 카드가
+   나오며, 잠깐 약점이 드러난다. */
+export const BOSS_PHASES = [
+  { at: 1.00, ko: '1페이즈', dmg: 1.00 },
+  { at: 0.66, ko: '2페이즈', dmg: 1.10 },
+  { at: 0.33, ko: '최종 페이즈', dmg: 1.22 },
+];
+export const WEAK_TURNS = 2;      // 페이즈 전환 직후 약점이 드러나는 턴 수
+export const WEAK_MULT = 1.45;    // 그 동안의 데미지 배율
+export const FOCUS_STAMINA = 2;   // 집중 개발이 추가로 쓰는 스태미나
+
+/* ---------- 상점 ----------
+   가방에 넣어두고 필요할 때 쓴다. 음식은 체력, 음료는 회사 스태미나,
+   장난감은 의욕, 장비는 직원의 능력을 영구히 올린다.
+
+   장비가 이 시스템의 핵심이다. 사운드 담당에게 피아노를 사주면 사운드
+   능력치가 오르고, 그 사람이 개발 배틀에서 밀어 올리는 품질 축(화제성·
+   임팩트)의 상승폭까지 같이 오른다 — 직원마다 특색이 생긴다. */
+export const SHOP = [
+  /* 음식 — 체력 회복 */
+  { id: 'onigiri', ko: '삼각김밥', kind: 'food', emoji: '🍙', price: 1400, rank: 1, hp: 30, desc: '체력 30 회복' },
+  { id: 'banana', ko: '바나나', kind: 'food', emoji: '🍌', price: 2000, rank: 1, hp: 42, desc: '체력 42 회복' },
+  { id: 'ramen', ko: '컵라면', kind: 'food', emoji: '🍜', price: 3200, rank: 1, hp: 60, desc: '체력 60 회복' },
+  { id: 'bento', ko: '도시락', kind: 'food', emoji: '🍱', price: 6400, rank: 2, hp: 100, desc: '체력 100 회복' },
+  { id: 'cake', ko: '조각 케이크', kind: 'food', emoji: '🍰', price: 9000, rank: 3, hp: 130, mot: 1, desc: '체력 130 회복 · 의욕 +1' },
+  { id: 'pizza', ko: '피자 한 판', kind: 'food', emoji: '🍕', price: 22000, rank: 4, hp: 9999, all: true, desc: '전 직원 체력 완전 회복' },
+
+  /* 음료 — 스태미나 회복 (다음 주까지 기다리지 않는 길) */
+  { id: 'cancoffee', ko: '캔커피', kind: 'drink', emoji: '☕', price: 4200, rank: 1, stam: 2, desc: '스태미나 +2' },
+  { id: 'energy', ko: '에너지 드링크', kind: 'drink', emoji: '🧃', price: 11000, rank: 2, stam: 5, desc: '스태미나 +5' },
+  { id: 'beans', ko: '스페셜티 원두', kind: 'drink', emoji: '🫖', price: 30000, rank: 5, stam: 12, desc: '스태미나 +12' },
+
+  /* 장난감 — 의욕 */
+  { id: 'figure', ko: '피규어', kind: 'toy', emoji: '🧸', price: 14000, rank: 1, mot: 3, desc: '의욕 +3' },
+  { id: 'handheld', ko: '휴대용 게임기', kind: 'toy', emoji: '🎮', price: 30000, rank: 2, mot: 6, desc: '의욕 +6' },
+  { id: 'darts', ko: '다트 보드', kind: 'toy', emoji: '🎯', price: 46000, rank: 3, mot: 2, all: true, desc: '전 직원 의욕 +2' },
+
+  /* 도구 — 그 자리에서 쓰는 소모품 */
+  { id: 'debugkit', ko: '디버그 킷', kind: 'tool', emoji: '🧰', price: 18000, rank: 2, bugs: 7, desc: '완성작 버그 7개 즉시 수정' },
+  { id: 'clover', ko: '네잎클로버', kind: 'tool', emoji: '🍀', price: 26000, rank: 3, crit: 0.12, desc: '개발 중인 팀의 번뜩임 확률 +12%p (그 게임 동안)' },
+
+  /* 장비 — 직원에게 장착하는 영구 강화 (한 사람당 3칸) */
+  { id: 'notebook', ko: '아이디어 노트', kind: 'gear', emoji: '📓', price: 42000, rank: 1, ability: 'plan', gain: 6, axis: { impact: 0.08 }, desc: '기획 +6 · 임팩트 +8%' },
+  { id: 'strategyboard', ko: '전략 보드', kind: 'gear', emoji: '🗂️', price: 120000, rank: 4, ability: 'plan', gain: 12, axis: { impact: 0.13, craze: 0.06 }, desc: '기획 +12 · 임팩트 +13% · 화제성 +6%' },
+  { id: 'keyboard', ko: '기계식 키보드', kind: 'gear', emoji: '⌨️', price: 48000, rank: 1, ability: 'prog', gain: 7, axis: { usability: 0.12 }, desc: '개발 +7 · 조작성 +12%' },
+  { id: 'workstation', ko: '듀얼 워크스테이션', kind: 'gear', emoji: '🖥️', price: 150000, rank: 4, ability: 'prog', gain: 13, axis: { usability: 0.17, craze: 0.05 }, desc: '개발 +13 · 조작성 +17%' },
+  { id: 'tablet', ko: '액정 타블렛', kind: 'gear', emoji: '🖊️', price: 52000, rank: 1, ability: 'graph', gain: 8, axis: { impact: 0.14 }, desc: '그래픽 +8 · 임팩트 +14%' },
+  { id: 'colormon', ko: '컬러 캘리브레이션 모니터', kind: 'gear', emoji: '🖼️', price: 160000, rank: 5, ability: 'graph', gain: 14, axis: { impact: 0.19 }, desc: '그래픽 +14 · 임팩트 +19%' },
+  { id: 'mic', ko: '콘덴서 마이크', kind: 'gear', emoji: '🎤', price: 45000, rank: 1, ability: 'sound', gain: 6, axis: { craze: 0.09 }, desc: '사운드 +6 · 화제성 +9%' },
+  { id: 'piano', ko: '업라이트 피아노', kind: 'gear', emoji: '🎹', price: 128000, rank: 3, ability: 'sound', gain: 10, axis: { craze: 0.13, impact: 0.11 }, desc: '사운드 +10 · 화제성 +13% · 임팩트 +11%' },
+  { id: 'synth', ko: '아날로그 신디사이저', kind: 'gear', emoji: '🎛️', price: 220000, rank: 6, ability: 'sound', gain: 15, axis: { craze: 0.18, impact: 0.13 }, desc: '사운드 +15 · 화제성 +18% · 임팩트 +13%' },
+  { id: 'camera', ko: '방송용 카메라', kind: 'gear', emoji: '📷', price: 56000, rank: 2, ability: 'social', gain: 8, axis: { social: 0.12 }, desc: '소셜 +8 · 소셜 +12%' },
+  { id: 'rack', ko: '전용 서버 랙', kind: 'gear', emoji: '🗄️', price: 210000, rank: 6, ability: 'social', gain: 14, axis: { social: 0.15, retention: 0.16 }, desc: '소셜 +14 · 소셜 +15% · 지속성 +16%' },
+];
+
+export const GEAR_SLOTS = 3;
+export const SHOP_KINDS = [
+  { id: 'food', ko: '음식', hint: '직원 체력을 회복한다' },
+  { id: 'drink', ko: '음료', hint: '스태미나를 그 자리에서 채운다' },
+  { id: 'toy', ko: '장난감', hint: '의욕을 올린다' },
+  { id: 'tool', ko: '도구', hint: '개발과 디버그를 돕는다' },
+  { id: 'gear', ko: '장비', hint: '직원에게 장착하는 영구 강화' },
+];
+
+export function shopItem(id) { return SHOP.find((i) => i.id === id) || null; }
+export function shopFor(rank) { return SHOP.filter((i) => rank >= (i.rank || 1)); }
+
+/* ---------- 야근 ----------
+   스태미나를 기다리지 않고 사는 길. 돈과 직원 체력·의욕을 지불한다.
+   주 1회로 제한하는 이유는 이것이 기본 루프를 대체하면 안 되기 때문이다. */
+export const OVERTIME = { stamina: 0.55, hpCost: 0.16, motCost: 1, payPerHead: 5200 };
+
+/* ---------- 도감 ----------
+   무엇을 모으는 게임인지 한 화면에서 보이게 하는 장치. 실제 수집 상태는
+   회사 상태(company.dex)에 쌓이고, 여기에는 "무엇을 세는가"만 있다. */
+export const DEX_SECTIONS = [
+  { id: 'genres', ko: '장르', icon: '🎲', total: () => GENRES.length },
+  { id: 'contents', ko: '소재', icon: '🧩', total: () => CONTENTS.length },
+  { id: 'bosses', ko: '아이디어', icon: '👾', total: () => Object.keys(BOSSES).length },
+  { id: 'items', ko: '아이템', icon: '🎁', total: () => SHOP.length },
+  { id: 'jobs', ko: '직업', icon: '💼', total: () => Object.keys(JOBS).length },
+];

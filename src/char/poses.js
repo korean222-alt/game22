@@ -128,6 +128,14 @@ export function applyReact(pose, react, t) {
   } else if (react.kind === 'type') {
     p.elbowL = (p.elbowL || 0) + Math.sin(t * 22) * 0.10 * k;
     p.elbowR = (p.elbowR || 0) + Math.sin(t * 22 + 1.7) * 0.10 * k;
+  } else if (react.kind === 'shock') {
+    // 보스의 반격을 맞았을 때. 상체가 뒤로 젖혀지고 두 팔이 올라간다.
+    p.spine = (p.spine || 0) - 0.22 * k;
+    p.headPitch = (p.headPitch || 0) - 0.34 * k;
+    p.armLPitch = (p.armLPitch || 0) - 1.15 * k;
+    p.armRPitch = (p.armRPitch || 0) - 1.15 * k;
+    p.elbowL = (p.elbowL || 0) - 0.75 * k;
+    p.elbowR = (p.elbowR || 0) - 0.75 * k;
   }
   return p;
 }

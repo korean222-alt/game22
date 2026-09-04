@@ -10,7 +10,7 @@ import { clamp, lerp } from './math.js';
 export const MAT = {
   DEF: 0, CARPET: 1, WOOD: 2, WALL: 3, METAL: 4, FABRIC: 5, SCREEN: 6,
   CEIL: 7, SKIN: 8, TILE: 9, GLOSS: 10, BOARD: 11, PAPER: 12, LEAF: 13,
-  HAIR: 14, CLOTH: 15,
+  HAIR: 14, CLOTH: 15, EMIT: 16,
 };
 
 export function hex2rgb(h) {
