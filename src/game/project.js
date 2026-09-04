@@ -251,6 +251,24 @@ export function chooseCard(project, optionId) {
   return { ok: true, kind, complete };
 }
 
+/* The 1-999 quality the project would score if it finished this second.
+
+   The in-development panel has to read from the SAME curve the result screen
+   does. It used to apply an invented scale of its own, so the bars climbed on
+   one ruler and landed on another — and because the result screen then divided
+   a 999-band number by 4 to get a percentage, a debut game's 9 points rendered
+   as an empty bar. One curve, one meaning, everywhere. */
+export function projectedQuality(project) {
+  const turns = Math.max(1, project.turn);
+  const size = Math.max(1, project.team.length);
+  const q = {};
+  for (const st of STATS) {
+    const x = project.raw[st] / (turns * size);
+    q[st] = Math.max(1, Math.min(999, Math.round(QCAP * (1 - Math.exp(-x / QSCALE)))));
+  }
+  return q;
+}
+
 /* ---------- finishing ---------- */
 export function finishProject(project, staffById, rnd, ctx = {}) {
   const genre = GENRES.find((g) => g.id === project.genreId);
@@ -273,11 +291,7 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
   // for the last stretch, and no single lever that runs away with the game.
   const turns = Math.max(1, project.turn);
   const size = Math.max(1, project.team.length);
-  const quality = {};
-  for (const st of STATS) {
-    const x = project.raw[st] / (turns * size);
-    quality[st] = Math.max(1, Math.min(999, Math.round(QCAP * (1 - Math.exp(-x / QSCALE)))));
-  }
+  const quality = projectedQuality(project);
   project.rawPerSlot = STATS.reduce((a, st) => a + project.raw[st] / (turns * size), 0) / STATS.length;
 
   const avg = STATS.reduce((a, s) => a + quality[s], 0) / STATS.length;
@@ -311,23 +325,28 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
   // Four critics, 1-10 each, the way the series has always scored a release.
   // The curve is saturating rather than linear: early games land around 3, and
   // the 8s that add up to a hall-of-fame 32 stay something to work toward.
-  const critics = [];
+  //
+  // The score is stored as a BASE plus a bug penalty applied on top, because
+  // debugging has to visibly move it. A bug count that only shrinks a number
+  // nobody scores on makes 디버그 feel like tidying; taking two points off the
+  // review and handing them back as you fix things makes it a decision about
+  // whether this game is worth another week of stamina.
+  project.criticBase = [];
   for (let i = 0; i < 4; i++) {
     const taste = STATS[i % STATS.length];
     const v = avg * 0.6 + quality[taste] * 0.4;
     const curved = CBASE + CSPAN * (1 - Math.exp(-v / CSCALE));
-    const score = Math.max(1, Math.min(10, Math.round(curved + (rnd() - 0.45) * 1.5)));
-    critics.push(score);
+    project.criticBase.push(curved + (rnd() - 0.45) * 1.5);
   }
-  const criticTotal = critics.reduce((a, b) => a + b, 0);
 
   project.done = true;
   project.quality = quality;
   project.bugs = bugs;
-  project.critics = critics;
-  project.criticTotal = criticTotal;
+  project.bugsAtBuild = bugs;
   project.combo = combo;
-  project.hallOfFame = criticTotal >= 32;
+  scoreCritics(project);
+  const critics = project.critics;
+  const criticTotal = project.criticTotal;
   project.genreKo = genre.ko;
   project.contentKo = (CONTENTS.find((c) => c.id === project.contentId) || {}).ko || '-';
   project.methodKo = method.ko;
@@ -337,9 +356,27 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
   return { quality, bugs, critics, criticTotal, author };
 }
 
-/* Spend stamina to remove bugs before release. */
+/* Turn the stored base scores plus the CURRENT bug count into the four review
+   scores. Called at completion and again after every debug pass.
+
+   The penalty is capped so a buggy build is never unshippable, and it is per
+   critic rather than on the total, so the 40-point scale still reads the way
+   the series' does. */
+export function scoreCritics(project) {
+  const base = project.criticBase;
+  if (!base) return project.criticTotal || 0;
+  const pen = Math.min(2.6, (project.bugs || 0) * 0.11);
+  project.critics = base.map((b) => Math.max(1, Math.min(10, Math.round(b - pen))));
+  project.criticTotal = project.critics.reduce((a, b) => a + b, 0);
+  project.hallOfFame = project.criticTotal >= 32;
+  return project.criticTotal;
+}
+
+/* Spend stamina to remove bugs before release. Returns how many bugs went and
+   how many review points that bought back. */
 export function debug(project, staffById, rnd) {
-  if (!project.done || project.bugs <= 0) return { fixed: 0 };
+  if (!project.done || project.bugs <= 0) return { fixed: 0, gained: 0 };
+  const before = project.criticTotal;
   let fixed = 0;
   for (const id of project.team) {
     const s = staffById.get(id);
@@ -350,7 +387,8 @@ export function debug(project, staffById, rnd) {
   fixed = Math.max(1, Math.round(fixed * (0.7 + rnd() * 0.6)));
   fixed = Math.min(project.bugs, fixed);
   project.bugs -= fixed;
-  return { fixed };
+  scoreCritics(project);
+  return { fixed, gained: project.criticTotal - before, wasHof: project.hallOfFame };
 }
 
 export { motivationMult };

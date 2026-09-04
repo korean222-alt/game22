@@ -100,6 +100,73 @@ export async function exitFullscreen() {
   } catch (e) { /* ignore */ }
 }
 
+/* Already running from the home screen? Then there is nothing to install and
+   the guide must never appear. iOS answers with a non-standard property; every
+   other browser reports the display-mode media query the manifest asked for. */
+export function isStandalone() {
+  if (navigator.standalone) return true;
+  try {
+    return ['standalone', 'fullscreen', 'minimal-ui']
+      .some((m) => matchMedia(`(display-mode: ${m})`).matches);
+  } catch (e) { return false; }
+}
+
+export function isIOS() {
+  const ua = navigator.userAgent;
+  return /iPhone|iPad|iPod/.test(ua)
+    || (/Mac/.test(navigator.platform || '') && (navigator.maxTouchPoints || 0) > 1);
+}
+
+/* The add-to-home-screen guide.
+
+   The game is a website first and an installed app second, and on a phone the
+   two are genuinely different products: the browser's own chrome takes a third
+   of a landscape screen and blocks the fullscreen request the game makes on
+   first touch. So the first visit explains how to install it — and, because
+   nothing is more irritating than a banner that will not take no for an
+   answer, "다시 보지 않기" is remembered forever and "닫기" for this session. */
+const A2HS_KEY = 'socialdev3d.a2hs.dismissed';
+
+export function shouldShowInstallGuide() {
+  if (isStandalone()) return false;
+  if (!isTouch()) return false;                     // a desktop browser is fine as it is
+  try { if (localStorage.getItem(A2HS_KEY)) return false; } catch (e) { /* private mode */ }
+  try { if (sessionStorage.getItem(A2HS_KEY)) return false; } catch (e) { /* ignore */ }
+  return true;
+}
+
+export function wireInstallGuide(root) {
+  if (!root) return;
+  const on = (id, fn) => { const e = document.getElementById(id); if (e) e.onclick = fn; };
+  const ios = document.getElementById('a2ios');
+  const and = document.getElementById('a2and');
+  const useIOS = isIOS();
+  for (const t of root.querySelectorAll('.a2tab')) {
+    const wants = t.dataset.os;
+    t.classList.toggle('on', wants === (useIOS ? 'ios' : 'and'));
+    t.onclick = () => {
+      for (const o of root.querySelectorAll('.a2tab')) o.classList.remove('on');
+      t.classList.add('on');
+      if (ios) ios.hidden = wants !== 'ios';
+      if (and) and.hidden = wants !== 'and';
+    };
+  }
+  if (ios) ios.hidden = !useIOS;
+  if (and) and.hidden = useIOS;
+
+  const hide = () => root.classList.remove('show');
+  on('a2close', () => {
+    // Closed, not refused: ask again next time the game is opened fresh.
+    try { sessionStorage.setItem(A2HS_KEY, '1'); } catch (e) { /* ignore */ }
+    hide();
+  });
+  on('a2never', () => {
+    try { localStorage.setItem(A2HS_KEY, '1'); } catch (e) { /* ignore */ }
+    hide();
+  });
+  root.classList.add('show');
+}
+
 /* Stop the browser gestures that fight a full-screen canvas game: pull to
    refresh, double-tap zoom, long-press selection, and the iOS rubber band. */
 export function suppressBrowserGestures(canvas) {

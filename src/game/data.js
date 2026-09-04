@@ -157,6 +157,11 @@ export const CONTENTS = [
   { id: 'farm', ko: '농장', tags: ['casual', 'build', 'long'], bias: { retention: 1.30, social: 1.15 } },
   { id: 'dungeon', ko: '던전', tags: ['grind', 'long', 'skill'], bias: { retention: 1.20, impact: 1.10 } },
   { id: 'sports2', ko: '스포츠', tags: ['skill', 'social'], bias: { social: 1.15, usability: 1.10 } },
+  { id: 'dino', ko: '공룡', tags: ['story', 'collect', 'build'], bias: { impact: 1.25, craze: 1.15 } },
+  { id: 'pirate', ko: '해적', tags: ['story', 'build', 'collect'], bias: { impact: 1.15, retention: 1.10 } },
+  { id: 'ninja', ko: '닌자', tags: ['fast', 'skill', 'grind'], bias: { impact: 1.20, usability: 1.10 } },
+  { id: 'cafe', ko: '카페', tags: ['casual', 'build', 'social'], bias: { social: 1.20, retention: 1.15 } },
+  { id: 'horror', ko: '공포', tags: ['story', 'short', 'skill'], bias: { impact: 1.30, craze: 1.15 } },
 ];
 
 /* ---------- development method (the second idea card) ---------- */
@@ -177,29 +182,58 @@ export const MASTER_COMBOS = [
   ['strategy', 'sengoku'], ['action', 'zombie'], ['shoot', 'space'], ['racing', 'robot'],
   ['puzzle', 'animal'], ['adv', 'mystery'], ['raise', 'animal'], ['party', 'school'],
   ['board', 'school'], ['sports', 'sports2'], ['sim', 'cooking'], ['adv', 'space'],
+  ['adv', 'dino'], ['raise', 'dino'], ['sim', 'cafe'], ['idle', 'cafe'],
+  ['action', 'ninja'], ['strategy', 'pirate'], ['adv', 'pirate'], ['adv', 'horror'],
+  ['shoot', 'robot'], ['rpg', 'magic'], ['mmo', 'dungeon'], ['party', 'animal'],
+];
+
+/* Pairings that actively fight each other. Tag overlap alone never produces a
+   really bad score — every content shares SOMETHING with every genre — so the
+   "이건 아니지" half of the discovery game has to be written down too. A puzzle
+   game about dungeon crawling, an adventure about a football league: the player
+   should be able to feel these are wrong and learn it by shipping one. */
+export const BAD_COMBOS = [
+  ['puzzle', 'dungeon'], ['puzzle', 'sengoku'], ['puzzle', 'horror'], ['puzzle', 'zombie'],
+  ['adv', 'sports2'], ['adv', 'cooking'], ['adv', 'cafe'],
+  ['mmo', 'mystery'], ['mmo', 'horror'], ['idle', 'zombie'], ['idle', 'horror'],
+  ['rhythm', 'dungeon'], ['rhythm', 'sengoku'], ['rhythm', 'dino'],
+  ['board', 'zombie'], ['board', 'horror'], ['racing', 'cooking'], ['racing', 'idol'],
+  ['sports', 'magic'], ['sports', 'horror'], ['shoot', 'cafe'], ['shoot', 'farm'],
+  ['sim', 'ninja'], ['card', 'cafe'], ['raise', 'zombie'],
 ];
 
 const MASTER_SET = new Set(MASTER_COMBOS.map(([a, b]) => a + '|' + b));
+const BAD_SET = new Set(BAD_COMBOS.map(([a, b]) => a + '|' + b));
 
-/* Compatibility in [0.7, 2.0]. Tag overlap is the floor; a listed masterpiece
-   pairing is what actually makes a hit. */
+/* Compatibility in [0.55, 2.0]. Tag overlap is the floor, a listed masterpiece
+   pairing is what actually makes a hit, and a listed clash is what makes a
+   flop. The spread has to be wide in BOTH directions or "발견"은 상향 조정일
+   뿐, 진짜 선택이 되지 않는다. */
 export function comboScore(genreId, contentId) {
   const g = GENRES.find((x) => x.id === genreId);
   const c = CONTENTS.find((x) => x.id === contentId);
   if (!g || !c) return 1;
+  const key = genreId + '|' + contentId;
   let s = 0.85;
   const shared = g.tags.filter((t) => c.tags.includes(t)).length;
   s += shared * 0.16;
-  if (MASTER_SET.has(genreId + '|' + contentId)) s += 0.55;
-  return Math.min(2.0, Math.max(0.7, s));
+  if (MASTER_SET.has(key)) s += 0.55;
+  if (BAD_SET.has(key)) s -= 0.45;
+  return Math.min(2.0, Math.max(0.55, s));
 }
 
 export function comboLabel(score) {
   if (score >= 1.55) return { ko: '환상의 조합', cls: 'great' };
   if (score >= 1.25) return { ko: '좋은 조합', cls: 'good' };
   if (score >= 1.0) return { ko: '무난한 조합', cls: 'ok' };
-  return { ko: '아쉬운 조합', cls: 'bad' };
+  if (score >= 0.82) return { ko: '아쉬운 조합', cls: 'bad' };
+  return { ko: '안 맞는 조합', cls: 'bad' };
 }
+
+/* What a content card shows before the company has ever shipped that pairing.
+   The doc is explicit that the combo game is a DISCOVERY game: telling the
+   player the answer up front removes the only reason to experiment. */
+export const UNKNOWN_COMBO = { ko: '미지의 조합', cls: 'ok' };
 
 /* ---------- platforms ---------- */
 export const PLATFORMS = [
@@ -238,7 +272,10 @@ export function rankInfo(rank) {
   return {
     rank: r,
     cashCap: Math.round(2_000_000 * Math.pow(1.42, r - 1)),
-    staffCap: Math.min(24, 5 + Math.floor(r * 0.9)),
+    // Seven at rank 1, against five founders: hiring has to be possible on the
+    // first day or the 채용 screen is a wall of "정원 초과" and the whole system
+    // reads as broken.
+    staffCap: Math.min(26, 7 + Math.floor(r * 0.9)),
     motivationCap: Math.min(60, 5 + r * 2),
     floors: Math.min(5, 1 + Math.floor((r - 1) / 4)),
     // Stamina has to cover development AND staff training AND proposals, and

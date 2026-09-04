@@ -248,24 +248,35 @@ export function pedestal(m, x, z, ry) {
   m.mat = 0;
 }
 
+/* A desk monitor, facing the person sitting at the desk.
+
+   FACING. `ry` is the DESK's rotation, and boxY lays a box's width down
+   (cos ry, -sin ry) and its depth down (sin ry, cos ry). The seat is 2.6 units
+   along +depth, so the panel has to be WIDE across the width axis and THIN
+   across the depth axis, with its screen looking back down +depth. It used to
+   be built the other way round — a panel spanning the desk's depth, with the
+   quad wound so its face pointed away as well — which put every screen edge-on
+   to the person using it and lit from behind. */
 export function monitor(m, x, z, ry, w, tilt) {
   const ww = w || 2.3, h = ww * 0.60;
+  // Unit vectors: `a` runs across the desk, `n` runs from the desk to the seat.
+  const ax = Math.cos(ry), az = -Math.sin(ry);
+  const nx = Math.sin(ry), nz = Math.cos(ry);
   m.mat = MAT.METAL;
   m.boxY(x, DESK_Y + 0.20, z, 1.0, 0.14, 0.7, ry, P.charcoal);         // foot
   m.boxY(x, DESK_Y + 0.62, z, 0.26, 0.86, 0.26, ry, P.charcoal);       // stem
   const cy = DESK_Y + 1.32;
-  const fx = Math.cos(ry) * 0.10, fz = -Math.sin(ry) * 0.10;
-  m.boxY(x, cy, z, 0.20, h + 0.24, ww + 0.20, ry, P.black);            // bezel
+  m.boxY(x, cy, z, ww + 0.20, h + 0.24, 0.20, ry, P.black);            // bezel
   m.mat = MAT.SCREEN;
   // Screen face as an explicit UV quad so the shader's desktop lands square.
+  // Wound p0→p1→p2 counter-clockwise seen from the seat, which is what makes
+  // the generated normal point at the person rather than into the desk.
   const half = ww / 2, hh = h / 2;
-  const ux = Math.sin(ry), uz = Math.cos(ry);                          // along the panel
-  const nx = Math.cos(ry), nz = -Math.sin(ry);                         // out of the panel
-  const ox = x + fx + nx * 0.06, oz = z + fz + nz * 0.06;
-  const p0 = [ox - ux * half, cy - hh, oz - uz * half];
-  const p1 = [ox + ux * half, cy - hh, oz + uz * half];
-  const p2 = [ox + ux * half, cy + hh, oz + uz * half];
-  const p3 = [ox - ux * half, cy + hh, oz - uz * half];
+  const ox = x + nx * 0.12, oz = z + nz * 0.12;
+  const p0 = [ox - ax * half, cy - hh, oz - az * half];
+  const p1 = [ox + ax * half, cy - hh, oz + az * half];
+  const p2 = [ox + ax * half, cy + hh, oz + az * half];
+  const p3 = [ox - ax * half, cy + hh, oz - az * half];
   m.quadUV(p0, p1, p2, p3, '#ffffff', MAT.SCREEN);
   m.mat = 0;
   void tilt;

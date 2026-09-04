@@ -242,21 +242,32 @@ export function reincarnate(s, newJobId) {
   return { ok: true };
 }
 
+/* Returns how much motivation actually moved, which is not always what was
+   asked for: 일벌레 scales gains to 0.4 by design, and the cap can swallow the
+   rest. Callers that tell the player "+1" have to report this instead.
+
+   Rounding to one decimal matters. The trait multiplier makes the value
+   fractional on purpose, but without the round it drifts into
+   3.4000000000000004 and the roster panel prints every digit. */
 export function addMotivation(s, n, rank) {
   const cap = rankInfo(rank).motivationCap;
   const scaled = n > 0 ? n * (traitMult(s, 'moodGain') || 1) : n;
-  s.motivation = Math.max(0, Math.min(cap, s.motivation + scaled));
+  const before = s.motivation;
+  s.motivation = Math.round(Math.max(0, Math.min(cap, before + scaled)) * 10) / 10;
+  return Math.round((s.motivation - before) * 10) / 10;
 }
 
 /* Candidates for the hiring screen. Higher company rank surfaces better people
    and, past rank 6, occasionally an already-promoted one. */
-export function rollCandidates(rnd, rank, n = 3) {
+export function rollCandidates(rnd, rank, n = 3, quality = 1) {
   const pool = ['planner', 'programmer', 'designer', 'sound', 'networker'];
   const out = [];
   for (let i = 0; i < n; i++) {
     let job = pool[Math.floor(rnd() * pool.length)];
-    if (rank >= 6 && rnd() > 0.72) job = JOBS[job].next || job;
-    const talent = 0.72 + rnd() * (0.55 + Math.min(0.6, rank * 0.035));
+    if (rnd() > (quality > 1.2 ? 0.45 : 0.72) && rank >= (quality > 1.2 ? 3 : 6)) {
+      job = JOBS[job].next || job;
+    }
+    const talent = (0.72 + rnd() * (0.55 + Math.min(0.6, rank * 0.035))) * quality;
     const s = makeStaff(rnd, job, { talent, level: 1 + Math.floor(rnd() * Math.min(12, rank * 1.5)) });
     s.hireCost = Math.round(s.salary * (7 + talent * 6));
     out.push(s);

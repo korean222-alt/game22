@@ -24,7 +24,7 @@ import { MAT } from '../core/color.js';
 import { mulberry32 } from '../core/math.js';
 import { P } from './palette.js';
 import {
-  wall, wallDoor, glassWall, floorField, slab, workstation, chairGuest, chairTask, confTable,
+  wall, wallDoor, glassWall, doorway, floorField, slab, workstation, chairGuest, chairTask, confTable,
   whiteboard, wallTV, signBoard, plantTall, trashBin, troffer, fileCab, shelfUnit,
   serverRack, copier, waterCooler, vending, couch, cubeWall, stairs, rug,
   receptionDesk, counterRun, fridge, microwave, coffeeMaker, lockers, phoneBooth,
@@ -53,6 +53,10 @@ export const FLOOR_PLANS = [
 const CORE = { x0: 27, x1: 39, z0: 17, z1: 27 };   // lift + stair core
 const MR = { x0: 45, x1: 62, z0: 2, z1: 16 };      // meeting room
 const BR = { x0: 2, x1: 18, z0: 29, z1: 42 };      // break room + pantry
+/* The front doors, in the south glass on the ground floor. People you hire walk
+   in through here and people who leave walk out through here, so the roster
+   changing is something you watch happen rather than a number ticking. */
+const DOOR = { x0: 29.5, x1: 36.5 };
 
 function inRect(r, x, z, pad = 0) {
   return x > r.x0 - pad && x < r.x1 + pad && z > r.z0 - pad && z < r.z1 + pad;
@@ -88,7 +92,23 @@ function buildFloor(m, fi, plan, out) {
 
   /* ---- perimeter: glass north and south, solid east and west ---- */
   glassWall(m, B.x0, B.z0, B.x1, B.z0, wallH, 0.9, base);
-  glassWall(m, B.x0, B.z1, B.x1, B.z1, wallH, 0.9, base);
+  if (isGround) {
+    // Two runs of glass with the entrance between them. The sill is dropped to
+    // zero either side of the opening so the doorway reads as a way in rather
+    // than as a missing pane.
+    glassWall(m, B.x0, B.z1, DOOR.x0, B.z1, wallH, 0.9, base);
+    glassWall(m, DOOR.x1, B.z1, B.x1, B.z1, wallH, 0.9, base);
+    put((s) => doorway(s, (DOOR.x0 + DOOR.x1) / 2, B.z1, Math.PI / 2,
+      DOOR.x1 - DOOR.x0, 7.0, P.frame));
+    out.entrance = {
+      floor: fi,
+      x: (DOOR.x0 + DOOR.x1) / 2, z: B.z1 - 2.6, yaw: Math.PI,   // just inside, facing north
+      outX: (DOOR.x0 + DOOR.x1) / 2, outZ: B.z1 + 3.0,
+    };
+    out.rooms.push({ name: '정문', x: (DOOR.x0 + DOOR.x1) / 2, y: base + 5.0, z: B.z1 - 1.2, floor: fi });
+  } else {
+    glassWall(m, B.x0, B.z1, B.x1, B.z1, wallH, 0.9, base);
+  }
   wall(m, B.x0, B.z0, B.x0, B.z1, wallH, B.thick, P.wall, false, base);
   wall(m, B.x1, B.z0, B.x1, B.z1, wallH, B.thick, P.wall, false, base);
 
@@ -377,7 +397,7 @@ function buildSite(m, floors) {
 /* ---------- entry point ---------- */
 export function buildOffice(floorCount = FLOOR_PLANS.length) {
   const m = new MeshBuilder();
-  const out = { desks: [], rooms: [], meetings: [], spots: [] };
+  const out = { desks: [], rooms: [], meetings: [], spots: [], entrance: null };
   const n = Math.max(1, Math.min(FLOOR_PLANS.length, floorCount));
   for (let fi = 0; fi < n; fi++) buildFloor(m, fi, FLOOR_PLANS[fi], out);
   buildSite(m, n);
