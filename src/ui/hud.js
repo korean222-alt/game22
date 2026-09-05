@@ -31,6 +31,7 @@ import { monsterFor, monsterForStage } from '../game/monsters.js';
 import { rewardText } from '../game/events.js';
 import { FLOOR_PLANS } from '../world/office.js';
 import { arenaSetFor } from '../world/arena.js';
+import { kitReady } from '../world/kit.js';
 import { isTouch, isFullscreen, goFullscreen, exitFullscreen, wireInstallGuide } from './device.js';
 
 const $ = (id) => document.getElementById(id);
@@ -103,6 +104,7 @@ export class UI {
     this._wireModal();
     this._wireKeys();
     this._wireShell();
+    this._wireSaleRun();
 
     game.on((type, payload) => this._onGameEvent(type, payload));
     this.renderAll();
@@ -131,10 +133,8 @@ export class UI {
     // 사무실 화면에 남은 배틀 바는 이제 요약과 입구다. 때리는 버튼이 아니다.
     go('bArena', () => this.enterArena());
     go('bTurn', () => this.doTurn());
-    go('bBossCam', () => {
-      if (!this.view.focusBoss()) this.toast('아이디어가 아직 나타나지 않았습니다.', 'bad');
-      else this.togglePanel(true);
-    });
+    // 사무실에는 보스가 없다. 이 버튼은 세트장으로 들어가는 두 번째 입구다.
+    go('bBossCam', () => this.enterArena());
 
     // ── 아레나 ──
     go('aOut', () => this.exitArena());
@@ -148,7 +148,7 @@ export class UI {
       this.g.save();
       this.renderArena(true);
     });
-    go('aBag', () => { this.exitArena(); this.openTab('shop'); });
+    go('aBag', () => { this.exitArena(); this.openTab('bag'); });
     go('aSpeed', () => {
       const i = RAID.speeds.indexOf(this.speed);
       this.speed = RAID.speeds[(i + 1) % RAID.speeds.length];
@@ -325,6 +325,110 @@ export class UI {
     };
   }
 
+  _wireSaleRun() {
+    const ok = $('srOk');
+    if (!ok) return;
+    ok.style.touchAction = 'manipulation';
+    ok.onclick = () => {
+      const s = this.g.closeSalesRun();
+      if (!s) return;
+      const rel = this.g.releases.find((r) => r.id === s.id);
+      if (rel) this.showRelease(rel, s);
+    };
+  }
+
+  /* 매 프레임. 전투와 같은 시계를 쓴다 — 탭이 백그라운드로 가면 판매도 멈춘다. */
+  tickSales(dt) {
+    if (this.g.selling()) this.g.salesTick(dt);
+  }
+
+  /* ---------- 실시간 판매 화면 ----------
+     막대 하나가 한 주다. 지금 서는 막대가 금색이고, 그 위를 꺾은선이 잇는다.
+     다 팔면 헤더가 '정산 완료' 로 바뀌고 확인 버튼이 나온다 — 그 버튼을
+     누르기 전까지는 새 게임을 만들 수 없다. */
+  renderSaleRun(s) {
+    const body = document.body;
+    if (!s) { body.classList.remove('selling', 'settled'); return; }
+    body.classList.add('selling');
+    body.classList.toggle('settled', !!s.ended);
+
+    $('srTag').textContent = s.ended ? '✅ 정산 완료' : '🔴 실시간 판매';
+    $('srTitle').textContent = `「${s.title}」`;
+    $('srTotal').textContent = won(s.total);
+    const last = s.points[s.points.length - 1];
+    $('srWeek').textContent = s.ended
+      ? `${s.done}주 누적 매출`
+      : `${s.done} / ${s.weeks}주차${last ? ` · 이번 주 ${won(last.income)}` : ''}`;
+
+    const bars = $('srBars');
+    if (bars.children.length !== s.weeks) {
+      bars.innerHTML = '';
+      for (let i = 0; i < s.weeks; i++) bars.appendChild(el('i'));
+    }
+    const peak = Math.max(1, s.peak);
+    const pts = [];
+    for (let i = 0; i < s.weeks; i++) {
+      const pt = s.points[i];
+      const h = pt ? Math.max(3, (pt.income / peak) * 100) : 0;
+      const bar2 = bars.children[i];
+      bar2.style.height = h + '%';
+      bar2.className = pt && i === s.points.length - 1 && !s.ended ? 'now' : '';
+      if (pt) pts.push(`${((i + 0.5) / s.weeks) * 100},${100 - h}`);
+    }
+    $('srPoly').setAttribute('points', pts.join(' '));
+
+    const stat = $('srStat');
+    const users = last ? last.users : s.users;
+    stat.innerHTML =
+      `<div><span class="k">현재 유저</span><span class="v">${num(users)}</span></div>
+       <div><span class="k">초기 유저</span><span class="v">${num(s.users)}</span></div>
+       <div><span class="k">팬 획득</span><span class="v">+${num(s.fans)}</span></div>`;
+  }
+
+  /* ---------- 룰렛 ----------
+     당첨은 이미 정해져 있다. 표가 흘러가다 그 칸에서 멈추는 것을 보여줄
+     뿐이고, 그 2.6초가 "뽑았다" 는 감각의 전부다. 결과를 모달로 곧장
+     띄우면 그냥 통보다. */
+  spinRoulette(tag, labels, winIndex, hitText) {
+    const strip = $('rStrip'), win = $('roul'), hit = $('rHit');
+    if (!strip || !win || !labels.length) return Promise.resolve();
+    const CELL = 110, LOOPS = 4;
+    const cells = [];
+    for (let r = 0; r <= LOOPS; r++) for (let i = 0; i < labels.length; i++) cells.push(labels[i]);
+    // 마지막 바퀴의 당첨 칸에서 멈춘다. 앞의 네 바퀴는 속도를 보여주기 위한 것.
+    const target = LOOPS * labels.length + winIndex;
+    strip.innerHTML = '';
+    cells.forEach((t, i) => {
+      const c = el('div', 'rcell', t);
+      if (i === target) c.dataset.win = '1';
+      strip.appendChild(c);
+    });
+    $('rTag').textContent = tag;
+    hit.textContent = '';
+    hit.classList.remove('on');
+    document.body.classList.add('rouling');
+
+    const w = win.querySelector('.rwin').getBoundingClientRect().width || 380;
+    strip.style.transition = 'none';
+    strip.style.transform = 'translateX(0px)';
+    void strip.offsetWidth;
+    strip.style.transition = 'transform 2.6s cubic-bezier(.12,.72,.15,1)';
+    strip.style.transform = `translateX(${w / 2 - (target * CELL + CELL / 2)}px)`;
+
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const c = strip.querySelector('[data-win]');
+        if (c) c.classList.add('hit');
+        hit.textContent = hitText || labels[winIndex];
+        hit.classList.add('on');
+        setTimeout(() => {
+          document.body.classList.remove('rouling');
+          resolve();
+        }, 1150);
+      }, 2650);
+    });
+  }
+
   _wireShell() {
     const menu = $('menuBtn');
     if (menu) { menu.onclick = () => this.togglePanel(); menu.style.touchAction = 'manipulation'; }
@@ -376,6 +480,9 @@ export class UI {
     // 아레나에서는 알림이 로그 리본으로 간다. 화면 한복판은 보스의 자리고,
     // 자동 전투는 초당 몇 줄씩 나오므로 토스트로 받으면 서로를 덮는다.
     if (type === 'log') {
+      // 룰렛이 도는 동안에는 로그를 접는다. 안 그러면 "새 소재 획득: 공룡"
+      // 토스트가 룰렛보다 먼저 떠서 결과를 미리 말해 버린다.
+      if (this._quietLog) return;
       if (this.inArena()) this.arenaLog(payload.text, payload.kind);
       else this.toast(payload.text, payload.kind);
     }
@@ -391,6 +498,14 @@ export class UI {
     // 테스트 도구가 랭크를 한 번에 여러 단 올릴 때는 축하 팝업을 접는다.
     // 네 장을 연달아 닫게 만드는 것은 확인이 아니라 벌칙이다.
     if (type === 'rank' && !this._quietRank) this.showRankUp(payload);
+    // 판매는 15초 동안 열 번 온다. 그때마다 사이드 패널을 통째로 다시 지으면
+    // 그 비용이 그대로 프레임에서 나간다 — 화면에 필요한 것은 판매 카드뿐이다.
+    if (type === 'sales') {
+      this.renderSaleRun(payload);
+      this.renderHUD();
+      if (!payload) this.renderAll();
+      return;
+    }
     if (type === 'finished') this._finishedFlow(payload);
     if (type === 'floors') this.view.setFloorCount(payload).then(() => this.renderFloors());
     if (type === 'rescue') this.showRescue(payload);
@@ -545,12 +660,21 @@ export class UI {
      the modal, and the office keeps working behind it. */
   wantsMeeting(phase) { return phase === 'kickoff' || phase === 'content'; }
 
-  /* An idea card waits for the meeting that produces it. */
+  /* An idea card waits for the meeting that produces it.
+
+     아레나 안에서 이 회의가 걸리면 화면이 하얗게 비었다. 세트장 모드의
+     draw() 는 사무실을 아예 그리지 않는데, 회의 연출은 카메라만 사무실
+     회의실로 옮겼기 때문이다 — 700 유닛 밖의 빈 공간을 비추고 있었던 것.
+     첫 보스를 잡고 '게임 내용' 회의로 넘어가는 길이 정확히 그 경우였다.
+
+     그래서 회의 전에 세트장을 나갔다가, 카드를 고르고 나면 돌아온다.
+     "회의하러 사무실로 올라갔다가 다시 내려간다" 는 뜻이 그대로 화면이 된다. */
   async _cardFlow() {
     const p = this.g.project;
     if (!p || !p.pendingCards || this.busy) return;
     const kind = p.pendingCards.kind;
     if (this.wantsMeeting(kind)) {
+      if (this.inArena()) { this._resumeArena = true; this.exitArena(); }
       this.busy = true;
       try {
         await this.view.playMeeting(kind, p.team, this.mvars(p));
@@ -560,11 +684,26 @@ export class UI {
     }
     // The player may have skipped ahead and resolved it already.
     if (this.g.project && this.g.project.pendingCards) this.showCards();
+    else this._backToArena();
+  }
+
+  /* 회의 때문에 잠시 나왔던 세트장으로 돌아간다. 카드를 고른 직후에만 돈다. */
+  _backToArena() {
+    if (!this._resumeArena) return;
+    this._resumeArena = false;
+    if (this.g.project && !this.g.project.pendingCards && !this.inArena()) this.enterArena();
   }
 
   _finishedFlow(p) {
-    if (!p || this.busy) return;
+    if (!p) return;
+    // 회의 연출이 돌고 있으면 결과창을 **버리지 말고 미룬다**. 예전에는 그냥
+    // return 이라서, 마지막 카드 회의와 완성이 같은 순간에 겹치면 완성 화면이
+    // 통째로 사라지고 게임이 아무 말 없이 멈춘 것처럼 보였다.
+    if (this.busy) { clearTimeout(this._finT); this._finT = setTimeout(() => this._finishedFlow(p), 400); return; }
     this.view.celebrate(p.team);
+    // 마지막 보스를 잡았으면 세트장에 남아 있을 이유가 없다. 결과 → 홍보 →
+    // 출시가 여기서 한 줄로 이어진다.
+    if (this.inArena()) this.exitArena();
     if (this.g.finished) this.showFinished(p);
   }
 
@@ -803,6 +942,7 @@ export class UI {
       staff: () => this.panelStaff(box),
       dev: () => this.panelDev(box),
       shop: () => this.panelShop(box),
+      bag: () => this.panelBagTab(box),
       dex: () => this.panelDex(box),
       live: () => this.panelLive(box),
       office: () => this.panelOffice(box),
@@ -1249,7 +1389,19 @@ export class UI {
     box.appendChild(el('h4', 'sec', '기획서'));
     const mk = el('button', 'btn primary wide', '기획서 뽑기 (스태미나 -1)');
     mk.disabled = g.company.stamina < 1;
-    mk.onclick = () => { const r = g.makeProposal(); if (!r.ok) this.toast(r.why, 'bad'); g.save(); };
+    mk.onclick = async () => {
+      this._quietLog = true;
+      const r = g.makeProposal();
+      this._quietLog = false;
+      if (!r.ok) { this.toast(r.why, 'bad'); return; }
+      g.save();
+      // 어떤 장르가 나왔는지가 기획서의 절반이다. 그 절반을 룰렛으로 돌린다.
+      const idx = Math.max(0, GENRES.findIndex((x) => x.id === r.proposal.genreId));
+      const gen = GENRES[idx];
+      await this.spinRoulette('📝 기획서 장르', GENRES.map((x) => x.ko), idx,
+        `${gen.ko} · ★${r.proposal.grade}`);
+      this.toast(`「${r.proposal.title}」 ${gen.ko} ★${r.proposal.grade}`, 'good');
+    };
     box.appendChild(mk);
     box.appendChild(el('div', 'row', `<span>회사 기획력</span><b>${Math.round(g.totalPlanPower())}</b>`));
 
@@ -1357,9 +1509,6 @@ export class UI {
       if (!r.ok) { this.toast(r.why, 'bad'); return; }
       this.draft = null;
       this.view.startWork(g.project.team);
-      // The monster loads while the kickoff meeting plays, so by the time the
-      // player is back on the floor the idea is standing there waiting.
-      this.view.ensureBoss(g.project);
       this._kickoff(g.project);
       this.renderTutorial();
       g.save();
@@ -1387,8 +1536,9 @@ export class UI {
     this.busy = true;
     try { await this.view.playMeeting('kickoff', p.team, this.mvars(p)); }
     finally { this.busy = false; this.renderBattle(); }
-    // 회의가 끝나면 카메라가 상대를 잡아준다 — 무엇과 싸우는지 한 번은 보여야 한다.
-    this.view.focusBoss(44);
+    // 착수 회의가 끝나면 곧장 세트장으로 넘어간다. 보스는 아레나 안에만
+    // 있으므로, 여기서 사무실 카메라로 "상대를 보여주는" 컷은 이제 없다.
+    this.enterArena();
     this.toast(`${(p.boss || bossFor(p.genreId)).ko} 등장!`, 'good');
   }
 
@@ -1469,8 +1619,8 @@ export class UI {
     if (hungry.length) {
       box.appendChild(el('div', 'item',
         `<div class="d" style="color:var(--warn)">지친 팀원 ${hungry.length}명 — 체력이 낮으면 데미지와 품질이 같이 떨어집니다. 상점의 음식으로 회복하세요.</div>`));
-      const go = el('button', 'btn wide sm', '상점으로');
-      go.onclick = () => this.openTab('shop');
+      const go = el('button', 'btn wide sm', '가방 열기');
+      go.onclick = () => this.openTab('bag');
       box.appendChild(go);
     }
   }
@@ -1521,25 +1671,39 @@ export class UI {
     const rl = el('button', 'btn primary wide', '출시하기');
     rl.onclick = () => {
       const r = g.release();
+      // 출시 결과는 15초 판매가 끝나고 정산을 확인할 때 뜬다. 여기서 바로
+      // 띄우면 판매 화면 뒤에 깔린 채로 읽히지 않는다.
       if (!r.ok) this.toast(r.why, 'bad');
-      else this.showRelease(r.release);
       g.save();
     };
     box.appendChild(rl);
   }
 
-  /* ══════════════════════════════ 상점 ══════════════════════════════
-     산 물건은 가방에 들어가고, 쓸 때 효과가 난다. 원작의 상점을 그대로
-     옮긴 자리이고, 이 게임에서 돈이 실제로 나가는 두 번째 구멍이다
-     (첫 번째는 인건비). */
-  panelShop(box) {
-    const g = this.g, c = g.company;
+  /* ---------- 가방 탭 ----------
+     소모품·장비는 상점 안에, 가구는 사무실 탭 안에 각각 숨어 있었다. 산
+     물건을 찾으려면 어느 화면으로 들어가야 하는지를 외워야 했다는 뜻이다.
+     둘을 한 탭으로 모으고, 원래 자리에는 여기로 오는 버튼만 남겼다. */
+  panelBagTab(box) {
+    this.panelItemBag(box);
+    this.panelBag(box);
+  }
 
-    /* 가방 먼저. 산 물건이 어디로 갔는지 보이지 않으면 아무도 두 번 사지 않는다. */
+  /* 가방 탭으로 보내는 한 줄. 상점과 사무실 화면이 같은 것을 쓴다. */
+  _bagLink(text) {
+    const it = el('div', 'item click', `<div class="d">🎒 ${text} <b>가방 탭</b>에서 쓰거나 배치합니다.</div>`);
+    it.onclick = () => this.openTab('bag');
+    return it;
+  }
+
+  /* ---------- 소모품·장비 가방 ----------
+     상점 화면 위에 얹혀 있던 것을 가방 탭으로 옮겼다. 상점에 들어가야만
+     가방이 보이면, 밥을 먹이려던 사람이 매번 물건을 파는 화면을 지나야 한다. */
+  panelItemBag(box) {
+    const g = this.g;
     const bag = g.bagList();
-    box.appendChild(el('h4', 'sec', `가방 ${bag.reduce((a, b) => a + b.n, 0)}개`));
+    box.appendChild(el('h4', 'sec', `소모품 · 장비 ${bag.reduce((a, b) => a + b.n, 0)}개`));
     if (!bag.length) {
-      box.appendChild(el('div', 'item', '<div class="d">가방이 비었습니다. 아래에서 물건을 사면 여기에 쌓입니다.</div>'));
+      box.appendChild(el('div', 'item', '<div class="d">비어 있습니다. 상점 탭에서 사면 여기에 쌓입니다.</div>'));
     }
     for (const { item, n } of bag) {
       const line = el('div', 'bagline');
@@ -1581,7 +1745,15 @@ export class UI {
       }
       box.appendChild(line);
     }
+  }
 
+  /* ══════════════════════════════ 상점 ══════════════════════════════
+     산 물건은 가방에 들어가고, 쓸 때 효과가 난다. 원작의 상점을 그대로
+     옮긴 자리이고, 이 게임에서 돈이 실제로 나가는 두 번째 구멍이다
+     (첫 번째는 인건비). */
+  panelShop(box) {
+    const g = this.g, c = g.company;
+    box.appendChild(this._bagLink('산 물건은 🎒 가방 탭에 쌓입니다.'));
     /* 분류 */
     box.appendChild(el('h4', 'sec', `상점 · 보유 ${won(c.money)}`));
     const cats = el('div', 'shopcat');
@@ -1631,10 +1803,17 @@ export class UI {
     const pull = el('button', 'btn wide sm primary',
       locked.length ? `🪙 ${cost} — 소재 뽑기 (남은 ${locked.length}종)` : `🪙 ${cost} — 전부 모았습니다 (연구로 교환)`);
     pull.disabled = c.coins < cost;
-    pull.onclick = () => {
+    pull.onclick = async () => {
+      // 뽑기 전의 후보 목록을 먼저 잡아 둔다. drawContent 가 당첨을 소유 목록으로
+      // 옮기고 나면 "무엇들 중에서 뽑혔나" 를 다시 만들 수 없다.
+      const pool = g.lockedContents();
+      this._quietLog = true;
       const r = g.drawContent();
+      this._quietLog = false;
       if (!r.ok) { this.toast(r.why, 'bad'); return; }
       if (r.dup) { this.toast('이미 모두 모았습니다. 연구 포인트로 바꿨습니다.', 'good'); return; }
+      const idx = Math.max(0, pool.findIndex((x) => x.id === r.content.id));
+      await this.spinRoulette('🎁 소재 뽑기', pool.map((x) => x.ko), idx, `${r.content.ko} 당첨!`);
       this.openModal('소재 뽑기', `🎁 ${r.content.ko}`,
         `<p>새 소재 <b>${r.content.ko}</b> 를 손에 넣었습니다.
           이제 개발 중 게임 내용 카드에 나옵니다.</p>
@@ -1813,7 +1992,7 @@ export class UI {
       '<div class="d">가구를 사면 <b>가방</b>에 들어갑니다. <b>배치</b>를 눌러 바닥의 파란 구역에 놓으세요. '
       + '책상 하나에 직원 한 명이 앉습니다. 쾌적도가 높으면 직원 의욕이 잘 유지되고 기획력이 오릅니다.</div>'));
 
-    this.panelBag(box);
+    box.appendChild(this._bagLink('산 가구는 가방에 들어갑니다.'));
     this.panelFurnitureShop(box);
     this.panelPlaced(box);
 
@@ -1926,13 +2105,17 @@ export class UI {
     }
     box.appendChild(tabs);
 
-    for (const def of FURNITURE.filter((f) => f.cat === this.furnCat)) {
+    // 모델이 안 왔으면 키트 가구는 아예 팔지 않는다. 돈을 냈는데 바닥에
+    // 아무것도 안 서는 것보다는 목록에 없는 편이 낫다.
+    const ready = kitReady();
+    for (const def of FURNITURE.filter((f) => f.cat === this.furnCat && (ready || !f.kit))) {
       const it = el('div', 'item');
       const tags = [];
       if (def.seats) tags.push('<span class="pill great">자리 +1</span>');
       if (def.comfort) tags.push(`<span class="pill">쾌적 +${def.comfort}</span>`);
       if (def.plan) tags.push('<span class="pill">기획</span>');
       if (def.social) tags.push('<span class="pill">소셜</span>');
+      if (def.kit) tags.push('<span class="pill good">수입 가구</span>');
       it.innerHTML = `<div class="t"><span class="n">${def.ko}</span>
         <span class="j">${won(def.price)}</span></div>
         <div class="d">${tags.join('')}<br>${def.desc}</div>`;
@@ -2088,6 +2271,7 @@ export class UI {
               this.g.pickCard(o.id);
               this.g.save();
               this.showFusion(o);
+              this._backToArena();
             },
           };
         }));
@@ -2096,7 +2280,7 @@ export class UI {
         '남은 HP를 깎는 속도와 품질 상승폭이 달라집니다.',
         pc.options.map((o) => ({
           name: o.ko, desc: o.desc,
-          onPick: () => { this.g.pickCard(o.id); this.g.save(); },
+          onPick: () => { this.g.pickCard(o.id); this.g.save(); this._backToArena(); },
         })));
     }
   }
@@ -2153,15 +2337,74 @@ export class UI {
        <div class="row"><span>궁합</span><b>×${p.combo.toFixed(2)}</b></div>
        <div class="row"><span>버그</span><b>${p.bugs}개</b></div>
        <div class="row"><span>번뜩임</span><b>${p.crits}회</b></div>
-       <p style="color:var(--dim);font-size:11px;margin-top:9px">개발 탭에서 홍보를 고르고 출시하세요.</p>`);
+       <p style="color:var(--dim);font-size:11px;margin-top:9px">다음은 홍보입니다. 확인을 누르면 바로 고릅니다.</p>`,
+      null, () => this.showMarketing());
   }
 
-  showRelease(r) {
+  /* ---------- 홍보 → 출시 ----------
+     보스를 다 잡아도 화면에는 "개발 탭에서 홍보를 고르고 출시하세요" 라는
+     한 줄만 떴다. 처음 하는 사람은 그 탭을 찾아 들어가야 한다는 것을 모르고,
+     완성한 게임이 그대로 책상에 남았다. 이제 결과창을 닫으면 홍보 선택이
+     바로 이어서 뜬다 — 개발 탭은 다시 고르고 싶을 때만 가면 된다. */
+  showMarketing() {
+    const g = this.g, p = g.finished;
+    if (!p) return;
+    this.openTab('dev');
+    const opts = MARKETING.map((mk) => {
+      const price = g.marketingPrice(mk.id);
+      const poor = price > g.company.money;
+      return {
+        name: mk.ko + (poor ? ' (자금 부족)' : ''),
+        desc: `${mk.desc} · 유저 ×${mk.users.toFixed(2)} · 팬 ×${mk.fans.toFixed(2)}`,
+        right: `<b>${price ? won(price) : '무료'}</b>`,
+        onPick: () => {
+          if (poor) { this.toast('홍보비가 모자랍니다', 'bad'); this.showMarketing(); return; }
+          g.setMarketing(mk.id);
+          g.save();
+          this.renderPanel();
+          this.confirmRelease();
+        },
+      };
+    });
+    this.openModal('홍보', `「${p.title}」 어떻게 알릴까?`,
+      `홍보비를 많이 쓸수록 초기 유저가 늘어납니다. 버그가 남았다면
+       <b>개발 탭</b>에서 디버그를 먼저 하고 와도 됩니다.
+       <div class="row"><span>남은 버그</span><b>${p.bugs}개</b></div>
+       <div class="row"><span>평론가</span><b>${p.criticTotal} / 40</b></div>`,
+      opts);
+  }
+
+  confirmRelease() {
+    const g = this.g, p = g.finished;
+    if (!p) return;
+    const mk = MARKETING.find((m) => m.id === g.company.marketingId) || MARKETING[0];
+    const price = g.marketingPrice(mk.id);
+    this.openModal('출시', `「${p.title}」 지금 출시할까요?`,
+      `<div class="row"><span>홍보</span><b>${mk.ko}</b></div>
+       <div class="row"><span>홍보비</span><b>${price ? won(price) : '무료'}</b></div>
+       <p style="color:var(--dim);font-size:11px;margin-top:8px">
+         출시하면 <b>15초간 실시간 판매</b>가 시작되고, 그동안에는 새 게임을 만들 수 없습니다.</p>`,
+      [
+        {
+          name: '출시하기',
+          desc: '판매를 시작합니다',
+          onPick: () => {
+            const r = g.release();
+            if (!r.ok) { this.toast(r.why, 'bad'); return; }
+            g.save();
+          },
+        },
+        { name: '조금 더 다듬기', desc: '개발 탭에서 디버그하고 나중에 출시', onPick: () => this.openTab('dev') },
+      ]);
+  }
+
+  showRelease(r, run) {
     const notes = (r.notes || [])
       .map((n) => `<div class="verd ${n.cls}">${n.ko}</div>`).join('');
     this.openModal('출시', `「${r.title}」 출시!`,
-      `<div class="grade">${num(r.users)}</div>
-       <div class="gsub">초기 유저${r.trendHit ? ' · 🔥 유행을 탔다' : ''}</div>
+      `<div class="grade">${run ? won(run.total) : num(r.users)}</div>
+       <div class="gsub">${run ? `${run.done}주 누적 매출` : '초기 유저'}${r.trendHit ? ' · 🔥 유행을 탔다' : ''}</div>
+       ${run ? `<div class="row"><span>초기 유저</span><b>${num(r.users)}</b></div>` : ''}
        ${notes}
        <div class="row"><span>플랫폼</span><b>${PLATFORMS.find((p) => p.id === r.platformId).ko}</b></div>
        <div class="row"><span>수익 모델</span><b>${MONETIZE.find((m) => m.id === r.monetizeId).ko}</b></div>
@@ -2169,8 +2412,8 @@ export class UI {
        <div class="row"><span>평론가</span><b>${r.criticTotal}점</b></div>
        <div class="row"><span>남은 버그</span><b>${r.bugs}개</b></div>
        <p style="color:var(--dim);font-size:11.5px;margin-top:10px">
-         한 게임은 몇 주에 걸쳐 팔리고, 매주 조금씩 식습니다.
-         화면 오른쪽 <b>판매 현황</b>에서 이번 주 매출과 남은 수명을 볼 수 있습니다.</p>`);
+         남은 수명은 화면 오른쪽 <b>판매 현황</b>에서 계속 이어집니다.
+         주를 넘길 때마다 조금씩 더 들어옵니다.</p>`);
   }
 
   showRankUp(up) {

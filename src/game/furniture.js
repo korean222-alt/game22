@@ -54,6 +54,39 @@ export const FURNITURE = [
   { id: 'serverRack', ko: '서버 랙', cat: 'pro', price: 48000, comfort: 1, w: 3.0, d: 3.0, social: 1, desc: '소셜·운영에 도움이 된다.' },
   { id: 'copier', ko: '복합기', cat: 'pro', price: 26000, comfort: 1, w: 4.0, d: 3.4, desc: '출력물이 필요할 때.' },
   { id: 'phoneBooth', ko: '폰 부스', cat: 'pro', price: 32000, comfort: 5, w: 3.6, d: 3.6, desc: '조용한 통화 공간.' },
+
+  /* ---- 수입 가구 (Kenney Furniture Kit) ----
+     `kit: true` 는 "이건 절차적 박스가 아니라 모델" 이라는 표시다. 모델이
+     아직 안 왔으면 상점에서 통째로 숨는다 — 돈을 냈는데 아무것도 안 보이는
+     것보다는 아예 안 파는 편이 낫다. */
+  {
+    id: 'kitDesk', ko: '원목 책상 세트', cat: 'work', price: 15000, seats: true, comfort: 3,
+    w: 5.4, d: 4.6, kit: true, desc: '모니터·키보드·의자까지 한 세트. 기본 책상보다 앉은 사람이 편하다.',
+  },
+  {
+    id: 'kitDeskCorner', ko: 'L자 코너 책상', cat: 'work', price: 38000, seats: true, comfort: 6,
+    w: 7.0, d: 7.0, kit: true, desc: '모니터 두 대가 올라가는 코너 자리. 넓은 만큼 자리를 많이 먹는다.',
+  },
+  { id: 'kitBookcase', ko: '오픈 책장', cat: 'store', price: 8000, comfort: 3, w: 3.2, d: 2.0, kit: true, desc: '책이 꽂힌 채로 온다.' },
+  { id: 'kitCabinet', ko: '문 달린 책장', cat: 'store', price: 9500, comfort: 3, w: 3.2, d: 2.0, kit: true, desc: '안이 안 보여서 정돈돼 보인다.' },
+  { id: 'kitSideTable', ko: '사이드 테이블', cat: 'store', price: 5000, comfort: 3, w: 3.8, d: 2.0, kit: true, desc: '작은 화분 셋이 올라가 있다.' },
+
+  { id: 'kitSofa', ko: '라운지 소파', cat: 'rest', price: 16000, comfort: 7, w: 6.8, d: 3.2, kit: true, desc: '쿠션까지. 소파보다 쾌적도가 높다.' },
+  { id: 'kitSofaCorner', ko: '코너 소파', cat: 'rest', price: 30000, comfort: 10, w: 7.0, d: 7.0, kit: true, desc: '구석을 통째로 휴게 공간으로 만든다.' },
+  { id: 'kitRelax', ko: '안락의자', cat: 'rest', price: 12000, comfort: 5, w: 3.6, d: 4.6, kit: true, desc: '한 명이 제대로 쉰다.' },
+  { id: 'kitCoffeeTable', ko: '유리 티테이블', cat: 'rest', price: 6000, comfort: 3, w: 4.6, d: 3.0, kit: true, desc: '소파 앞에 놓는다.' },
+  { id: 'kitFridge', ko: '냉장고', cat: 'rest', price: 20000, comfort: 5, w: 3.2, d: 2.4, kit: true, desc: '음료를 넣어 둔다.' },
+  { id: 'kitPantry', ko: '간이 주방', cat: 'rest', price: 34000, comfort: 9, w: 6.4, d: 3.4, kit: true, desc: '싱크대·커피 머신·전자레인지가 한 줄에.' },
+  { id: 'kitBar', ko: '바 테이블', cat: 'rest', price: 15000, comfort: 5, w: 3.4, d: 5.0, kit: true, desc: '둘이 마주 앉아 커피를 마신다.' },
+  { id: 'kitPlant', ko: '관엽 화분', cat: 'rest', price: 3000, comfort: 3, w: 2.2, d: 2.2, kit: true, desc: '잎이 넓다. 싼 쾌적도.' },
+  { id: 'kitRugRound', ko: '원형 러그', cat: 'rest', price: 4000, comfort: 3, w: 6.2, d: 6.2, kit: true, desc: '바닥만 덮는다. 위를 지나다닐 수 있다.', flat: true },
+  { id: 'kitLamp', ko: '플로어 램프', cat: 'rest', price: 5500, comfort: 4, w: 1.8, d: 1.8, kit: true, desc: '저녁 사무실의 색이 달라진다.' },
+  { id: 'kitBear', ko: '마스코트 곰인형', cat: 'rest', price: 9000, comfort: 5, w: 2.8, d: 2.0, kit: true, desc: '회사 마스코트. 아무도 이유를 묻지 않는다.' },
+
+  { id: 'kitTv', ko: 'TV 스탠드', cat: 'pro', price: 24000, comfort: 6, w: 5.6, d: 2.2, kit: true, desc: '시연용 대형 화면.' },
+  { id: 'kitSpeaker', ko: '스피커', cat: 'pro', price: 12000, comfort: 4, w: 1.6, d: 1.6, kit: true, desc: '사운드 팀이 좋아한다.' },
+  { id: 'kitCoatRack', ko: '코트 걸이', cat: 'pro', price: 4000, comfort: 2, w: 2.4, d: 2.4, kit: true, desc: '겨울에만 쓸모가 있다.' },
+  { id: 'kitTrash', ko: '휴지통', cat: 'pro', price: 900, comfort: 1, w: 2.0, d: 2.0, kit: true, desc: '가장 싼 가구.' },
 ];
 
 export const FURNITURE_BY_ID = new Map(FURNITURE.map((f) => [f.id, f]));

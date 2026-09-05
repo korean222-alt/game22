@@ -28,10 +28,17 @@
       ]
     },
     {
-      "source": "/assets/(.*)",
+      "source": "/assets/(.*).glb",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" },
         { "key": "Content-Type", "value": "model/gltf-binary" }
+      ]
+    },
+    {
+      "source": "/assets/(.*).json",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" },
+        { "key": "Content-Type", "value": "application/json; charset=utf-8" }
       ]
     },
     {

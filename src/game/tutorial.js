@@ -21,9 +21,9 @@ export const TUTORIAL = [
   },
   {
     id: 'place',
-    tab: 'office',
+    tab: 'bag',
     title: '책상을 배치하세요',
-    body: '산 가구는 <b>가방</b>에 들어갑니다. <b>배치 모드</b>를 켜고 바닥의 파란 구역을 눌러 책상을 놓으세요. 회전은 ⟳ 버튼입니다.',
+    body: '산 가구는 <b>🎒 가방 탭</b>에 들어갑니다. 거기서 <b>배치</b>를 누르고 바닥의 파란 구역에 놓으세요. 회전은 ⟳ 버튼입니다.',
     done: (g) => g.company.placed.some((p) => isSeat(p.id)),
   },
   {

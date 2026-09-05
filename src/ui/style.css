@@ -1172,3 +1172,84 @@ body.meeting #prog{display:none}
 .dexc.held .i{filter:grayscale(.5)}
 
 
+
+/* ══ 실시간 판매 ══
+   출시 직후 15초. 화면 한복판 아래에 서고, 그동안 다른 조작은 막힌다 —
+   막대가 서는 것을 보는 것이 이 15초의 전부다. */
+#salerun{
+  position:fixed;left:0;right:0;bottom:0;top:0;z-index:60;display:none;
+  align-items:center;justify-content:center;
+  background:rgba(8,9,12,.55);backdrop-filter:blur(2px);
+  padding:calc(var(--sat) + 10px) 12px calc(var(--sab) + 10px);
+}
+body.selling #salerun{display:flex}
+.src{
+  width:min(420px,92vw);padding:13px 15px 14px;border-radius:15px;
+  background:var(--pan2);border:1px solid rgba(232,176,85,.30);
+  box-shadow:0 18px 48px rgba(0,0,0,.55);
+}
+.srh{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.srtag{
+  font-size:9px;font-weight:800;padding:2px 7px;border-radius:99px;flex:none;
+  background:rgba(208,100,76,.20);color:#ff9a80;border:1px solid rgba(208,100,76,.4);
+}
+body.selling.settled .srtag{background:rgba(113,192,122,.18);color:var(--good);border-color:rgba(113,192,122,.4)}
+.srh b{font-size:12.5px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srbig{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.srbig span{font-size:27px;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums;line-height:1}
+.srbig i{font-size:10.5px;color:var(--dim);font-style:normal}
+.srchart{position:relative;height:96px;border-radius:9px;padding:7px 8px 6px;
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)}
+.srbars{position:absolute;inset:7px 8px 6px;display:flex;align-items:flex-end;gap:3px}
+.srbars i{
+  flex:1;min-width:3px;border-radius:2px 2px 0 0;background:rgba(232,176,85,.38);
+  transition:height .28s cubic-bezier(.2,.9,.3,1);
+}
+.srbars i.now{background:var(--gold);box-shadow:0 0 10px rgba(232,176,85,.6)}
+.srline{position:absolute;inset:7px 8px 6px;width:calc(100% - 16px);height:calc(100% - 13px);overflow:visible}
+.srrow{display:flex;gap:6px;margin:8px 0 9px}
+.srrow div{
+  flex:1;text-align:center;padding:5px 3px;border-radius:8px;
+  background:rgba(255,255,255,.05);
+}
+.srrow .k{display:block;font-size:8.5px;color:var(--dim)}
+.srrow .v{display:block;font-size:12px;font-weight:800;font-variant-numeric:tabular-nums}
+#srOk{display:none}
+body.selling.settled #srOk{display:block}
+
+/* ══ 룰렛 ══
+   결과는 이미 서버(=시뮬레이션) 쪽에서 정해졌다. 여기는 그 한 칸에서
+   멈추는 것을 보여주는 자리다. 멈추고 나면 당첨 칸이 금색으로 뛴다. */
+#roul{
+  position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center;
+  background:rgba(8,9,12,.60);backdrop-filter:blur(2px);
+}
+body.rouling #roul{display:flex}
+.rc{width:min(460px,94vw);padding:14px 16px 16px;border-radius:15px;
+  background:var(--pan2);border:1px solid rgba(232,176,85,.30);box-shadow:0 18px 48px rgba(0,0,0,.55)}
+.rtag{font-size:10px;font-weight:800;color:var(--gold);letter-spacing:.08em;margin-bottom:9px}
+.rwin{position:relative;height:56px;overflow:hidden;border-radius:11px;
+  background:rgba(0,0,0,.30);border:1px solid rgba(255,255,255,.09)}
+.rwin::before,.rwin::after{
+  content:'';position:absolute;top:0;bottom:0;width:44px;z-index:2;pointer-events:none;
+}
+.rwin::before{left:0;background:linear-gradient(90deg,var(--pan2),transparent)}
+.rwin::after{right:0;background:linear-gradient(270deg,var(--pan2),transparent)}
+.rstrip{position:absolute;top:0;bottom:0;left:0;display:flex;align-items:center;will-change:transform}
+.rstrip .rcell{
+  flex:none;width:110px;height:100%;display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:800;color:var(--txt);opacity:.75;
+  border-right:1px solid rgba(255,255,255,.06);
+}
+.rstrip .rcell.hit{opacity:1}
+.rmark{
+  position:absolute;left:50%;top:0;bottom:0;width:110px;transform:translateX(-50%);z-index:3;
+  border-left:2px solid var(--gold);border-right:2px solid var(--gold);
+  background:rgba(232,176,85,.10);pointer-events:none;
+}
+.rhit{
+  height:30px;margin-top:9px;text-align:center;font-size:15px;font-weight:900;color:var(--gold);
+  opacity:0;transform:scale(.7);
+}
+.rhit.on{opacity:1;transform:scale(1);animation:rpop .5s cubic-bezier(.2,1.6,.4,1)}
+@keyframes rpop{0%{transform:scale(.5);opacity:0}60%{transform:scale(1.18)}100%{transform:scale(1);opacity:1}}

@@ -129,10 +129,12 @@ function buildFloor(m, fi, plan, out) {
     for (let i = 0; i < 2; i++) s.box(CORE.x0 + 2.5 + i * 3.8, 7.3, CORE.z0 - 0.62, 0.9, 0.5, 0.06, '#ffb45a');
     s.noSolid = false;
     s.mat = 0;
-    // The flight lives inside the core, east of the lifts. Eleven treads at 0.8
-    // fit the core's ten-unit depth; a longer run would spill onto the floor.
+    // 계단은 코어의 **서쪽**에 붙는다. 예전에는 동쪽(CORE.x1 - 3)에 있었는데,
+    // 코어로 들어오는 문이 바로 그 동쪽 벽에 있다. 문을 열면 눈앞이 계단
+    // 옆구리였고, 층을 오르려는 사람이 매번 계단을 돌아 나가야 했다.
+    // 열한 단 × 0.8 은 코어의 깊이(10)에 맞춘 길이다.
     if (fi < FLOOR_PLANS.length - 1) {
-      stairs(s, CORE.x1 - 3.0, CORE.z0 + 1.0, 0, 11, 0.8, B.storey / 11, 4.0);
+      stairs(s, CORE.x0 + 3.0, CORE.z0 + 1.0, 0, 11, 0.8, B.storey / 11, 4.0);
     }
   });
   signBoard(m, CORE.x0 + 6, base + 9.0, CORE.z0 - 0.75, -Math.PI / 2, 8, 1.6, plan.accent);
@@ -192,22 +194,30 @@ function buildFloor(m, fi, plan, out) {
   m.flag = 0;
   rug(m, 8, 38.5, 10, 6.5, P.rug);
   put((s) => {
-    // Pantry down the west wall, seating down the east, and a clear lane at
-    // x 6-11 straight in from the door so the room is one connected space.
-    counterRun(s, BR.x0 + 1.6, 35, -Math.PI / 2, 9, true);
-    coffeeMaker(s, BR.x0 + 1.7, 3.1, 31.6, -Math.PI / 2);
-    microwave(s, BR.x0 + 1.7, 3.1, 38.2, -Math.PI / 2);
-    fridge(s, BR.x0 + 1.7, 41.0, -Math.PI / 2);
-    tableRound(s, 14.2, 33.0, 1.8);
-    for (let i = 0; i < 3; i++) {
-      const a = i * 2.094 + 1.1;
-      stool(s, 14.2 + Math.cos(a) * 2.9, 33.0 + Math.sin(a) * 2.9);
+    /* 문 앞을 비우는 것이 이 방의 유일한 규칙이다.
+
+       예전에는 조리대가 방을 가로질러 놓여 있었고(회전이 90도 틀어져 있었다),
+       원탁의 스툴 하나가 문 바로 안쪽 x 11 에 서 있었다. 둘이 겹쳐서 폭
+       2 유닛짜리 틈만 남았고, 반지름 0.9 짜리 몸은 그 틈을 통과하지 못했다 —
+       휴게실 문이 열려 있는데 들어갈 수가 없었던 이유다.
+
+       지금은 조리대가 서쪽 벽을 따라 세로로 서고(원래 의도), 앉는 자리는
+       전부 동쪽으로 물러났다. 문(x 8.5~13.5)에서 소파까지 x 9~12 가
+       세로로 뚫려 있다. */
+    counterRun(s, BR.x0 + 1.7, 35, 0, 9, true);          // 서쪽 벽, z 30.5~39.5
+    coffeeMaker(s, BR.x0 + 1.7, 3.1, 31.6, 0);
+    microwave(s, BR.x0 + 1.7, 3.1, 38.2, 0);
+    fridge(s, BR.x0 + 1.7, 41.0, 0);
+    tableRound(s, 14.0, 34.6, 1.7);
+    // 스툴은 동쪽 반원에만. 서쪽으로 돌면 그게 곧 문 앞이다.
+    for (const a of [-0.9, 0.5, 2.0]) {
+      stool(s, 14.0 + Math.cos(a) * 2.7, 34.6 + Math.sin(a) * 2.7);
     }
     couch(s, 14.6, 39.6, Math.PI, 2, P.couch);
     waterCooler(s, BR.x1 - 1.6, 30.4);
     vending(s, BR.x1 - 1.8, 41.0, -Math.PI / 2);
     trashBin(s, 11.6, 41.4);
-    plantBasket(s, 4.0, 30.2, 0.95);
+    plantBasket(s, 6.2, 30.4, 0.95);
   });
   pinBoard(m, BR.x1 - 0.35, base + 5.6, 36.5, Math.PI, 5.5, 3.4);
   out.rooms.push({ name: '휴게실', x: 9.5, y: base + 8.0, z: 36, floor: fi });
@@ -215,7 +225,7 @@ function buildFloor(m, fi, plan, out) {
     { kind: 'coffee', floor: fi, x: 6.6, z: 31.8, yaw: -Math.PI / 2 },
     { kind: 'water', floor: fi, x: BR.x1 - 3.8, z: 30.6, yaw: Math.PI / 2 },
     { kind: 'sofa', floor: fi, x: 10.6, z: 39.4, yaw: Math.PI / 2 },
-    { kind: 'table', floor: fi, x: 10.4, z: 33.2, yaw: Math.PI / 2 },
+    { kind: 'table', floor: fi, x: 11.4, z: 34.6, yaw: Math.PI / 2 },
   );
 
   /* ---- reception, ground floor only ----

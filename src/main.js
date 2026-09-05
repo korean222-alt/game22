@@ -17,6 +17,7 @@ import { Rig } from './char/rig.js';
 import './world/palette.js';                  // registers the hex -> material map
 import { buildOffice, BUILDING, FLOOR_PLANS, STOREY, placeZones, inPlaceZone } from './world/office.js';
 import { buildPlaced, buildGhost } from './world/placed.js';
+import { loadKit } from './world/kit.js';
 import { FURNITURE_BY_ID } from './game/furniture.js';
 import { Crew, Agent, ST } from './world/agents.js';
 import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, tauntFor } from './world/boss.js';
@@ -126,6 +127,11 @@ class View {
 
   /* ---- world ---- */
   async build() {
+    bootStep('가구 모델 읽는 중');
+    // 배치된 가구를 짓기 전에 키트가 와 있어야 한다. 실패하면 null 이 오고,
+    // 그때는 키트 가구가 상점에서 통째로 빠진다.
+    await loadKit();
+
     bootStep('사무실 배치');
     await nextFrame();
     const built = buildOffice(Math.max(1, this.floorCount));
@@ -363,7 +369,13 @@ class View {
   /* 프로젝트당 한 번만 만든다. 'project' 이벤트는 턴마다 오므로, 매번
      새로 지으면 프레임마다 VBO 를 버리고 다시 올리게 된다. */
   ensureBoss(project) {
-    if (!project) { this.clearBoss(); return; }
+    // 보스는 **아레나 안에만** 있다.
+    //
+    // 예전에는 개발에 착수하는 순간 사무실 복도 한복판(42.5, 29.5)에 몬스터가
+    // 솟았다. 세트장으로 들어가는 문은 그 다음이라, 화면에는 "사무실에 오크가
+    // 서 있다" 가 먼저 보였다 — 싸움터가 따로 있는데 사무실에도 있으니
+    // 어느 쪽이 진짜인지 알 수 없었다. 이제 사무실에는 아무것도 서지 않는다.
+    if (!project || !this.arena) { this.clearBoss(); return; }
     // 3연전이므로 키는 프로젝트가 아니라 **프로젝트+스테이지**다. 예전처럼
     // 프로젝트 id 만 보면 두 번째 보스가 첫 번째 놈의 몸으로 나온다.
     const key = project.id + ':' + (project.stage || 0);
@@ -388,7 +400,7 @@ class View {
     this.boss.scale = 1 + (project.phase || 0) * 0.08;
     // 아레나 안이면 세트장을 이 종에 맞춰 다시 짓고 그 위에 세운다.
     if (this.arena) this.useArenaSet(def.id);
-    const spot = this.bossSpot(project);
+    const spot = this.bossSpot();
     this.boss.setAnchor(spot[0], spot[1], spot[2], this.bossFloor);
     this.boss.faceTo(this.bossFaceYaw());
     this.boss.yaw = this.boss.goalYaw;
@@ -413,19 +425,12 @@ class View {
      아레나에 들어가 있으면 세트장의 한복판이다. 사무실 화면에서 보여 줄
      때(👾 보스 버튼, 개발 착수 직후의 컷)는 팀이 앉은 층의 고정 자리 —
      통로 교차점이 어느 층에서나 비어 있는 것이 보장된 유일한 바닥이다. */
-  bossSpot(project) {
-    if (this.arena && this.arenaSet) {
-      this.bossFloor = this.floor;
-      return this.arenaSet.spot;
-    }
-    let floor = this.floor;
-    for (const id of project.team) {
-      const st = this.game.staff.find((x) => x.id === id);
-      const d = st && this.deskOf(st);
-      if (d) floor = d.floor;
-    }
-    this.bossFloor = floor;
-    const spot = bossSpot(floor);
+  bossSpot() {
+    this.bossFloor = this.floor;
+    if (this.arenaSet) return this.arenaSet.spot;
+    // 세트장이 아직 안 지어졌을 때의 대비책일 뿐이다. 사무실에 보스를 세우는
+    // 경로는 이제 없다.
+    const spot = bossSpot(this.floor);
     return [spot.x, spot.y, spot.z];
   }
 
@@ -882,12 +887,9 @@ class View {
     // 층 카메라와 그림자 프러스텀을 사무실로 되돌린 **뒤에** 들어올 때의
     // 시점을 얹는다. 순서를 바꾸면 setFloor 의 lookAt 이 복원을 덮어쓴다.
     this.setFloor(this.floor);
-    // 보스도 사무실 쪽 자리로 돌아온다. 아레나 좌표에 남겨 두면 사무실
-    // 화면에서 보스 태그가 지평선 너머를 가리킨다.
-    if (this.boss && this.game.project) {
-      const spot = this.bossSpot(this.game.project);
-      this.boss.setAnchor(spot[0], spot[1], spot[2], this.bossFloor);
-    }
+    // 보스는 세트장과 함께 사라진다. 사무실로 데려오면 복도에 몬스터가 서고,
+    // 아레나 좌표에 남겨 두면 보스 태그가 지평선 너머를 가리킨다.
+    this.clearBoss();
     const b = this._camBefore;
     if (b) {
       cam.goalDist = b.dist; cam.el = b.el; cam.az = b.az; this.wallCut = b.cut;
@@ -1119,8 +1121,8 @@ async function boot() {
   view.brightness = () => renderer.brightness;
   view.brightnessSteps = LIGHT_ORDER;
 
-  // 저장된 게임을 이어서 열었는데 개발 중이었다면, 보스도 같이 돌아온다.
-  if (game.project) view.ensureBoss(game.project);
+  // 저장된 게임을 이어서 열었어도 사무실에는 보스가 서지 않는다. 전투 화면에
+  // 들어가는 순간 세트장과 함께 지어진다.
 
   ui = new UI(game, view);
   view.cam = cam;
@@ -1130,7 +1132,6 @@ async function boot() {
   // was mid-project gets its monster back, so reopening the tab does not leave
   // the battle bar counting down an idea with no body.
   ui.openingFlow();
-  if (game.project) view.spawnBoss(game.project);
 
   window.__game = game;                 // console handles while balancing
   window.__staffMod = staffMod;         // tools/battle.mjs reads power/abilities here
@@ -1190,7 +1191,7 @@ function resize() {
 function tick(dt) {
   // 전투의 시계는 화면의 시계와 같다. 따로 돌리면 탭이 백그라운드로 갔을 때
   // 보이지 않는 곳에서 전투만 흘러간다.
-  if (ui) ui.tickBattle(dt);
+  if (ui) { ui.tickBattle(dt); ui.tickSales(dt); }
   view.update(dt);
   // 조이스틱은 카메라를 갱신하기 **전에** 읽는다. 뒤에서 읽으면 입력이
   // 한 프레임씩 늦게 반영돼 스틱이 미끄럽게 느껴지지 않는다.
@@ -1461,10 +1462,17 @@ function wireCamPad() {
     if (zoomDir) cam.zoom(zoomDir * 720 * dt);
     if (!vx && !vy) return;
     if (CAM_MODES[mode].id === 'pan') {
-      cam.pan(vx * 620 * dt, vy * 620 * dt, CAM_PAN_BOUNDS);
+      // cam.pan 은 "바닥을 손가락으로 잡아 끈다" 는 뜻이라 두 손가락 드래그에
+      // 맞춰져 있다. 조이스틱은 반대다 — 오른쪽으로 밀면 카메라가 오른쪽으로
+      // 가야 한다. 부호를 여기서 뒤집는다.
+      cam.pan(-vx * 620 * dt, -vy * 620 * dt, CAM_PAN_BOUNDS);
     } else {
       // orbit() 은 픽셀 델타를 받는다. 초당 회전량을 픽셀로 환산해 넘긴다.
-      cam.orbit(vx * 300 * dt, -vy * 260 * dt);
+      //
+      // 가로도 세로처럼 부호를 뒤집는다. 세로는 이미 "위로 밀면 카메라가
+      // 위로" 였는데 가로만 "오른쪽으로 밀면 건물이 오른쪽으로 돈다"(드래그
+      // 감각)여서, 한 스틱 안에서 두 축이 서로 반대로 움직이고 있었다.
+      cam.orbit(-vx * 300 * dt, -vy * 260 * dt);
     }
   };
 }

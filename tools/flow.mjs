@@ -165,6 +165,8 @@ await step('책상 구입 → 가방', async () => {
   return `가방 1개 · ₩${(before - s.money).toLocaleString()} 지출`;
 });
 await step('배치 모드가 열리고 구역이 그려진다', async () => {
+  // 산 가구는 사무실 탭이 아니라 🎒 가방 탭에 쌓인다. 배치 버튼도 거기 있다.
+  await openTab('bag'); await page.waitForTimeout(250);
   await tap('배치'); await page.waitForTimeout(400);
   const r = await page.evaluate(() => ({
     placing: !!window.__view.place,
@@ -515,8 +517,10 @@ let cards = 0;
 await step('HP를 0까지 (카드 2장 선택)', async () => {
   for (let i = 0; i < 900; i++) {
     const s = await state();
-    if (s.modal) { const t = await closeModal(); await page.waitForTimeout(150); if (t) cards++; continue; }
+    // 프로젝트가 끝났으면 여기서 멈춘다. 그 뒤에 뜨는 결과창·홍보·출시
+    // 확인까지 눌러 버리면 다음 단계가 볼 완성작이 남지 않는다.
     if (!s.project) break;
+    if (s.modal) { const t = await closeModal(); await page.waitForTimeout(150); if (t) cards++; continue; }
     const ok = await page.evaluate(() => {
       const g = window.__game;
       if (g.company.stamina < 2) { g.nextWeek(); return true; }
@@ -528,6 +532,10 @@ await step('HP를 0까지 (카드 2장 선택)', async () => {
   const s = await state();
   if (!s.finished) throw new Error('완성되지 않음');
   if (cards < 2) throw new Error(`카드 모달이 ${cards}회만 열림`);
+  // 완성되면 결과창 → 홍보 → 출시 확인이 저절로 이어진다. 아래 단계들이
+  // 개발 탭에서 같은 일을 손으로 하므로, 여기서는 그 체인을 그냥 닫는다.
+  await page.evaluate(() => window.__ui.closeModal());
+  await page.waitForTimeout(200);
   return `「${s.finished}」 완성 · 카드 ${cards}회`;
 });
 

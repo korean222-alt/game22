@@ -84,6 +84,7 @@
     <div class="tab" data-tab="staff">직원</div>
     <div class="tab" data-tab="dev">개발</div>
     <div class="tab" data-tab="shop">상점</div>
+    <div class="tab" data-tab="bag">🎒 가방</div>
     <div class="tab" data-tab="dex">도감</div>
     <div class="tab" data-tab="live">운영</div>
     <div class="tab" data-tab="office">사무실</div>
@@ -177,6 +178,39 @@
 <div id="sales" class="card">
   <div class="sgh"><b>판매 현황</b><span id="sgWeek"></span></div>
   <div id="sgList"></div>
+</div>
+
+<!-- ══ 실시간 판매 ══
+     출시하면 15초 동안 여기서 판다. 막대가 한 주씩 서고 자금이 눈앞에서
+     오른다. 다 팔면 정산으로 바뀌고, 확인을 눌러야 다음 게임을 만들 수 있다. -->
+<div id="salerun">
+  <div class="src card">
+    <div class="srh"><span class="srtag" id="srTag">🔴 실시간 판매</span><b id="srTitle">—</b></div>
+    <div class="srbig"><span id="srTotal">₩0</span><i id="srWeek">출시</i></div>
+    <div class="srchart">
+      <div class="srbars" id="srBars"></div>
+      <svg class="srline" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <polyline id="srPoly" fill="none" stroke="#e8b055" stroke-width="1.6"
+                  vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="srrow" id="srStat"></div>
+    <button class="btn primary wide" id="srOk">정산 확인</button>
+  </div>
+</div>
+
+<!-- ══ 룰렛 ══
+     기획서와 소재를 뽑을 때 돌아간다. 결과는 이미 정해져 있고, 이건 그
+     결과를 보여주는 방식이다 — 표가 한 칸씩 지나가다 당첨 칸에서 멈춘다. -->
+<div id="roul">
+  <div class="rc card">
+    <div class="rtag" id="rTag">뽑기</div>
+    <div class="rwin">
+      <div class="rstrip" id="rStrip"></div>
+      <div class="rmark"></div>
+    </div>
+    <div class="rhit" id="rHit"></div>
+  </div>
 </div>
 
 <!-- ══ 튜토리얼: 다음에 할 일 한 줄 ══ -->

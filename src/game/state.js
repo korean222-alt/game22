@@ -52,6 +52,11 @@ const LEGACY_KEYS = ['socialdev3d.save.v1'];
 const CONTENT_ALIAS = { sports2: 'soccer' };
 const aliasContent = (id) => CONTENT_ALIAS[id] || id;
 
+/* 출시 직후의 실시간 판매. 15초에 열 주치.
+   길게 잡으면 게임이 멈춰 있는 시간이 되고, 짧게 잡으면 그래프가 그려지기
+   전에 끝난다. 주당 1.5초면 막대가 서는 것이 눈에 보인다. */
+const SALES = { secs: 15, weeks: 10 };
+
 export class Game {
   constructor(seed = Date.now() & 0x7fffffff) {
     this.seed = seed;
@@ -118,6 +123,9 @@ export class Game {
     this.project = null;         // the project currently in development
     this.finished = null;        // finished, awaiting release
     this.releases = [];
+    /* 출시 직후 15초 동안 도는 실시간 판매. 저장하지 않는다 — 탭을 닫았다
+       열면 그 판매는 이미 끝난 것으로 친다. */
+    this.sales = null;
     this.candidates = [];
     this.history = [];
     this.log = [];
@@ -536,6 +544,10 @@ export class Game {
   beginDevelopment({ proposalId, platformId, monetizeId, teamIds, seriesOfId }) {
     if (this.project) return { ok: false, why: '이미 개발 중' };
     if (this.finished) return { ok: false, why: '완성작을 먼저 출시하세요' };
+    // 출시 직후의 판매·정산이 끝나기 전에는 다음 게임을 못 만든다. 회사가
+    // 방금 낸 게임이 얼마나 팔렸는지도 모르는 채로 다음 판을 벌이는 것은
+    // 경영이 아니다 — 그 15초는 그것을 보라고 있는 시간이다.
+    if (this.sales) return { ok: false, why: '판매 정산 중입니다. 끝난 뒤에 착수하세요' };
     const pr = this.proposals.find((p) => p.id === proposalId);
     if (!pr) return { ok: false, why: '없는 기획서' };
     const team = teamIds.map((id) => this.staff.find((s) => s.id === id)).filter(Boolean);
@@ -774,10 +786,85 @@ export class Game {
       if (n.cls === 'bad') this.note(n.ko, 'bad');
     }
     this.emit('release', release);
+    this._startSalesRun(release, fansGained);
     this._maybeRankUp();
     this.checkTasks();
     return { ok: true, release };
   }
+
+  /* ══════════════════════ 출시 직후의 실시간 판매 ══════════════════════
+
+     출시한 게임의 매출은 원래 '다음 주로 넘기기' 를 누를 때마다 한 줄씩
+     들어왔다. 판 것은 게임인데 그 사실이 화면에 나타나는 순간이 없었다는
+     뜻이다 — 버튼을 누르면 숫자가 이미 바뀌어 있을 뿐이었다.
+
+     그래서 출시하면 15초 동안 화면에서 **실시간으로 팔린다**. 15초에
+     SALES.weeks 주치가 흐르고, 막대가 하나씩 서고, 자금이 눈앞에서 오른다.
+     실제로 흐르는 것은 그 게임의 판매 주차뿐이다: 달력은 그대로고, 받는 돈의
+     총액도 예전과 같다. 바뀐 것은 **언제 보여주느냐** 하나다.
+
+     이 15초 동안에는 새 게임을 만들 수 없고 주도 넘길 수 없다. 정산을
+     확인하고 나서야 다음 판이 시작된다. */
+  _startSalesRun(rel, fansGained) {
+    this.sales = {
+      id: rel.id,
+      title: rel.title,
+      secs: SALES.secs,
+      weeks: SALES.weeks,
+      t: 0,
+      done: 0,            // 지금까지 흘린 주차
+      total: 0,           // 이번 판매로 들어온 돈
+      peak: 0,            // 가장 많이 판 주 (그래프의 위쪽 눈금)
+      points: [],         // [{ w, income, users }]
+      users: rel.users,
+      fans: fansGained || 0,
+      ended: false,
+    };
+    this.emit('sales', this.sales);
+    return this.sales;
+  }
+
+  /* UI 의 rAF 루프가 매 프레임 부른다. 전투와 같은 시계를 쓰므로 탭이
+     백그라운드로 가면 판매도 같이 멈춘다. */
+  salesTick(dt) {
+    const s = this.sales;
+    if (!s || s.ended) return s;
+    const rel = this.releases.find((r) => r.id === s.id);
+    if (!rel) { s.ended = true; this.emit('sales', s); return s; }
+    s.t += dt;
+    const per = s.secs / s.weeks;
+    const want = Math.min(s.weeks, Math.floor(s.t / per));
+    let changed = false;
+    while (s.done < want) {
+      const income = tickRelease(rel, this.rnd);
+      this.earn(income);
+      s.done += 1;
+      s.total += income;
+      s.peak = Math.max(s.peak, income);
+      s.points.push({ w: rel.weeks, income, users: rel.users });
+      changed = true;
+      if (!rel.managing) { s.done = s.weeks; break; }   // 유저가 다 빠졌다
+    }
+    if (s.done >= s.weeks) {
+      s.ended = true;
+      changed = true;
+      this.note(`「${s.title}」 ${s.done}주 판매 정산: ₩${s.total.toLocaleString()}`, 'good');
+    }
+    if (changed) this.emit('sales', s);
+    return s;
+  }
+
+  /* 정산을 확인했다. 여기서부터 다시 게임을 만들 수 있다. */
+  closeSalesRun() {
+    if (!this.sales) return null;
+    const s = this.sales;
+    this.sales = null;
+    this.emit('sales', null);
+    this.save();
+    return s;
+  }
+
+  selling() { return !!this.sales; }
 
   endService(releaseId) {
     const r = this.releases.find((x) => x.id === releaseId);
@@ -1197,6 +1284,7 @@ export class Game {
     // An unanswered event blocks the week: the whole point of a choice is that
     // the world waits for it.
     if (this.pendingEvent) { this.emit('event', this.pendingEvent); return { blocked: true }; }
+    if (this.sales) return { ok: false, why: '판매 정산 중입니다' };
     let income = 0;
     for (const r of this.releases) income += tickRelease(r, this.rnd);
     const costs = weeklyCosts(c, this.staff);

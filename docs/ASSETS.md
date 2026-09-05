@@ -138,12 +138,35 @@ deskOak: (m, x, z, ry) => { /* 절차적 부품, 또는 GLB 인스턴스 */ },
 
 ---
 
+## 4-2. 가구는 GLB 가 아니라 삼각형으로 들여왔다
+
+Kenney Furniture Kit 을 받아서 **OBJ 를 이 게임의 지오메트리로 구워** 넣었다.
+GLB 를 `SkinnedPass` 로 따로 그리는 길도 있었지만, 삼각형만 뽑아서 사무실과
+같은 메시에 섞으면 벽 자르기·AO 베이크·머티리얼 셰이더가 전부 그대로
+따라오고 그리는 경로가 하나도 늘지 않는다. 텍스처도 한 장 안 들어온다 —
+Kenney 의 OBJ 는 머티리얼마다 Kd(확산색)만 붙어 있어서 정점 색으로 옮기면
+끝이고, 그 색이 절차적 가구와 톤이 어긋나지 않는다.
+
+```bash
+node tools/kit.mjs "<압축 푼 곳>/Models/OBJ format" assets/furniture/kit.json
+```
+
+- 배율은 `tools/kit.mjs` 의 `SCALE = 6.4` (Kenney 1 유닛 = 2m). 책상 상판이
+  정확히 `DESK_Y`(2.42) 에 온다.
+- 들여올 모델은 같은 파일의 `WANT` 목록. 140종을 다 넣을 이유가 없다 —
+  파일 크기가 그대로 첫 로딩 시간이다 (지금 46종 · 173KB · gzip 36KB).
+- 런타임은 `world/kit.js` 의 `kitPut(mesh, id, x, z, ry, opts)` 하나뿐이고,
+  `world/placed.js` 의 `DRAW` 표가 그것을 세트로 조합한다 (책상 = 책상 +
+  모니터 + 키보드 + 의자).
+- 모델은 **ry=0 에서 북(-Z)을 본다**. 게임의 책상 약속과 같다.
+
 ## 5. 지금 들어 있는 것
 
 ```
 assets/monsters/cat.glb     96 KB   아이디어 냥이  (조인트 4,  클립 5)
 assets/monsters/orc.glb    425 KB   난제 오크      (조인트 43, 클립 5)
 assets/monsters/demon.glb  414 KB   마감 데몬      (조인트 43, 클립 5)
+assets/furniture/kit.json  173 KB   가구 46종 · 삼각형 13,194 (Kenney, CC0)
 ```
 
 **Quaternius** 의 CC0 몬스터 팩(원본 아틀라스 이름 `Atlas_Monsters`,

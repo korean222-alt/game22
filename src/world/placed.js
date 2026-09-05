@@ -21,6 +21,7 @@ import { MeshBuilder } from '../core/meshbuilder.js';
 import { MAT } from '../core/color.js';
 import { P } from './palette.js';
 import { FURNITURE_BY_ID } from '../game/furniture.js';
+import { kitPut } from './kit.js';
 import { FLOOR_PLANS } from './office.js';
 import {
   workstation, standDesk, cubeWall, shelfUnit, fileCab, supplyShelf, lockers,
@@ -76,7 +77,116 @@ const DRAW = {
   serverRack: (m, x, z, ry) => serverRack(m, x, z, ry),
   copier: (m, x, z, ry) => copier(m, x, z, ry),
   phoneBooth: (m, x, z, ry) => phoneBooth(m, x, z, ry),
+
+  /* ---- 수입 가구 ----
+     한 조각이 아니라 세트로 놓는다. 책상만 덜렁 놓으면 그 위에 아무것도 없고
+     앉을 것도 없어서, 산 사람 눈에는 미완성으로 보인다.
+
+     로컬 좌표는 props 와 같은 뜻이다: R(lx, lz) 의 +Z 가 가구의 앞쪽,
+     즉 사람이 앉는 쪽이다. 모니터는 -Z(안쪽), 의자는 +Z(바깥쪽). */
+  kitDesk: (m, x, z, ry, i) => {
+    const R = at(x, z, ry);
+    kitPut(m, 'desk', x, z, ry + Math.PI);
+    const scr = R(0, -0.7); kitPut(m, 'computerScreen', scr[0], scr[1], ry, SCREEN_ON_DESK);
+    const kb = R(0, 0.5); kitPut(m, 'computerKeyboard', kb[0], kb[1], ry, { y: DESK_TOP, solid: false });
+    const ms = R(1.3, 0.5); kitPut(m, 'computerMouse', ms[0], ms[1], ry, { y: DESK_TOP, solid: false });
+    // 의자의 등받이는 모델 +Z 다. ry 그대로 놓아야 등을 책상 반대쪽으로 두고
+    // 앉는다 — +PI 를 주면 책상을 등지고 앉는다.
+    const ch = R(0, 2.4); kitPut(m, 'chairDesk', ch[0], ch[1], ry, chairSwap(i));
+  },
+  kitDeskCorner: (m, x, z, ry, i) => {
+    const R = at(x, z, ry);
+    kitPut(m, 'deskCorner', x, z, ry + Math.PI);
+    const a = R(-1.3, -1.0), b = R(1.4, -1.0);
+    kitPut(m, 'computerScreen', a[0], a[1], ry + 0.2, SCREEN_ON_DESK);
+    kitPut(m, 'computerScreen', b[0], b[1], ry - 0.2, SCREEN_ON_DESK);
+    const kb = R(0, 0.4); kitPut(m, 'computerKeyboard', kb[0], kb[1], ry, { y: DESK_TOP, solid: false });
+    const ch = R(0.2, 2.2); kitPut(m, 'chairDesk', ch[0], ch[1], ry, chairSwap(i));
+  },
+  kitBookcase: (m, x, z, ry) => {
+    kitPut(m, 'bookcaseOpen', x, z, ry);
+    const R = at(x, z, ry);
+    const p = R(0, -0.1); kitPut(m, 'books', p[0], p[1], ry, { y: 3.6, solid: false });
+  },
+  kitCabinet: (m, x, z, ry) => kitPut(m, 'bookcaseClosedDoors', x, z, ry),
+  kitSideTable: (m, x, z, ry) => {
+    kitPut(m, 'sideTableDrawers', x, z, ry);
+    const R = at(x, z, ry);
+    for (let i = 0; i < 3; i++) {
+      const p = R(-1.0 + i, -0.1);
+      kitPut(m, `plantSmall${i + 1}`, p[0], p[1], ry, { y: 2.5, solid: false });
+    }
+  },
+
+  kitSofa: (m, x, z, ry) => {
+    kitPut(m, 'loungeSofa', x, z, ry, SOFA_SWAP);
+    const R = at(x, z, ry);
+    const p = R(-1.9, -0.4); kitPut(m, 'pillowBlue', p[0], p[1], ry + 0.4, { y: 1.2, solid: false });
+  },
+  kitSofaCorner: (m, x, z, ry) => kitPut(m, 'loungeSofaCorner', x, z, ry, SOFA_SWAP),
+  kitRelax: (m, x, z, ry) => kitPut(m, 'loungeChairRelax', x, z, ry),
+  kitCoffeeTable: (m, x, z, ry) => {
+    kitPut(m, 'tableCoffeeGlass', x, z, ry);
+    const R = at(x, z, ry);
+    const p = R(1.0, 0); kitPut(m, 'books', p[0], p[1], ry + 0.6, { y: 1.5, solid: false });
+  },
+  kitFridge: (m, x, z, ry) => kitPut(m, 'kitchenFridge', x, z, ry),
+  kitPantry: (m, x, z, ry) => {
+    const R = at(x, z, ry);
+    const a = R(-2.8, 0), b = R(0, 0), c = R(2.8, 0);
+    kitPut(m, 'kitchenCabinet', a[0], a[1], ry);
+    kitPut(m, 'kitchenSink', b[0], b[1], ry);
+    kitPut(m, 'kitchenCabinet', c[0], c[1], ry);
+    const cm = R(-2.8, -0.2); kitPut(m, 'kitchenCoffeeMachine', cm[0], cm[1], ry, { y: 2.95, solid: false });
+    const mw = R(2.8, -0.2); kitPut(m, 'kitchenMicrowave', mw[0], mw[1], ry, { y: 2.95, solid: false });
+  },
+  kitBar: (m, x, z, ry) => {
+    kitPut(m, 'kitchenBar', x, z, ry);
+    const R = at(x, z, ry);
+    const a = R(0, 1.8), b = R(0, -1.8);
+    kitPut(m, 'stoolBar', a[0], a[1], ry);
+    kitPut(m, 'stoolBar', b[0], b[1], ry);
+  },
+  kitPlant: (m, x, z, ry) => kitPut(m, 'pottedPlant', x, z, ry),
+  kitRugRound: (m, x, z, ry) => kitPut(m, 'rugRound', x, z, ry, { solid: false }),
+  kitLamp: (m, x, z, ry) => kitPut(m, 'lampRoundFloor', x, z, ry),
+  kitBear: (m, x, z, ry) => kitPut(m, 'bear', x, z, ry),
+
+  kitTv: (m, x, z, ry) => {
+    kitPut(m, 'cabinetTelevision', x, z, ry);
+    kitPut(m, 'televisionModern', x, z, ry, { y: 2.05, solid: false, swap: SCREEN_SWAP });
+  },
+  kitSpeaker: (m, x, z, ry) => kitPut(m, 'speaker', x, z, ry),
+  kitCoatRack: (m, x, z, ry) => kitPut(m, 'coatRackStanding', x, z, ry),
+  kitTrash: (m, x, z, ry) => kitPut(m, 'trashcan', x, z, ry),
 };
+
+/* 팩의 모니터·TV 화면은 그냥 어두운 금속(#4e6363)이다. 이 게임에는 화면을
+   위한 머티리얼이 따로 있으므로 그 파트만 갈아끼운다 — 안 그러면 큰 TV 가
+   검은 판때기로 보인다. */
+const SCREEN_SWAP = { '#4e6363': { c: P.screenDk, m: MAT.SCREEN } };
+const DESK_TOP = 2.45;
+const SCREEN_ON_DESK = { y: DESK_TOP, solid: false, swap: SCREEN_SWAP };
+
+/* 팩의 의자는 전부 같은 빨강이다. 사무실에 여섯 개를 놓으면 그것만 보이므로,
+   놓인 순서대로 사무실 의자 색을 돌려 쓴다. */
+const KIT_RED = '#f15e57';        // 팩의 carpet
+const KIT_RED_DK = '#9b4c49';     // 팩의 carpetDarker
+const CHAIR_COLS = [P.chair, P.chairB, P.chairG, P.chairR];
+function chairSwap(i) {
+  const c = CHAIR_COLS[(i || 0) % CHAIR_COLS.length];
+  return { swap: { [KIT_RED]: c, [KIT_RED_DK]: c } };
+}
+/* 큰 소파 두 개까지 팩의 빨강이면 휴게실이 통째로 붉어진다. 사무실 팔레트의
+   소파 색으로 갈아입힌다 — 안락의자는 하나뿐이라 원래 색을 남겨 악센트로 쓴다. */
+const SOFA_SWAP = { swap: { [KIT_RED]: P.couch, [KIT_RED_DK]: '#3d4f5d' } };
+
+/* 로컬 → 월드. props 의 회전 약속과 같은 식이라, 세트로 놓는 부품들이
+   가구 본체와 같은 방향을 본다. */
+function at(x, z, ry) {
+  const c = Math.cos(ry), s = Math.sin(ry);
+  return (lx, lz) => [x + lx * c + lz * s, z - lx * s + lz * c];
+}
 
 /* Lift a sub-mesh built at ground level onto its storey. Same trick the office
    generator uses, and for the same reason: no prop function has to know which

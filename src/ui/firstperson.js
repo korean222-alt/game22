@@ -139,8 +139,11 @@ export class FirstPerson {
 
     if (len > 0.02) {
       const spd = (this.keys.has('shift') ? RUN : SPEED) * dt;
+      // 화면 오른쪽은 (-cos yaw, sin yaw) 다. render/camera.js 의 주석이 적어
+      // 둔 그대로이고, 여기서만 부호가 뒤집혀 있었다 — 그래서 스틱을 오른쪽으로
+      // 밀면 왼쪽으로 걸었고, 대각선으로 밀면 엉뚱한 데로 갔다.
       const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
-      const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
+      const rx = -Math.cos(this.yaw), rz = Math.sin(this.yaw);
       this.moveBy((fx * mz + rx * mx) * spd, (fz * mz + rz * mx) * spd);
       this.bob += len * spd * 0.55;
     } else {
