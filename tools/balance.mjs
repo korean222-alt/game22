@@ -5,6 +5,7 @@ globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: 
 const { Game } = await import(new URL('../src/game/state.js', import.meta.url));
 const { MARKETING, RESEARCH, CONTRACTS, JOBS } = await import(new URL('../src/game/data.js', import.meta.url));
 const { power } = await import(new URL('../src/game/staff.js', import.meta.url));
+const { awardBar } = await import(new URL('../src/game/awards.js', import.meta.url));
 const { placeZones, inPlaceZone } = await import(new URL('../src/world/office.js', import.meta.url));
 const { buildPlaced } = await import(new URL('../src/world/placed.js', import.meta.url));
 const { FURNITURE_BY_ID } = await import(new URL('../src/game/furniture.js', import.meta.url));
@@ -223,3 +224,14 @@ console.log(`버그: 중앙값 ${med(bugSamples)}개 (최대 ${Math.max(...bugSa
 console.log('연구:', res);
 console.log('최고작:', g.releases.slice().sort((a, b) => b.peakUsers - a.peakUsers).slice(0, 3)
   .map((r) => `${r.title}(${r.criticTotal}점/${won(r.peakUsers)}명)`).join(', '));
+
+/* 시상식과 게임덱스가 실제로 얼마나 나오는지. 기준선이 품질 곡선을 앞질러
+   가면 상은 2년쯤 반짝하다 사라지고, 뒤처지면 내는 족족 금상이 된다 —
+   둘 다 숫자로만 보이므로 여기서 센다. AI 는 게임덱스에 나가지 않으므로
+   초대장이 몇 번 왔는지만 본다. */
+const byGrade = {};
+for (const a of g.company.awards || []) byGrade[a.gradeKo] = (byGrade[a.gradeKo] || 0) + 1;
+console.log(`시상: 총 ${(g.company.awards || []).length}개 —`,
+  Object.entries(byGrade).map(([k, v]) => `${k} ${v}`).join(' · ') || '없음');
+console.log(`기준선: ${[1, 2, 3, 4, 5].map((y) => `${y}년 ${awardBar(y, 'craze')}`).join(' · ')}`);
+console.log(`편지함: ${(g.company.mail || []).length}통 · 누적 DL ${won(g.company.totalDl)}`);

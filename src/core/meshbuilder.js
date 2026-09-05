@@ -6,7 +6,8 @@
      n   normal (smooth on curved primitives, faceted on boxes)
      c   sRGB colour, converted to linear in the vertex shader
      a   baked ambient occlusion, filled in later by bakeAO()
-     f   flag: 0 opaque/uncuttable, 1 cuttable wall, 2 glass, 3 never-cut, 4+ floor id
+     f   flag: 0 opaque/uncuttable, 1 cuttable wall, 2 glass, 3 never-cut,
+         4 site (outside the building — never cut), 5 ceiling (hard floor cut)
      b   bone index into uBones[]; static geometry uses bone 0 (the model matrix)
      m   (material id, u, v)
 

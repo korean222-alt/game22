@@ -56,10 +56,20 @@ export function floorField(m, x0, z0, x1, z1, col, tile, y) {
   m.noSolid = false;
 }
 
+/* 천장 전용 플래그. 벽 자르기에서는 빠지고, 층 자르기에서는 **디더 없이**
+   통째로 잘린다 (shaders.js 의 cutAway 참고).
+
+   3 을 쓰던 동안 이것이 "그래픽 깨짐" 의 정체였다: 층 자르기의 페이드 구간은
+   11.9~12.6 인데 천장 슬래브(12.45~12.95)와 조명(12.35~12.73)이 정확히 그
+   안에 놓여, 픽셀의 몇 %만 살아남아 바닥 전체에 흰 점이 뿌려졌다. 천장은
+   실루엣을 부드럽게 할 이유가 없으므로 깔끔하게 자른다. */
+export const CEIL_FLAG = 5;
+
 /* Structural slab for a floor above ground, drawn as the ceiling of the floor
-   below. Flag 3 keeps it out of the wall-cut so ceilings never flicker. */
+   below. */
+
 export function slab(m, x0, z0, x1, z1, y) {
-  const prev = m.flag; m.flag = 3;
+  const prev = m.flag; m.flag = CEIL_FLAG;
   m.mat = MAT.CEIL;
   m.noSolid = true;
   m.box((x0 + x1) / 2, y, (z0 + z1) / 2, x1 - x0, 0.5, z1 - z0, P.ceil);
@@ -534,7 +544,7 @@ export function trashBin(m, x, z) {
 /* Recessed ceiling light. Emissive, so it drives the bloom that makes an
    interior read as lit rather than merely bright. */
 export function troffer(m, x, z, ry, y) {
-  const prev = m.flag; m.flag = 3;
+  const prev = m.flag; m.flag = CEIL_FLAG;
   m.mat = MAT.METAL;
   m.noSolid = true;
   m.boxY(x, (y || STOREY) - 0.42, z, 4.2, 0.30, 1.9, ry, P.alu);

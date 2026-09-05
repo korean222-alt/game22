@@ -490,7 +490,10 @@ export function staffStrike(project, s, rnd, ctx = {}) {
   return {
     kind: crit ? 'crit' : 'hit',
     staffId: s.id, name: s.name, job: job.ko,
+    // 이번 한 방이 **어느 축을 얼마나** 올렸나. 데미지만 돌려주면 화면에는
+    // 때린 것만 보이고 만들어진 것은 안 보인다.
     damage: dmg, stat: gained ? gained.stat : null,
+    gain: gained ? Math.max(1, Math.round(gained.amount)) : 0,
     hpSpent: spent, hp: s.hp, hpMax: s.hpMax,
     bossHp: project.hp, bossHpMax: project.hpMax,
   };

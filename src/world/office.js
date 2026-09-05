@@ -29,7 +29,7 @@ import {
   serverRack, copier, waterCooler, vending, couch, stairs, rug,
   receptionDesk, counterRun, fridge, microwave, coffeeMaker, lockers, phoneBooth,
   barCounter, stool, tableRound, pinBoard, supplyShelf, plantBasket,
-  STOREY, FLOOR_Y, DESK_Y,
+  STOREY, FLOOR_Y, DESK_Y, CEIL_FLAG,
 } from './props.js';
 
 export const BUILDING = {
@@ -57,6 +57,15 @@ const BR = { x0: 2, x1: 18, z0: 29, z1: 42 };      // break room + pantry
    in through here and people who leave walk out through here, so the roster
    changing is something you watch happen rather than a number ticking. */
 const DOOR = { x0: 29.5, x1: 36.5 };
+
+/* ---------- 열린 문의 각도 ----------
+   문짝은 한쪽 문설주에 경첩이 달려 있고, 0 이면 출입구를 막고 PI 면 옆 벽에
+   납작하게 붙는다. 1.0 라디안(57°)으로 서 있던 동안 폭 4.5 · 높이 6.4 짜리
+   판이 방 안쪽으로 3.8 유닛이나 튀어나와 있었다 — 화면에서는 바닥 한복판에
+   갈색 판때기가 떠 있는 것으로 보였고, 실제로 "사물이 겹쳐 보인다" 는 말이
+   가리킨 것 중 하나가 이것이다. 2.85 는 벽에 거의 붙은 채로 활짝 열린
+   각도다: 문이 거기 있다는 것은 보이고, 통로는 비어 있다. */
+const DOOR_OPEN = 2.85;
 
 function inRect(r, x, z, pad = 0) {
   return x > r.x0 - pad && x < r.x1 + pad && z > r.z0 - pad && z < r.z1 + pad;
@@ -117,7 +126,7 @@ function buildFloor(m, fi, plan, out) {
   wall(m, CORE.x0, CORE.z0, CORE.x1, CORE.z0, wallH, 0.6, plan.accent, true, base);
   wall(m, CORE.x0, CORE.z1, CORE.x1, CORE.z1, wallH, 0.6, plan.accent, true, base);
   wall(m, CORE.x0, CORE.z0, CORE.x0, CORE.z1, wallH, 0.6, P.wallDk, true, base);
-  wallDoor(m, CORE.x1, CORE.z0, CORE.x1, CORE.z1, wallH, 0.6, P.wallDk, 5, 4, 6.4, 0.9);
+  wallDoor(m, CORE.x1, CORE.z0, CORE.x1, CORE.z1, wallH, 0.6, P.wallDk, 5, 4, 6.4, DOOR_OPEN);
   m.flag = 0;
 
   put((s) => {
@@ -144,7 +153,7 @@ function buildFloor(m, fi, plan, out) {
   glassWall(m, MR.x0, MR.z0, MR.x0, MR.z1, wallH, 0, base);
   // Swings INTO the room (negative angle). Opening outward parked the leaf
   // across the corridor that serves the desks east of it and stranded them.
-  wallDoor(m, MR.x0, MR.z1, MR.x1, MR.z1, wallH, 0.5, P.wall, 5, 4.5, 6.4, -1.0);
+  wallDoor(m, MR.x0, MR.z1, MR.x1, MR.z1, wallH, 0.5, P.wall, 5, 4.5, 6.4, -DOOR_OPEN);
   m.flag = 0;
 
   const mcx = (MR.x0 + MR.x1) / 2, mcz = (MR.z0 + MR.z1) / 2 + 1;
@@ -190,7 +199,7 @@ function buildFloor(m, fi, plan, out) {
   /* ---- break room and pantry ---- */
   m.flag = 1;
   wall(m, BR.x1, BR.z0, BR.x1, BR.z1, wallH, 0.5, P.wallWarm, true, base);
-  wallDoor(m, BR.x0, BR.z0, BR.x1, BR.z0, wallH, 0.5, P.wallWarm, 9, 5, 6.4, 1.1);
+  wallDoor(m, BR.x0, BR.z0, BR.x1, BR.z0, wallH, 0.5, P.wallWarm, 9, 5, 6.4, DOOR_OPEN);
   m.flag = 0;
   rug(m, 8, 38.5, 10, 6.5, P.rug);
   put((s) => {
@@ -255,11 +264,18 @@ function buildFloor(m, fi, plan, out) {
     out.spots.push({ kind: 'window', floor: fi, x: 30, z: 6.2, yaw: 0 });
   }
 
-  /* ---- amenities down the east side of the core ---- */
+  /* ---- amenities down the east side of the core ----
+
+     설비는 벽이나 구석에 붙되, **배치 구역(PLACE_ZONES) 안에는 들어가지
+     않는다**. 예전에는 사물함이 서쪽 베이 한복판에, 폰 부스 둘이 동쪽 베이
+     안에, 서류함 둘이 남동쪽 베이 안에 서 있었다. 그 자리에 책상을 놓으려
+     하면 유령이 빨갛게 변하는데 화면에는 파란 바닥밖에 안 보였고, 놓인
+     가구와 설비가 눈으로는 겹쳐 보였다. 지금은 구역이 곧 빈 바닥이다. */
   put((s) => {
-    // Everything here hugs a wall or a corner: the east spine (x 40–44.5) and
-    // the cross corridors have to stay clear or the floor stops connecting.
-    lockers(s, 3.6, 24.5, 0, 4);              // west wall, clear of the core
+    // 사물함은 서쪽 베이가 아니라 그 위의 가로 복도(z 16.5–20)로 옮겼다.
+    // 90도 돌려서 복도 방향으로 눕히면 깊이 1.9 만 먹는다.
+    lockers(s, 8.0, 18.2, Math.PI / 2, 4);
+    // 폰 부스는 동쪽 벽에 그대로. 대신 동쪽 베이가 x 57.5 에서 끝난다.
     phoneBooth(s, 60.0, 21.5, Math.PI);
     phoneBooth(s, 60.0, 27.5, Math.PI);
     copier(s, 45.0, 41.2, 0);
@@ -269,11 +285,14 @@ function buildFloor(m, fi, plan, out) {
     fileCab(s, 62.0, 33, Math.PI, 4, 2.4);
     fileCab(s, 62.0, 36, Math.PI, 4, 2.4);
     plantTall(s, 62.0, 41.0, 1.15);
-    plantTall(s, 2.8, 17.5, 1.0);
+    // 잎이 반지름 1.9 만큼 퍼진다. z 17.5 에서는 북서쪽 베이(z ≤ 16) 안으로
+    // 잎이 넘어와 책상과 겹쳐 보였다.
+    plantTall(s, 2.8, 18.2, 1.0);
   });
   out.spots.push(
     { kind: 'printer', floor: fi, x: 45.0, z: 38.4, yaw: Math.PI },
-    { kind: 'locker', floor: fi, x: 7.0, z: 24.5, yaw: -Math.PI / 2 },
+    // 사물함 앞. 복도 쪽에서 북쪽(-Z)을 보고 선다.
+    { kind: 'locker', floor: fi, x: 8.0, z: 20.2, yaw: Math.PI },
   );
 
   if (plan.role === 'net') {
@@ -328,7 +347,9 @@ function buildSite(m, floors) {
   // Exterior piers between the glazing. Flag 3, not 1: they are thin enough to
   // see between, so putting them in the wall cut only speckles the facade with
   // dither without revealing anything.
-  m.flag = 3;
+  // CEIL_FLAG: 층 자르기에서 **디더 없이** 잘린다. 3 이던 동안 기둥의 위쪽
+  // 0.7 유닛이 페이드 구간에 걸려 외벽마다 흰 점이 얼룩졌다.
+  m.flag = CEIL_FLAG;
   m.mat = MAT.WALL;
   for (let x = -2; x <= 66; x += 8) {
     m.box(x, top / 2, -1.6, 2.2, top, 2.2, P.extWall);
@@ -336,10 +357,10 @@ function buildSite(m, floors) {
   }
   m.box(-1.6, top / 2, 22, 2.4, top, 48, P.extWall);
   m.box(65.6, top / 2, 22, 2.4, top, 48, P.extWall);
-  // A parapet RING, not a cap: a solid roof slab would sit above the floor-cut
-  // threshold and dissolve into dither across the whole frame. Flag 3, not
-  // SITE, so looking at a lower floor removes it instead of leaving it hanging.
-  m.flag = 3;
+  // A parapet RING, not a cap: a solid roof slab would fill the frame. CEIL_FLAG,
+  // not SITE, so looking at a lower floor removes it instead of leaving it
+  // hanging — and removes it cleanly rather than in a dithered band.
+  m.flag = CEIL_FLAG;
   m.mat = MAT.WALL;
   for (const [cx, cz, w, d] of [[32, -2.2, 70, 2.4], [32, 46.2, 70, 2.4],
                                 [-2.2, 22, 2.4, 50], [66.2, 22, 2.4, 50]]) {
@@ -380,16 +401,19 @@ function buildSite(m, floors) {
 export const PLACE_ZONES = {
   ground: [
     { x0: 3.0, z0: 4.0, x1: 20.5, z1: 16.0 },      // north-west bay
-    { x0: 45.5, z0: 17.5, x1: 62.5, z1: 27.0 },    // east bay, south of the meeting room
+    { x0: 45.5, z0: 17.5, x1: 57.5, z1: 27.0 },    // east bay (폰 부스 앞에서 끝난다)
     { x0: 3.0, z0: 20.5, x1: 20.5, z1: 27.0 },     // west bay
   ],
   upper: [
     { x0: 3.0, z0: 4.0, x1: 20.5, z1: 16.0 },
-    { x0: 26.0, z0: 4.0, x1: 39.5, z1: 16.0 },
+    // 창가 바 테이블과 스툴이 z 5 에 서 있다. 예전에는 이 베이가 z 4 에서
+    // 시작해 스툴을 통째로 삼켰다.
+    { x0: 26.0, z0: 7.0, x1: 39.5, z1: 16.0 },
     { x0: 3.0, z0: 20.5, x1: 20.5, z1: 27.0 },
-    { x0: 45.5, z0: 17.5, x1: 62.5, z1: 27.0 },
+    { x0: 45.5, z0: 17.5, x1: 57.5, z1: 27.0 },
     { x0: 21.0, z0: 32.0, x1: 39.5, z1: 42.0 },
-    { x0: 45.5, z0: 32.0, x1: 62.5, z1: 39.5 },
+    // 서류함(동쪽)과 비품 선반(남쪽) 앞에서 끝난다.
+    { x0: 45.5, z0: 32.0, x1: 59.5, z1: 38.5 },
   ],
 };
 

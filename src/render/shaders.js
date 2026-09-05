@@ -56,6 +56,18 @@ float dither4(){
 }
 
 bool cutAway(vec3 w, float flag){
+  /* Flag 5 is the ceiling assembly — the slab above this floor and its light
+     troffers. It gets a HARD cut, never a dithered one.
+
+     This is what "그래픽이 깨진다" actually was. The dollhouse cut fades over
+     0.7 units so a wall top dissolves instead of being sliced, and the ceiling
+     sits inside exactly that band: the slab spans 12.45–12.95 and the troffers
+     12.35–12.73 against a band of 11.9–12.6. Every ceiling fragment therefore
+     landed mid-dither and survived at a few percent — which reads as speckled
+     white confetti sprayed over the whole floor plate and over each light in a
+     regular grid. Nothing was broken; the ceiling was being *partly* kept. A
+     ceiling has no silhouette worth feathering, so it is cut cleanly. */
+  if(flag > 4.5) return uFloorY < 900.0 && w.y > uFloorY;
   // Flag 4 is site geometry — ground, neighbouring blocks, the parapet. It is
   // outside the building, so neither cut may touch it or the sky shows through.
   if(flag > 3.5) return false;

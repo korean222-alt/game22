@@ -191,11 +191,16 @@ export function rollSaleEvent(rel, rnd) {
    띄우려면 무엇이 일어났는지를 알아야 하고, 매출만 돌려주면 알 길이 없다.
    `+income` 으로 쓰던 옛 호출부를 위해 valueOf 를 달아 두지 않고, 호출부
    두 곳을 모두 고쳤다. */
-export function tickRelease(rel, rnd) {
+/* `boost` 는 회사 전체에 걸린 다운로드 배율이다 (게임덱스가 남기는 화제).
+   유저와 매출 양쪽에 걸리되, 매출 쪽은 절반만 걸린다 — 사람이 몰린다고
+   객단가까지 같이 오르지는 않기 때문이다. 기본값 1 이라 버프가 없으면
+   예전과 완전히 같은 수를 돌려준다. */
+export function tickRelease(rel, rnd, boost = 1) {
   if (!rel.managing) return { income: 0, event: null, users: rel.users };
   rel.weeks += 1;
   const ev = rollSaleEvent(rel, rnd);
-  const income = Math.max(0, Math.round(rel.users * rel.arpu * 0.7 * (ev ? ev.mult : 1)));
+  const bMoney = 1 + (Math.max(1, boost) - 1) * 0.5;
+  const income = Math.max(0, Math.round(rel.users * rel.arpu * 0.7 * (ev ? ev.mult : 1) * bMoney));
   rel.earned += income;
   rel.lastIncome = income;
   rel.lastEvent = ev;
@@ -203,7 +208,7 @@ export function tickRelease(rel, rnd) {
   rel.history.push({ w: rel.weeks, income, users: rel.users, event: ev });
   if (rel.history.length > 26) rel.history.shift();
   // 다음 주의 유저. 봉우리 곡선에 사건의 흔적과 약간의 잡음을 얹는다.
-  const mult = weekMult(rel) * (ev ? ev.users : 1);
+  const mult = weekMult(rel) * (ev ? ev.users : 1) * Math.max(1, boost);
   rel.users = Math.max(0, Math.round(rel.users * mult * (0.97 + rnd() * 0.06)));
   rel.peakUsers = Math.max(rel.peakUsers || 0, rel.users);
   // 정점을 지나고, 유저가 거의 남지 않았을 때만 접는다. 상승기에 60명을

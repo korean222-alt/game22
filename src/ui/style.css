@@ -28,7 +28,11 @@
   --vw:100vw;
 
   --hud-h:42px;
-  --panel-w:300px;
+  /* 사이드 패널의 **전체** 폭이다: 내용 + 오른쪽 세로 탭 레일.
+     화면 오른쪽에 뜨는 것들(배틀 바·튜토리얼·배치 툴바)이 이 값만큼
+     비켜서므로, 레일을 따로 빼면 그 계산이 전부 어긋난다. */
+  --tabside-w:46px;
+  --panel-w:346px;
   --panel-cur:var(--panel-w);
   --rail-w:52px;
   --gap:10px;
@@ -44,6 +48,10 @@
 body.has-rail{ --rail-cur:var(--rail-w2) }
 
 *{box-sizing:border-box}
+/* display 를 지정한 규칙은 UA 의 [hidden] 보다 세다. 그래서 flex 로 깔아 둔
+   줄(.mlr 같은)은 el.hidden = true 로도 안 사라졌다 — 접힌 편지 아래에
+   버튼만 떠 있던 것이 그 증상이다. */
+[hidden]{display:none !important}
 html,body{
   margin:0;padding:0;width:100%;height:100%;
   overflow:hidden;overscroll-behavior:none;background:#c8cbcf;
@@ -227,12 +235,48 @@ body.panel-hidden #side{
   transform:translateX(calc(-100% - var(--sal) - var(--gap) - 4px));
   opacity:0;pointer-events:none;
 }
+/* 패널은 이제 두 칸이다: 왼쪽이 내용, 오른쪽이 세로 탭 레일. */
+#side{flex-direction:row}
+#sidemain{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
 #tabs{display:flex;border-bottom:1px solid var(--edge);flex:none}
 .tab{
   flex:1;text-align:center;padding:10px 0;font-size:12px;font-weight:700;color:var(--dim);
   cursor:pointer;border-bottom:2px solid transparent;transition:color .14s ease,border-color .14s ease;
 }
 .tab.on{color:var(--gold);border-bottom-color:var(--gold)}
+
+/* ── 오른쪽 세로 탭 레일 ──
+   자주 안 쓰는 화면(상점·가방·도감·운영·편지·행사)이 여기 산다. 위 줄에
+   같이 두면 여덟 칸이 되어 폰에서는 가로 스크롤 뒤로 숨었고, 숨은 탭은
+   없는 탭이나 마찬가지였다. 세로로 세우면 여섯 개가 한눈에 들어오고,
+   배지를 붙일 자리도 생긴다. */
+#tabside{
+  flex:none;width:var(--tabside-w);
+  display:flex;flex-direction:column;
+  border-left:1px solid var(--edge);
+  background:rgba(255,255,255,.025);
+  overflow-y:auto;scrollbar-width:none;
+}
+#tabside::-webkit-scrollbar{display:none}
+.stab{
+  position:relative;flex:1 0 auto;min-height:42px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  cursor:pointer;color:var(--dim);touch-action:manipulation;
+  border-left:2px solid transparent;
+  transition:color .14s ease,border-color .14s ease,background .14s ease;
+}
+.stab .si{font-size:15px;line-height:1}
+.stab .sk{font-size:8.5px;font-weight:800;letter-spacing:.2px}
+.stab:active{background:rgba(255,255,255,.06)}
+.stab.on{color:var(--gold);border-left-color:var(--gold);background:rgba(232,176,85,.10)}
+/* 배지. 안 읽은 편지와 열린 행사가 여기서 티를 낸다 — 편지함은 열어 봐야
+   비로소 알 수 있는 화면이면 안 된다. */
+.sbadge{
+  position:absolute;top:5px;right:5px;min-width:7px;height:7px;border-radius:99px;
+  background:var(--bad);box-shadow:0 0 0 2px rgba(16,18,23,.9);
+  animation:bpulse 1.6s ease-in-out infinite;
+}
+@keyframes bpulse{0%,100%{opacity:1}50%{opacity:.35}}
 #panel{
   flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
   padding:11px 12px calc(11px + var(--sab)*0.4);
@@ -565,7 +609,8 @@ body.placing #toast{bottom:calc(var(--sab) + var(--gap) + 62px)}
 @media (max-height:470px){
   :root{
     --hud-h:34px;
-    --panel-w:246px;
+    --panel-w:284px;
+    --tabside-w:38px;
     --rail-w:44px;
     --gap:7px;
     --fs:11.5px;
@@ -594,7 +639,7 @@ body.placing #toast{bottom:calc(var(--sab) + var(--gap) + 62px)}
 
 /* ══ very short (a small phone, or a browser with lots of chrome) ══ */
 @media (max-height:370px){
-  :root{--panel-w:220px;--fs:11px}
+  :root{--panel-w:254px;--tabside-w:34px;--fs:11px}
   .hz.coins{display:none}
   #brand{display:none}
 }
@@ -832,11 +877,16 @@ body.touch #fpHelp{display:none}
    보스전 · 진행 패널 · 상점 · 도감 · 1인칭
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── 탭이 일곱 개가 됐다. 폰 가로에서 246px 안에 다 들어가지 않으므로
-      가로 스크롤로 흘린다. flex:none 이 없으면 글자가 세로로 접힌다. ── */
+/* ── 위 줄은 네 개다. 넘칠 일은 없지만, 긴 이름이 세로로 접히는 것만은
+      막아 둔다. ── */
 #tabs{overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 #tabs::-webkit-scrollbar{display:none}
 .tab{flex:1 0 auto;min-width:44px;padding:10px 9px;white-space:nowrap}
+@media (max-height:470px){
+  .stab{min-height:36px}
+  .stab .si{font-size:13px}
+  .stab .sk{display:none}
+}
 
 /* ── 보스 줄 ── */
 .bossline{display:flex;align-items:center;gap:6px;margin:2px 0 5px;font-size:11px}
@@ -1408,3 +1458,117 @@ body.rouling #roul{display:flex}
 }
 .rhit.on{opacity:1;transform:scale(1);animation:rpop .5s cubic-bezier(.2,1.6,.4,1)}
 @keyframes rpop{0%{transform:scale(.5);opacity:0}60%{transform:scale(1.18)}100%{transform:scale(1);opacity:1}}
+
+/* ══════════════════════════ 편지함 ══════════════════════════
+   목록 한 줄이 곧 봉투다. 안 읽은 것은 왼쪽에 금색 띠가 서고, 아직 안 받은
+   선물이 붙어 있으면 선물 줄이 강조된다 — 둘은 다른 종류의 "아직" 이라
+   같은 표시를 쓰면 안 된다. */
+.ml{
+  border:1px solid var(--edge);border-radius:10px;padding:8px 9px;margin-bottom:6px;
+  background:rgba(255,255,255,.035);cursor:pointer;border-left:3px solid transparent;
+}
+.ml:active{background:rgba(255,255,255,.07)}
+.ml.new{border-left-color:var(--gold);background:rgba(232,176,85,.07)}
+.mlh{display:flex;align-items:center;gap:6px}
+.mlh .mli{font-size:15px;line-height:1}
+.mlh .mlt{font-weight:800;font-size:12px;flex:1;min-width:0}
+.mlh .mllock{font-size:10px;opacity:.7}
+.mlf{display:flex;justify-content:space-between;gap:8px;margin-top:2px;font-size:10px;color:var(--dim)}
+.mlg{
+  margin-top:5px;padding:4px 7px;border-radius:7px;font-size:10.5px;font-weight:700;
+  background:rgba(113,192,122,.16);color:#a9e0ae;
+}
+.mlg.got{background:rgba(255,255,255,.06);color:var(--dim);font-weight:600}
+.mlb{
+  margin-top:7px;padding-top:7px;border-top:1px dashed var(--edge);
+  font-size:11.5px;line-height:1.75;white-space:pre-wrap;color:#e6e3db;
+}
+.mlr{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
+.mlr .btn{flex:1 0 auto}
+
+/* ══════════════════════════ 시상식 ══════════════════════════ */
+.awr{
+  display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:5px;
+  border-radius:10px;border:1px solid var(--edge);background:rgba(255,255,255,.04);
+}
+.awr.gold{border-color:rgba(232,176,85,.55);background:rgba(232,176,85,.13)}
+.awr.silver{border-color:rgba(200,206,214,.42);background:rgba(200,206,214,.09)}
+.awr .awi{font-size:19px;line-height:1}
+.awr .awn{flex:1;min-width:0;font-size:12px;font-weight:800}
+.awr .awn b{color:var(--gold);margin-left:4px}
+.awr .awn i{display:block;font-style:normal;font-size:10.5px;color:var(--dim);font-weight:600}
+.awr .awv{text-align:right;font-size:11.5px;font-weight:800;font-variant-numeric:tabular-nums}
+.awr .awv i{display:block;font-style:normal;font-size:9.5px;color:var(--dim);font-weight:600}
+
+/* 게임덱스 결산의 세 줄 */
+.exr{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.exr > div{display:flex;justify-content:space-between;gap:10px;font-size:12px}
+.exr .k{color:var(--dim)}
+.exr .v{font-weight:800;font-variant-numeric:tabular-nums}
+
+/* ══════════════════════ 개발 화면의 머리글 ══════════════════════
+   보스전이 사실은 개발이라는 것을 화면 맨 위에 글자로 적는다. 이 줄이
+   없는 동안, 사무실 한복판에 선 괴물은 경영 게임 안에 낀 미니게임처럼
+   보였다. */
+#arena .adev{
+  display:flex;align-items:baseline;gap:7px;margin-bottom:4px;
+  padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,.08);
+}
+#arena .adev .dk{
+  flex:none;font-size:9.5px;font-weight:800;letter-spacing:.6px;
+  padding:2px 7px;border-radius:999px;
+  background:rgba(232,176,85,.20);color:var(--gold);
+}
+#arena .adev b{font-size:13px;font-weight:800;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#arena .adev .dm{margin-left:auto;flex:none;font-size:10px;color:var(--dim);font-weight:700}
+
+/* 공정 표시: 기획 → 제작 → 마감 */
+#arena .asteps{display:flex;align-items:center;gap:5px;margin:3px 0 5px;flex-wrap:wrap}
+.astep{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:2px 8px;border-radius:999px;font-size:10px;font-weight:800;
+  background:rgba(255,255,255,.06);color:var(--dim);border:1px solid transparent;
+}
+.astep i{
+  font-style:normal;width:13px;height:13px;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:8.5px;background:rgba(255,255,255,.12);
+}
+.astep.done{color:#8fbf95;background:rgba(113,192,122,.14)}
+.astep.done i{background:rgba(113,192,122,.30)}
+.astep.on{color:var(--gold);background:rgba(232,176,85,.18);border-color:rgba(232,176,85,.45)}
+.astep.on i{background:rgba(232,176,85,.35)}
+.astepd{font-size:10px;color:var(--dim);margin-left:2px}
+
+/* 첫 진입 안내의 대응표 */
+.dvmap{display:flex;flex-direction:column;gap:3px;margin-top:9px}
+.dvmap > div{
+  display:flex;justify-content:space-between;gap:10px;
+  padding:5px 8px;border-radius:8px;background:rgba(255,255,255,.05);font-size:11.5px;
+}
+.dvmap .k{font-weight:800}
+.dvmap .v{color:var(--dim);text-align:right}
+
+@media (max-height:470px){
+  #arena .adev{margin-bottom:2px;padding-bottom:2px}
+  #arena .adev b{font-size:11.5px}
+  #arena .asteps{margin:2px 0 3px}
+  .astepd{display:none}
+}
+
+/* ── 진행 중인 이벤트 배지 ──
+   회사 전체에 걸린 버프. 판매 카드 위에 한 줄로 선다. */
+#buff{
+  position:static;display:none;width:100%;
+  padding:6px 9px;font-size:10.5px;line-height:1.35;
+  border:1px solid rgba(232,176,85,.42);
+  background:linear-gradient(180deg,rgba(232,176,85,.13),rgba(20,23,29,.94));
+}
+body.has-buff #buff{display:block}
+body.arena #buff,body.fp #buff,body.meeting #buff{display:none !important}
+#buff .bfk{
+  display:inline-block;font-size:8px;letter-spacing:1.4px;font-weight:800;
+  color:#ffd9a0;
+}
+#buff b{display:block;font-size:11.5px;font-weight:800}
+#buff .bfv{display:block;color:#ffd9a0;font-weight:800;font-variant-numeric:tabular-nums}

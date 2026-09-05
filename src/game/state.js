@@ -35,6 +35,14 @@ import {
 } from './project.js';
 import { TASKS, rollEvent, grantReward, rewardText } from './events.js';
 import {
+  MAIL_CAP, welcomeMail, fanMail, fanMailChance, dlMail, DL_MARKS,
+  recordMail, sealMail, giftText,
+} from './mail.js';
+import {
+  EXPO_PLANS, awardBar, judge, awardTotals, nearMiss,
+  expoVisitors, expoResult, expoNote,
+} from './awards.js';
+import {
   releaseGame, tickRelease, weeklyCosts, checkRankUp, cashCap, coinsFromRelease,
   researchFromProject,
 } from './economy.js';
@@ -118,11 +126,39 @@ export class Game {
       dex: { genres: {}, contents: {}, bosses: {}, items: {}, jobs: {} },
       overtimeUsed: false,
       spentOnShop: 0,
+      devIntroSeen: false,          // 개발 화면이 무엇인지 한 번 설명했나
+      /* ---- 편지함 ----
+         받은 편지가 최신순으로 쌓인다. 선물이 붙은 편지는 수령하기 전까지
+         지워지지 않는다 — 정리하다가 상금을 버리는 일은 없어야 한다. */
+      mail: [],
+      mailSeq: 0,
+      /* ---- 누적 다운로드 ----
+         출시 유저와 그 뒤 매주 늘어난 유저를 더한 값. 회사가 지금까지
+         몇 명에게 닿았는지를 한 숫자로 들고 있는 곳이고, 100만 같은
+         자릿수를 넘을 때 편지가 온다. */
+      totalDl: 0,
+      dlMarks: {},                  // 이미 축하받은 자릿수
+      /* ---- 행사 ----
+         시상식은 매달, 게임덱스는 두 달마다. 마지막으로 연 달을 적어 두는
+         것으로 중복 개최를 막는다 — 주를 여러 번 넘겨도 달이 같으면 한 번. */
+      lastAwardKey: null,
+      lastExpoKey: null,
+      // 열려 있는 게임덱스 초대장. 세이브에 남는다 — 초대장을 받고 저장한
+      // 다음 날 들어왔더니 행사가 없어져 있으면 그건 잃어버린 것이다.
+      expoInvite: null,
+      awards: [],                   // 지금까지 받은 상 (행사 탭의 진열장)
+      expoBest: 0,                  // 역대 최다 부스 방문자
+      expoLog: [],
+      buff: null,                   // { ko, dl, weeks } — 게임덱스가 남긴 화제
+      fanMailSent: {},              // 게임별로 몇 통까지 왔나
     };
     // Bought but not yet placed. The bag is what makes buying and placing two
     // separate decisions rather than one click that teleports a desk somewhere.
     this.bag = [];
     this.pendingEvent = null;       // a weekly event waiting on the player
+    /* 열려 있는 행사. 주를 막지 않는다 — 시상식은 결과만 보여주면 되고,
+       게임덱스는 나중에 행사 탭에서 골라도 된다. */
+    this.pendingAward = null;
     this.staff = [];
     this.proposals = [];
     this.project = null;         // the project currently in development
@@ -153,6 +189,9 @@ export class Game {
     c.name = (name || '').trim().slice(0, 18) || '이름 없는 스튜디오';
     c.founded = true;
     this.note(`「${c.name}」 설립. 창업 지원금 ₩${STARTUP_GRANT.toLocaleString()}이 입금되었다.`, 'good');
+    // 첫 편지. 지원금과 별개인 개발비가 들어 있고, 그것이 편지함이라는
+    // 화면이 있다는 사실을 알리는 방법이기도 하다.
+    this.sendMail(welcomeMail(c, this.dateLabel()));
     this.emit('founded', { name: c.name, grant: STARTUP_GRANT });
     return { ok: true, name: c.name, grant: STARTUP_GRANT };
   }
@@ -839,6 +878,9 @@ export class Game {
     }
     const { release, fansGained } = releaseGame(p, this.company, this.rnd,
       this.ctx({ marketingId: mk.id, team: this.teamOf(p), recent: this.company.recentCombos || [] }));
+    // 출시 시점을 박아 둔다. 시상식이 "지난 한 달에 낸 게임" 을 고르는
+    // 유일한 근거고, 이게 없으면 심사 대상이 늘 전작 전체가 된다.
+    release.at = { year: this.company.year, month: this.company.month, week: this.company.week };
     this.releases.unshift(release);
     this.company.fans += fansGained;
     this.company.coins += coinsFromRelease(release);
@@ -857,6 +899,7 @@ export class Game {
     for (const n of release.notes || []) {
       if (n.cls === 'bad') this.note(n.ko, 'bad');
     }
+    this.addDl(release.launchUsers || release.users);
     this.emit('release', release);
     this._startSalesRun(release, fansGained);
     this._maybeRankUp();
@@ -912,9 +955,12 @@ export class Game {
     const per = s.secs / s.weeks;
     const want = Math.min(s.weeks, Math.floor(s.t / per));
     let changed = false;
+    const boost = this.dlBuff();
     while (s.done < want) {
-      const { income, event } = tickRelease(rel, this.rnd);
+      const before = rel.users;
+      const { income, event } = tickRelease(rel, this.rnd, boost);
       this.earn(income);
+      this.addDl(Math.max(0, rel.users - before));
       s.done += 1;
       s.total += income;
       s.peak = Math.max(s.peak, income);
@@ -1402,6 +1448,244 @@ export class Game {
     return any;
   }
 
+  /* ══════════════════════════ 편지함 ══════════════════════════
+
+     편지는 상태를 세 개 갖는다: 읽었나, 선물을 받았나, 잠갔나. 셋을 나눠
+     두는 이유는 각각 다른 실수를 막기 때문이다 — 안 읽은 편지는 배지로
+     알려야 하고, 안 받은 선물은 지워지면 안 되고, 마음에 드는 편지는
+     넘쳐도 남아야 한다. */
+  sendMail(mail) {
+    const c = this.company;
+    c.mail = c.mail || [];
+    c.mailSeq = (c.mailSeq || 0) + 1;
+    const m = sealMail({ at: this.dateLabel(), ...mail }, `ml${c.mailSeq}`);
+    c.mail.unshift(m);
+    this._trimMail();
+    this.note(`${m.icon} 편지가 왔습니다 — ${m.title}`, 'good');
+    this.emit('mail', m);
+    return m;
+  }
+
+  /* 넘치면 오래된 것부터 지운다. 단, 아직 안 받은 선물이 붙었거나 자물쇠가
+     걸린 편지는 건너뛴다. 그 둘을 지우면 편지함은 보관함이 아니라 타이머가
+     된다. */
+  _trimMail() {
+    const c = this.company;
+    while (c.mail.length > MAIL_CAP) {
+      const i = c.mail.slice().reverse().findIndex((m) => m.claimed && !m.locked);
+      if (i < 0) break;
+      c.mail.splice(c.mail.length - 1 - i, 1);
+    }
+    /* 한 번도 안 받고 쌓기만 하면 편지함이 끝없이 길어진다. 두 배를 넘기면
+       가장 오래된 편지의 선물을 **대신 받아 주고** 지운다 — 지우기 위해
+       선물을 버리는 일은 없어야 하고, 목록이 수백 줄이 되는 것도 화면이
+       아니다. */
+    while (c.mail.length > MAIL_CAP * 2) {
+      const i = c.mail.slice().reverse().findIndex((m) => !m.locked);
+      if (i < 0) break;
+      const at = c.mail.length - 1 - i;
+      const old = c.mail[at];
+      if (!old.claimed) this.mailClaim(old.id);
+      c.mail.splice(at, 1);
+    }
+  }
+
+  mailList() { return this.company.mail || []; }
+  mailUnread() { return this.mailList().filter((m) => !m.read).length; }
+  mailPending() { return this.mailList().filter((m) => !m.claimed).length; }
+
+  mailOpen(id) {
+    const m = this.mailList().find((x) => x.id === id);
+    if (!m) return null;
+    if (!m.read) { m.read = true; this.emit('mail', m); }
+    return m;
+  }
+
+  /* 선물 수령. 돈·코인·연구·팬은 그 자리에서 들어가고, 물건은 가방으로
+     간다. 한 번 받은 편지는 다시 받을 수 없다. */
+  mailClaim(id) {
+    const m = this.mailList().find((x) => x.id === id);
+    if (!m || m.claimed || !m.gift) return { ok: false, why: '받을 것이 없습니다' };
+    const g = m.gift;
+    grantReward(this, g);
+    for (const it of g.items || []) {
+      const def = shopItem(it.id);
+      if (!def) continue;
+      this.company.bag[it.id] = this.bagCount(it.id) + (it.n || 1);
+      this.dexSee('items', it.id);
+    }
+    m.claimed = true;
+    m.read = true;
+    const txt = giftText(g, (iid) => { const d = shopItem(iid); return d ? `${d.emoji} ${d.ko}` : iid; });
+    this.note(`편지의 선물을 받았습니다 — ${txt}`, 'good');
+    this.checkTasks();
+    this._maybeRankUp();
+    this.emit('mail', m);
+    return { ok: true, text: txt };
+  }
+
+  mailClaimAll() {
+    const open = this.mailList().filter((m) => !m.claimed && m.gift);
+    for (const m of open) this.mailClaim(m.id);
+    return { ok: true, n: open.length };
+  }
+
+  mailLock(id) {
+    const m = this.mailList().find((x) => x.id === id);
+    if (!m) return { ok: false };
+    m.locked = !m.locked;
+    this.emit('mail', m);
+    return { ok: true, locked: m.locked };
+  }
+
+  mailDelete(id) {
+    const c = this.company;
+    const i = (c.mail || []).findIndex((x) => x.id === id);
+    if (i < 0) return { ok: false };
+    const m = c.mail[i];
+    if (m.locked) return { ok: false, why: '보호 중인 편지입니다' };
+    if (!m.claimed) return { ok: false, why: '선물을 먼저 받으세요' };
+    c.mail.splice(i, 1);
+    this.emit('mail', null);
+    return { ok: true };
+  }
+
+  /* ---------- 누적 다운로드와 기념 편지 ----------
+     자릿수를 넘길 때마다 한 번씩. 이미 축하한 자릿수는 dlMarks 에 남으므로
+     세이브를 오가도 두 번 오지 않는다. */
+  addDl(n) {
+    const c = this.company;
+    if (!(n > 0)) return;
+    c.totalDl = (c.totalDl || 0) + Math.round(n);
+    c.dlMarks = c.dlMarks || {};
+    for (const mark of DL_MARKS) {
+      if (c.totalDl < mark.at || c.dlMarks[mark.at]) continue;
+      c.dlMarks[mark.at] = true;
+      this.sendMail(dlMail(mark, this.dateLabel()));
+      this.note(`축! ${mark.ko} 다운로드 첫 달성!`, 'good');
+      this.emit('milestone', { mark, total: c.totalDl });
+    }
+  }
+
+  /* ---------- 유저 편지 ----------
+     운영 중인 게임 하나를 골라 굴린다. 게임당 세 통까지만: 그 이상은
+     편지함이 한 게임의 팬레터로 가득 찬다. */
+  _rollFanMail() {
+    const live = this.managed();
+    if (!live.length) return;
+    const c = this.company;
+    c.fanMailSent = c.fanMailSent || {};
+    const r = live[Math.floor(this.rnd() * live.length)];
+    if ((c.fanMailSent[r.id] || 0) >= 3) return;
+    const fun = funScore(r.quality);
+    if (this.rnd() >= fanMailChance(fun, r.users)) return;
+    // 어느 축이 높았는지가 편지의 문장을 정한다.
+    let top = STATS[0];
+    for (const st of STATS) if ((r.quality[st] || 0) > (r.quality[top] || 0)) top = st;
+    c.fanMailSent[r.id] = (c.fanMailSent[r.id] || 0) + 1;
+    this.sendMail(fanMail(r, fun, top, this.rnd, this.dateLabel()));
+  }
+
+  /* ══════════════════════════ 시상식 ══════════════════════════
+     매달 첫 주에 지난달 출시작을 심사한다. 상금은 그 자리에서 들어간다 —
+     결과 창을 닫아 버린 플레이어가 상금을 못 받으면 그건 벌칙이다. */
+  _runAwards() {
+    const c = this.company;
+    const key = `${c.year}-${c.month}`;
+    if (c.lastAwardKey === key) return null;
+    c.lastAwardKey = key;
+    // 지난 한 달(4주) 안에 낸 게임. 날짜가 없는 옛 세이브의 출시작은 뺀다.
+    const entries = this.releases.filter((r) => r.at && this._weeksSince(r.at) <= 4);
+    if (!entries.length) return null;
+    const wins = judge(entries, c.year, c.rank);
+    const totals = awardTotals(wins);
+    const near = wins.length ? null : nearMiss(entries, c.year);
+    if (wins.length) {
+      grantReward(this, totals);
+      c.awards = [...(c.awards || []), ...wins.map((w) => ({
+        catKo: w.catKo, icon: w.icon, gradeKo: w.grade.ko, gradeId: w.grade.id,
+        title: w.title, value: w.value, at: this.dateLabel(),
+      }))].slice(-40);
+      const head = wins.map((w) => `${w.icon} ${w.catKo} ${w.grade.ko}`).join(' · ');
+      this.note(`${c.month}월 시상식: ${head}`, 'good');
+      this.sendMail(recordMail('award', `${c.year}년차 ${c.month}월 시상식 결과`,
+        wins.map((w) => `${w.icon} ${w.catKo} ${w.grade.ko} — 「${w.title}」 (${w.statKo} ${w.value})`).join('\n')
+        + `\n\n상금 ${rewardText(totals)} 은(는) 이미 계좌로 보냈습니다.`,
+        this.dateLabel(), '🏆'));
+      this._maybeRankUp();
+    }
+    this.pendingAward = { year: c.year, month: c.month, wins, totals, near, entries: entries.length };
+    this.emit('award', this.pendingAward);
+    this.checkTasks();
+    return this.pendingAward;
+  }
+
+  /* 출시일로부터 몇 주가 지났나. 한 해를 48주(12달 × 4주)로 세는 이 게임의
+     달력을 그대로 쓴다. */
+  _weeksSince(at) {
+    const c = this.company;
+    const now = ((c.year - 1) * 12 + (c.month - 1)) * 4 + (c.week - 1);
+    const then = ((at.year - 1) * 12 + (at.month - 1)) * 4 + (at.week - 1);
+    return now - then;
+  }
+
+  awardBarFor(catId) { return awardBar(this.company.year, catId); }
+
+  /* ══════════════════════════ 게임덱스 ══════════════════════════
+     두 달에 한 번 열린다. 초대장은 남아 있고, 다음 회차가 열리면 지난
+     초대장은 사라진다 — 두 개를 쌓아 두고 한꺼번에 나가는 길은 없다. */
+  _openExpo() {
+    const c = this.company;
+    const key = `${c.year}-${c.month}`;
+    if (c.lastExpoKey === key) return null;
+    c.lastExpoKey = key;
+    c.expoInvite = { year: c.year, month: c.month };
+    this.note(`게임덱스 ${c.month}월 개최 — 부스 출전 초대장이 왔습니다.`, 'good');
+    this.emit('expo', c.expoInvite);
+    return c.expoInvite;
+  }
+
+  expoOpen() { return this.company.expoInvite || null; }
+
+  joinExpo(planId) {
+    if (!this.company.expoInvite) return { ok: false, why: '지금은 열린 행사가 없습니다' };
+    const plan = EXPO_PLANS.find((p) => p.id === planId);
+    if (!plan) return { ok: false, why: '없는 출전 방식' };
+    const c = this.company;
+    if (plan.coins && c.coins < plan.coins) return { ok: false, why: `코인 ${plan.coins} 필요` };
+    if (plan.cost && !this.spend(plan.cost)) return { ok: false, why: '자금 부족' };
+    if (plan.coins) c.coins -= plan.coins;
+
+    // 부스에서 보여줄 수 있는 가장 좋은 게임. 없으면 데뷔 전이라 사람이 덜 온다.
+    const best = this.releases.reduce((a, r) => Math.max(a, funScore(r.quality)), 0);
+    const visitors = expoVisitors(plan, c.fans, best, this.rnd);
+    const res = expoResult(plan, visitors, this.rnd);
+    const note = expoNote(visitors, c.expoBest || 0);
+    c.expoBest = Math.max(c.expoBest || 0, visitors);
+    c.fans += res.fans;
+    c.buff = { ko: '게임덱스 화제', dl: res.dl, weeks: res.weeks };
+    c.expoLog = [{ at: this.dateLabel(), planKo: plan.ko, visitors, fans: res.fans, dl: res.dl }, ...(c.expoLog || [])].slice(0, 12);
+    c.expoInvite = null;
+    this.note(`게임덱스 부스 방문자 ${visitors.toLocaleString('ko-KR')}명 · 팬 +${res.fans.toLocaleString('ko-KR')} · `
+      + `${res.weeks}주 동안 DL ${Math.round((res.dl - 1) * 100)}% UP`, 'good');
+    this.sendMail(recordMail('expo', `게임덱스 ${c.month}월 결산`,
+      `${plan.ko}\n\n부스 방문자 ${visitors.toLocaleString('ko-KR')}명\n`
+      + `팬 +${res.fans.toLocaleString('ko-KR')}명\n`
+      + `${res.weeks}주 동안 다운로드 ${Math.round((res.dl - 1) * 100)}% 증가`,
+      this.dateLabel(), '🎪'));
+    this._maybeRankUp();
+    this.checkTasks();
+    const out = { ok: true, plan, visitors, note, ...res };
+    this.emit('expoDone', out);
+    return out;
+  }
+
+  /* 지금 걸려 있는 다운로드 배율. 버프가 없으면 1 이다. */
+  dlBuff() {
+    const b = this.company.buff;
+    return b && b.weeks > 0 ? b.dl : 1;
+  }
+
   /* ---------- the week clock ---------- */
   nextWeek() {
     const c = this.company;
@@ -1419,11 +1703,16 @@ export class Game {
     }
 
     let income = 0;
+    const boost = this.dlBuff();
     for (const r of this.releases) {
       // 실시간 판매가 도는 게임은 그 팝업이 자기 주차를 흘리고 있다. 여기서
       // 또 한 주를 태우면 같은 주가 두 번 팔린다.
       if (this.sales && this.sales.id === r.id && !this.sales.ended) continue;
-      income += tickRelease(r, this.rnd).income;
+      const before = r.users;
+      income += tickRelease(r, this.rnd, boost).income;
+      // 늘어난 유저만 다운로드로 센다. 빠져나간 주는 0 이다 — 누적
+      // 다운로드는 줄어들 수 있는 숫자가 아니다.
+      this.addDl(Math.max(0, r.users - before));
     }
     const costs = weeklyCosts(c, this.staff);
     this.earn(income);
@@ -1441,6 +1730,7 @@ export class Game {
       }
     }
 
+    const wasMonth = c.month;
     c.week += 1;
     if (c.week > 4) { c.week = 1; c.month += 1; }
     if (c.month > 12) { c.month = 1; c.year += 1; }
@@ -1448,6 +1738,25 @@ export class Game {
     if (c.week === 1 && (c.month - 1) % 3 === 0) {
       this.rollTrends();
       this.note(`시장 유행이 바뀌었다: ${c.trends.genreKo} · ${c.trends.contentKo}`);
+    }
+
+    /* ---- 달이 바뀌었다 ----
+       시상식은 매달, 게임덱스는 홀수 달(1·3·5…)마다. 둘을 같은 달에 겹치지
+       않게 하려면 하나를 짝수 달로 밀면 되지만, 그러면 시상식이 없는 달이
+       생긴다 — 매달 있어야 "이번 달 안에 낸다" 가 목표가 된다. 겹치는 달에는
+       시상식 결과를 먼저 보여주고 초대장은 행사 탭에 남는다. */
+    if (c.month !== wasMonth) {
+      this._runAwards();
+      if ((c.month - 1) % 2 === 0) this._openExpo();
+    }
+
+    // 게임덱스가 남긴 화제는 몇 주 만에 식는다.
+    if (c.buff && c.buff.weeks > 0) {
+      c.buff.weeks -= 1;
+      if (c.buff.weeks <= 0) {
+        this.note(`${c.buff.ko} 효과가 끝났습니다.`);
+        c.buff = null;
+      }
     }
 
     c.stamina = c.staminaMax;
@@ -1482,6 +1791,8 @@ export class Game {
     // Roughly one week in five. Frequent enough that a year has a shape,
     // rare enough that it never becomes the thing you are playing.
     if (this.rnd() < 0.21) this.rollWeeklyEvent();
+    // 유저 편지. 이벤트와 달리 주를 막지 않으므로 매주 굴려도 된다.
+    this._rollFanMail();
     return { income, costs };
   }
 
@@ -1626,6 +1937,27 @@ export class Game {
       }
       c.overtimeUsed = !!c.overtimeUsed;
       c.spentOnShop = c.spentOnShop || 0;
+      c.devIntroSeen = !!c.devIntroSeen;
+      /* 편지함·행사가 없던 세이브. 빈 값으로 열리면 되고, 지난 출시작에는
+         날짜가 없으니 시상식 심사 대상에서 자연히 빠진다. */
+      c.mail = Array.isArray(c.mail) ? c.mail : [];
+      c.mailSeq = c.mailSeq || c.mail.length;
+      c.totalDl = c.totalDl || 0;
+      c.dlMarks = c.dlMarks || {};
+      c.awards = c.awards || [];
+      c.expoLog = c.expoLog || [];
+      c.expoBest = c.expoBest || 0;
+      c.buff = c.buff && c.buff.weeks > 0 ? c.buff : null;
+      c.fanMailSent = c.fanMailSent || {};
+      c.lastAwardKey = c.lastAwardKey || null;
+      c.lastExpoKey = c.lastExpoKey || null;
+      c.expoInvite = c.expoInvite || null;
+      /* 누적 다운로드가 없던 세이브는 지금 있는 출시작으로 되짚는다.
+         0 으로 열면 이미 백만을 판 회사가 10만 축하 편지를 받는다. */
+      if (!c.totalDl) {
+        c.totalDl = g.releases.reduce((a, r) => a + (r.launchUsers || r.users || 0), 0);
+        for (const mark of DL_MARKS) if (c.totalDl >= mark.at) c.dlMarks[mark.at] = true;
+      }
       if (!c.trends) g.rollTrends();
       // Saves written before staff had health or equipment: give everyone a
       // pool sized to who they are now, and a project the boss it was missing.

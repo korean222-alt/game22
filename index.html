@@ -78,18 +78,33 @@
 </div>
 
 <!-- ══ side panel ══ -->
+<!-- 탭이 여덟 개까지 늘어나자 폰 가로에서 한 줄에 들어가지 않았고, 가로
+     스크롤로 흘리는 동안 뒤쪽 탭은 있는 줄도 모르는 자리가 됐다. 그래서
+     둘로 나눈다.
+
+       위 줄  회사·직원·개발·사무실 — 매 주 누르는 것들
+       오른쪽 상점·가방·도감·운영·편지·행사 — 필요할 때 찾아가는 것들
+
+     오른쪽 세로 레일은 아이콘이라 네 글자를 넣을 필요가 없고, 배지(안 읽은
+     편지, 열린 행사)를 붙일 자리도 거기서 나온다. -->
 <div id="side" class="card">
-  <div id="tabs">
-    <div class="tab on" data-tab="company">회사</div>
-    <div class="tab" data-tab="staff">직원</div>
-    <div class="tab" data-tab="dev">개발</div>
-    <div class="tab" data-tab="shop">상점</div>
-    <div class="tab" data-tab="bag">🎒 가방</div>
-    <div class="tab" data-tab="dex">도감</div>
-    <div class="tab" data-tab="live">운영</div>
-    <div class="tab" data-tab="office">사무실</div>
+  <div id="sidemain">
+    <div id="tabs">
+      <div class="tab tabbtn on" data-tab="company">회사</div>
+      <div class="tab tabbtn" data-tab="staff">직원</div>
+      <div class="tab tabbtn" data-tab="dev">개발</div>
+      <div class="tab tabbtn" data-tab="office">사무실</div>
+    </div>
+    <div id="panel"></div>
   </div>
-  <div id="panel"></div>
+  <div id="tabside">
+    <div class="stab tabbtn" data-tab="shop"><span class="si">🛒</span><span class="sk">상점</span></div>
+    <div class="stab tabbtn" data-tab="bag"><span class="si">🎒</span><span class="sk">가방</span></div>
+    <div class="stab tabbtn" data-tab="dex"><span class="si">📖</span><span class="sk">도감</span></div>
+    <div class="stab tabbtn" data-tab="live"><span class="si">📈</span><span class="sk">운영</span></div>
+    <div class="stab tabbtn" data-tab="mail"><span class="si">✉️</span><span class="sk">편지</span><i class="sbadge" id="tbMail" hidden></i></div>
+    <div class="stab tabbtn" data-tab="event"><span class="si">🏆</span><span class="sk">행사</span><i class="sbadge" id="tbEvent" hidden></i></div>
+  </div>
 </div>
 
 <!-- ══ 보스 아레나 ══
@@ -97,11 +112,22 @@
      사무실 그대로. 버튼으로 때리지 않는다 — 직원들이 알아서 친다. -->
 <div id="arena">
   <div class="ahead">
+    <!-- 이 화면이 무엇인지를 맨 위에 글자로 적는다. 괴물이 사무실에 서
+         있으면 처음 보는 사람은 이게 왜 경영 게임인지 알 수가 없다 —
+         이건 전투가 아니라 **게임을 만드는 중**이고, 괴물은 아직 형태가
+         없는 아이디어다. -->
+    <div class="adev">
+      <span class="dk">🎮 게임 개발 중</span>
+      <b id="aDevTitle">—</b>
+      <span class="dm" id="aDevMeta"></span>
+    </div>
     <div class="atop">
       <span class="apips" id="aPips"></span>
       <span class="atitle" id="aTitle">—</span>
       <span class="aturn" id="aTurn"></span>
     </div>
+    <!-- 공정. 지금 어느 단계를 만들고 있나. -->
+    <div class="asteps" id="aSteps"></div>
     <div class="aname">
       <span class="aico" id="aIco">👾</span>
       <b id="aBossName">—</b>
@@ -110,7 +136,7 @@
     </div>
     <div class="ahp"><div class="ahpf" id="aBossHp"></div><span class="ahptx" id="aBossHpTx"></span></div>
     <div class="atot"><div class="atotf" id="aTotal"></div></div>
-    <div class="atotk">전체 진행</div>
+    <div class="atotk" id="aTotalK">게임 완성도</div>
     <!-- 지금까지 쌓인 품질. 보스를 때리는 동안 무엇이 오르고 있는지가
          보여야, 어느 카드를 고를지가 판단이 된다. -->
     <div class="aq" id="aQual"></div>
@@ -161,9 +187,12 @@
   </div>
   <div class="hpwrap"><div class="hpbar" id="bHp"></div><span class="hptx" id="bHpTx"></span></div>
   <div class="brow">
-    <button class="btn primary" id="bArena">⚔ 전투 화면</button>
+    <!-- "전투 화면" 이라고 적혀 있던 자리다. 이 게임에서 저 버튼이 여는 것은
+         전투가 아니라 개발 현장이고, 이름이 그렇게 적혀 있어야 처음 보는
+         사람이 자기가 무엇을 하고 있는지 안다. -->
+    <button class="btn primary" id="bArena">🎮 개발 현장</button>
     <button class="btn" id="bTurn">한 라운드</button>
-    <button class="btn" id="bBossCam">👾 보스</button>
+    <button class="btn" id="bBossCam">👾 아이디어</button>
     <span class="bcost" id="bCost"></span>
   </div>
   <!-- 도우미: 가방 속 소모품을 배틀 중에 바로 쓴다 -->
@@ -186,6 +215,15 @@
        결과창에서 처음 알게 되면 그건 통보지 판단 재료가 아니다. -->
   <div class="pgrow warn" id="pgComp" hidden><span>😵 완성도</span><b>100%</b></div>
   <div class="pgt" id="pgTeam"></div>
+</div>
+
+<!-- ══ 진행 중인 이벤트 ══
+     게임덱스가 남긴 화제처럼, 지금 회사 전체에 걸려 있는 버프. 몇 주
+     남았는지가 보여야 "그 안에 하나 더 낸다" 가 계획이 된다. -->
+<div id="buff" class="card">
+  <span class="bfk">이벤트</span>
+  <b id="bfKo">—</b>
+  <span class="bfv" id="bfVal"></span>
 </div>
 
 <!-- ══ 판매 현황 — 출시한 게임이 지금 얼마나 팔리고 있나 ══
