@@ -13,6 +13,7 @@ import {
   marketingCost, floorCost, comboScore,
   STARTUP_GRANT, rescueAmount, rescueMorale,
   SHOP, shopItem, shopFor, GEAR_SLOTS, OVERTIME, DEX_SECTIONS, HP, bossFor, RAID,
+  CONTENT_BY_ID, CONTENT_BASE, CONTENT_GACHA_COST, CONTENT_GACHA_DUP,
 } from './data.js';
 import {
   FURNITURE_BY_ID, RESELL, comfortScore, comfortLevel, footprint, overlaps,
@@ -44,6 +45,12 @@ import { mulberry32 } from '../core/math.js';
    the old key is dropped so it does not sit in storage forever. */
 const SAVE_KEY = 'socialdev3d.save.v2';
 const LEGACY_KEYS = ['socialdev3d.save.v1'];
+
+/* 이름이 바뀐 소재의 옛 id. 세이브 안에는 contentId, dex.contents,
+   discovered 의 키("장르|소재") 세 군데에 박혀 있으므로 불러올 때 한 번에
+   옮긴다. 표를 남겨 두면 다음에 또 이름을 고칠 때 줄만 늘리면 된다. */
+const CONTENT_ALIAS = { sports2: 'soccer' };
+const aliasContent = (id) => CONTENT_ALIAS[id] || id;
 
 export class Game {
   constructor(seed = Date.now() & 0x7fffffff) {
@@ -94,6 +101,9 @@ export class Game {
       // 상점에서 산 소모품·장비가 쌓이는 가방. { itemId: 개수 }
       // (가구 가방은 Game.bag 이다 — 이름은 같지만 다른 물건이고 다른 곳에 산다.)
       bag: {},
+      // 뽑아서 가지고 있는 소재. 개발 중 '게임 내용' 카드는 여기서만 나온다.
+      contentsOwned: [...CONTENT_BASE],
+      gachaPulls: 0,
       // 도감. 본 것과 잡은 것이 여기에 남는다.
       dex: { genres: {}, contents: {}, bosses: {}, items: {}, jobs: {} },
       overtimeUsed: false,
@@ -157,8 +167,98 @@ export class Game {
     return {
       research: this.company.research,
       trends: this.company.trends,
+      contents: this.ownedContents(),
       ...extra,
     };
+  }
+
+  /* ---------- 소재 뽑기 ----------
+     코인은 쌓이기만 하고 쓸 데가 없었고, 소재는 처음부터 전부 열려 있어서
+     "쓸 수 있는 재료가 늘어난다" 는 감각이 없었다. 둘을 붙였다. */
+  ownedContents() {
+    const c = this.company;
+    if (!c.contentsOwned || !c.contentsOwned.length) c.contentsOwned = [...CONTENT_BASE];
+    return c.contentsOwned;
+  }
+
+  hasContent(id) { return this.ownedContents().includes(id); }
+
+  lockedContents() {
+    const have = new Set(this.ownedContents());
+    return CONTENTS.filter((c) => !have.has(c.id));
+  }
+
+  gachaCost() { return CONTENT_GACHA_COST; }
+
+  /* 한 번 뽑는다. 남은 소재가 있으면 그중 하나가 열리고, 다 모았으면
+     코인을 돌려주는 대신 연구 포인트로 바꿔 준다 — 눌러서 손해 보는
+     버튼은 만들지 않는다. */
+  drawContent() {
+    const c = this.company;
+    const cost = this.gachaCost();
+    if (c.coins < cost) return { ok: false, why: `코인이 부족합니다 (🪙 ${cost} 필요)` };
+    c.coins -= cost;
+    c.gachaPulls = (c.gachaPulls || 0) + 1;
+    const locked = this.lockedContents();
+    if (!locked.length) {
+      c.researchPts += CONTENT_GACHA_DUP.research;
+      c.coins += CONTENT_GACHA_DUP.coins;
+      this.note(`소재를 모두 모았습니다. 연구 +${CONTENT_GACHA_DUP.research} · 코인 +${CONTENT_GACHA_DUP.coins}`, 'good');
+      this.emit('gacha', { dup: true });
+      this.save();
+      return { ok: true, dup: true };
+    }
+    const got = locked[Math.floor(this.rnd() * locked.length)];
+    this.ownedContents().push(got.id);
+    this.dexSee('contents', got.id);
+    this.note(`새 소재 획득: ${got.ko}! (남은 소재 ${locked.length - 1}종)`, 'good');
+    this.emit('gacha', { content: got, left: locked.length - 1 });
+    this.checkTasks();
+    this.save();
+    return { ok: true, content: got, left: locked.length - 1 };
+  }
+
+  /* ---------- 테스트 도구 ----------
+     디버그용 손잡이. 사장이 층·랭크 해금 같은 후반 화면을 직접 눌러 볼 수
+     있어야 하고, 그러자고 몇 시간을 플레이하게 만들 이유는 없다. 회사 탭
+     맨 아래 '테스트 도구' 에서만 부른다. */
+  cheatMoney(n = 1_000_000) {
+    this.earn(n);
+    this.note(`[테스트] 자금 +₩${Math.round(n).toLocaleString('ko-KR')}`, 'good');
+    this.emit('money', this.company.money);
+    this.save();
+    return { ok: true, money: this.company.money };
+  }
+
+  /* 랭크는 팬 수가 올린다. 랭크만 억지로 밀어 올리면 팬과 어긋나서 다음
+     승급이 즉시 또 터지므로, 다음 문턱까지 팬을 채워 정상 경로로 올린다. */
+  cheatRankUp(times = 1) {
+    for (let i = 0; i < times; i++) {
+      const need = RANK_UP_FANS(this.company.rank);
+      if (this.company.fans < need) this.company.fans = need;
+      this._maybeRankUp();
+    }
+    this.emit('staff', null);
+    this.checkTasks();
+    this.save();
+    return { ok: true, rank: this.company.rank, maxFloors: this.company.maxFloors };
+  }
+
+  cheatCoins(n = 10) {
+    this.company.coins += n;
+    this.note(`[테스트] 코인 +${n}`, 'good');
+    this.emit('money', this.company.money);
+    this.save();
+    return { ok: true, coins: this.company.coins };
+  }
+
+  cheatStamina() {
+    this.company.stamina = this.info().staminaMax;
+    for (const s of this.staff) { s.hp = s.hpMax; }
+    this.note('[테스트] 스태미나·체력 회복', 'good');
+    this.emit('staff', null);
+    this.save();
+    return { ok: true };
   }
 
   roleOf(staffer) { return role(staffer); }
@@ -1012,7 +1112,12 @@ export class Game {
      single discovered combo from being the answer forever. */
   rollTrends() {
     const g = GENRES[Math.floor(this.rnd() * GENRES.length)];
-    const c = CONTENTS[Math.floor(this.rnd() * CONTENTS.length)];
+    // 유행은 **가지고 있는 소재** 중에서 고른다. 뽑지도 않은 소재가 유행하면
+    // 보너스를 눈앞에 두고 손이 닿지 않는 분기가 생긴다.
+    const owned = this.ownedContents();
+    const pool = CONTENTS.filter((x) => owned.includes(x.id));
+    const from = pool.length ? pool : CONTENTS;
+    const c = from[Math.floor(this.rnd() * from.length)];
     this.company.trends = {
       genreId: g.id, genreKo: g.ko,
       contentId: c.id, contentKo: c.ko,
@@ -1208,7 +1313,7 @@ export class Game {
       const d = JSON.parse(raw);
       const g = new Game(d.seed);
       g.company = d.company; g.staff = d.staff; g.proposals = d.proposals;
-      g.project = d.project; g.finished = d.finished; g.releases = d.releases;
+      g.project = d.project; g.finished = d.finished; g.releases = d.releases || [];
       g.candidates = d.candidates || []; g.history = d.history || [];
       g.bag = d.bag || [];
       g.log = [];
@@ -1240,6 +1345,46 @@ export class Game {
       c.bag = c.bag || {};
       c.dex = c.dex || {};
       for (const k of ['genres', 'contents', 'bosses', 'items', 'jobs']) c.dex[k] = c.dex[k] || {};
+
+      /* 이름이 바뀐 소재를 옮긴다. 세 군데에 박혀 있다: 진행 중/완성된
+         프로젝트의 contentId, 도감, 조합 기록의 키. */
+      for (const pj of [g.project, g.finished, ...g.releases]) {
+        if (pj && pj.contentId) pj.contentId = aliasContent(pj.contentId);
+      }
+      for (const [k, v] of Object.entries(c.dex.contents)) {
+        const nk = aliasContent(k);
+        if (nk !== k) { delete c.dex.contents[k]; c.dex.contents[nk] = v; }
+      }
+      for (const [k, v] of Object.entries(c.discovered)) {
+        const [gid, cid] = k.split('|');
+        const nk = gid + '|' + aliasContent(cid);
+        if (nk !== k) { delete c.discovered[k]; c.discovered[nk] = v; }
+      }
+      c.recentCombos = (c.recentCombos || []).map((k) => {
+        const [gid, cid] = k.split('|');
+        return gid + '|' + aliasContent(cid);
+      });
+
+      /* 소재 뽑기가 없던 세이브: 기본 소재에 더해 **이미 써 본 것**을 전부
+         가진 것으로 친다. 예전에 만든 게임의 소재를 뒤늦게 잠그면, 아무
+         잘못도 하지 않은 회사가 자기 대표작을 못 만들게 된다. */
+      if (!Array.isArray(c.contentsOwned) || !c.contentsOwned.length) {
+        const seen = new Set(CONTENT_BASE);
+        for (const k of Object.keys(c.dex.contents)) seen.add(k);
+        for (const pj of [g.project, g.finished, ...g.releases]) {
+          if (pj && pj.contentId) seen.add(pj.contentId);
+        }
+        c.contentsOwned = [...seen].filter((id) => CONTENT_BY_ID.has(id));
+      } else {
+        c.contentsOwned = [...new Set(c.contentsOwned.map(aliasContent))]
+          .filter((id) => CONTENT_BY_ID.has(id));
+      }
+      c.gachaPulls = c.gachaPulls || 0;
+      if (c.trends && c.trends.contentId) {
+        c.trends.contentId = aliasContent(c.trends.contentId);
+        const tc = CONTENT_BY_ID.get(c.trends.contentId);
+        if (tc) c.trends.contentKo = tc.ko;
+      }
       c.overtimeUsed = !!c.overtimeUsed;
       c.spentOnShop = c.spentOnShop || 0;
       if (!c.trends) g.rollTrends();

@@ -118,6 +118,12 @@ for (let week = 0; week < YEARS * 48; week++) {
     }
   }
 
+  // ── 소재 뽑기 ──
+  // 코인이 모이면 뽑는다. 다른 데 쓸 곳이 없으므로 실제 플레이어도 그렇게
+  // 한다. 이걸 빼면 시뮬레이션이 기본 소재 6종으로만 10년을 돌아서, 궁합
+  // 좋은 조합을 못 만나는 쪽으로 밸런스가 기운다.
+  while (g.company.coins >= g.gachaCost() && g.lockedContents().length) g.drawContent();
+
   // ── keep a project running ──
   if (!g.project && !g.finished) {
     if (!g.proposals.length && c.stamina > 2) g.makeProposal();

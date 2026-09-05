@@ -106,6 +106,113 @@ await step('음료는 스태미나를 그 자리에서 채운다', async () => {
   return `${r.before} → ${r.after} · 남은 ${r.left}개`;
 });
 
+/* 상점 탭이 '가구점' 을 열어 버리던 시절이 있었다: hud.js 안에 panelShop 이
+   두 번 선언돼 있어서 나중 선언(가구점)이 조용히 이겼고, 음식도 장비도
+   도감도 화면에서 사라져 있었다. 화면에 무엇이 뜨는지로 못을 박는다. */
+await step('상점 탭은 물건 상점을 연다 (가구점이 아니라)', async () => {
+  await openTab('shop');
+  await page.waitForTimeout(350);
+  const t = await page.evaluate(() => document.getElementById('panel').textContent);
+  if (t.includes('가구점')) throw new Error('상점 탭에 가구점이 떴다');
+  if (!t.includes('상점 ·')) throw new Error('물건 상점 머리말이 없다');
+  if (!t.includes('소재 뽑기')) throw new Error('소재 뽑기 구획이 없다');
+  const kinds = await page.evaluate(() => document.querySelectorAll('#panel .shopcat .c').length);
+  if (!kinds) throw new Error('상점 분류 탭이 없다');
+  return `분류 ${kinds}개 · 가방/상점/뽑기`;
+});
+
+/* ── 소재 뽑기 ──
+   소재는 처음부터 다 열려 있지 않다. 코인으로 뽑고, 뽑은 것만 개발 중
+   '게임 내용' 카드로 나온다. 그 두 문장이 실제로 지켜지는지 본다. */
+await step('소재는 기본 6종으로 시작한다', async () => {
+  const r = await page.evaluate(() => ({
+    owned: window.__game.ownedContents().length,
+    locked: window.__game.lockedContents().length,
+  }));
+  if (r.owned !== 6) throw new Error(`기본 소재가 ${r.owned}종`);
+  if (!r.locked) throw new Error('잠긴 소재가 없다');
+  return `보유 ${r.owned}종 · 잠김 ${r.locked}종`;
+});
+
+await step('코인으로 뽑으면 소재가 하나 열린다', async () => {
+  const r = await page.evaluate(() => {
+    const g = window.__game;
+    g.company.coins = 9;
+    const before = { coins: g.company.coins, owned: g.ownedContents().length };
+    const res = g.drawContent();
+    return { before, res: { ok: res.ok, id: res.content && res.content.id },
+      after: { coins: g.company.coins, owned: g.ownedContents().length },
+      dex: !!g.company.dex.contents[res.content && res.content.id] };
+  });
+  if (!r.res.ok) throw new Error('뽑기 실패');
+  if (r.after.owned !== r.before.owned + 1) throw new Error('소재가 안 늘었다');
+  if (r.after.coins !== r.before.coins - 3) throw new Error(`코인 차감이 ${r.before.coins}→${r.after.coins}`);
+  if (!r.dex) throw new Error('도감에 안 남았다');
+  return `코인 ${r.before.coins}→${r.after.coins} · ${r.res.id} 획득`;
+});
+
+await step('코인이 모자라면 뽑히지 않는다', async () => {
+  const r = await page.evaluate(() => {
+    const g = window.__game;
+    g.company.coins = 0;
+    const owned = g.ownedContents().length;
+    const res = g.drawContent();
+    return { ok: res.ok, why: res.why, owned, now: g.ownedContents().length };
+  });
+  if (r.ok) throw new Error('코인 없이 뽑혔다');
+  if (r.now !== r.owned) throw new Error('실패했는데 소재가 늘었다');
+  return r.why;
+});
+
+await step('게임 내용 카드는 가진 소재 중에서만 나온다', async () => {
+  const r = await page.evaluate(() => {
+    const g = window.__game;
+    // 회의 연출을 끈다. 켜 두면 카드가 뜰 때 회의가 시작되고, body.meeting 이
+    // 붙은 채로 다음 검사(진행 패널)까지 흘러가 패널이 숨어 있다.
+    window.__view.meetingScenes = false;
+    const owned = new Set(g.ownedContents());
+    // 개발을 하나 걸고 1번 보스를 즉사시켜 카드를 뽑게 한다.
+    g.company.stamina = g.company.staminaMax;
+    g.makeProposal();
+    const pr = g.proposals[0];
+    g.beginDevelopment({
+      proposalId: pr.id, platformId: g.availablePlatforms()[0].id,
+      monetizeId: g.availableMonetize()[0].id, teamIds: g.staff.map((s) => s.id),
+    });
+    g.project.hp = 1;
+    g.devTurn();
+    const cards = g.project.pendingCards;
+    const opts = cards && cards.kind === 'content' ? cards.options.map((o) => o.id) : null;
+    return { opts, outside: opts ? opts.filter((id) => !owned.has(id)) : null, owned: [...owned] };
+  });
+  if (!r.opts) throw new Error('내용 카드가 안 뜸');
+  if (r.opts.length !== 3) throw new Error(`카드가 ${r.opts.length}장`);
+  if (r.outside.length) throw new Error('안 가진 소재가 카드로 나옴: ' + r.outside.join(','));
+  return `${r.opts.join(' / ')} (보유 ${r.owned.length}종 중에서)`;
+});
+
+await step('개발을 물리고 원래 자리로', async () => {
+  await page.evaluate(() => {
+    const g = window.__game, u = window.__ui;
+    g.project = null;
+    g.proposals = [];
+    u.busy = false;
+    u.closeModal();
+    window.__view.skipMeeting();
+    g.emit('project', null);
+  });
+  await page.waitForTimeout(400);
+  const r = await page.evaluate(() => ({
+    project: !!window.__game.project,
+    meeting: document.body.classList.contains('meeting'),
+    modal: document.getElementById('modal').classList.contains('show'),
+  }));
+  if (r.project) throw new Error('프로젝트가 안 지워짐');
+  if (r.meeting) throw new Error('회의 연출이 안 끝남');
+  if (r.modal) throw new Error('카드 모달이 안 닫힘');
+  return '정리';
+});
+
 await step('장비를 채우면 능력치와 품질 축이 같이 오른다', async () => {
   const r = await page.evaluate(() => {
     const g = window.__game;
@@ -178,11 +285,12 @@ await step('진행 패널이 완성 값과 같은 숫자를 보여준다', async
       shownFun: document.getElementById('pgFun').textContent,
       shownBugs: document.getElementById('pgBugs').textContent,
       visible: getComputedStyle(document.getElementById('prog')).display !== 'none',
+      cls: document.body.className,
       stats: document.querySelectorAll('#pgStats .pgs').length,
       team: document.querySelectorAll('#pgTeam .pgm').length,
     };
   });
-  if (!r.visible) throw new Error('진행 패널이 안 보인다');
+  if (!r.visible) throw new Error(`진행 패널이 안 보인다 (body="${r.cls}")`);
   if (r.stats !== 5) throw new Error(`품질 항목이 ${r.stats}개`);
   if (!r.team) throw new Error('팀 체력이 안 보인다');
   if (String(r.fun) !== r.shownFun.replace(/,/g, '')) throw new Error(`재미 값 불일치 ${r.fun} vs ${r.shownFun}`);

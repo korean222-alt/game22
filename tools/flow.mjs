@@ -104,6 +104,18 @@ await step('회사 이름 팝업 → 지원금', async () => {
   if (s.money !== 180000) throw new Error(`지원금이 ₩${s.money.toLocaleString()}`);
   return `「플로우 스튜디오」 · 지원금 ₩${s.money.toLocaleString()}`;
 });
+/* 창업이 끝나면 '홈 화면에 추가' 안내가 화면 전체를 덮는다. 실제 플레이어는
+   여기서 닫기를 누르고, 이 하네스도 그래야 한다 — 안 닫으면 그 뒤의 터치
+   검사가 전부 이 카드에 맞고 튕겨 나간다. */
+await step('설치 안내를 닫는다', async () => {
+  const shown = await page.evaluate(() => document.getElementById('a2hs').classList.contains('show'));
+  if (!shown) return '안 뜸 (건너뜀)';
+  await page.click('#a2close');
+  await page.waitForTimeout(250);
+  const still = await page.evaluate(() => document.getElementById('a2hs').classList.contains('show'));
+  if (still) throw new Error('닫기를 눌러도 안 닫힘');
+  return '닫기';
+});
 await step('튜토리얼이 첫 단계를 가리킨다', async () => {
   const s = await state();
   if (s.tut !== 'desk') throw new Error('첫 단계가 desk 가 아님: ' + s.tut);
@@ -237,6 +249,102 @@ await step('책상을 여러 개 늘린다', async () => {
   return `책상 ${s.desks}개 · 쾌적도 ${cm}`;
 });
 
+/* ── 배치 조작 ──
+   제보: "배치 모드에서 책상을 움직이려는데 화면이 움직인다." 원인은 손가락
+   수로 역할을 나눈 것이었다 — 가로로 든 폰에서 손바닥이 화면에 닿으면
+   접점이 둘이 되고, 그 순간 가구 드래그가 카메라 팬으로 바뀐다. 이제
+   배치 중에는 캔버스가 카메라를 아예 건드리지 않고, 카메라는 조이스틱이
+   맡는다. 아래 세 검사가 그 계약이다. */
+console.log('\n── 3-b. 배치 조작 (드래그 · 십자 · 조이스틱) ──');
+const camState = () => page.evaluate(() => ({
+  az: +window.__cam.az.toFixed(4), el: +window.__cam.el.toFixed(4),
+  gx: +window.__cam.gx.toFixed(2), gz: +window.__cam.gz.toFixed(2),
+  d: +window.__cam.goalDist.toFixed(2),
+}));
+const cdp = await ctx.newCDPSession(page);
+const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+/* CDP 의 터치 상태는 세션에 남는다. 한 제스처가 끝날 때마다 반드시 비워
+   두지 않으면 다음 touchStart 가 "이미 눌린 손가락" 위에서 시작해, 이벤트가
+   통째로 안 오거나 엉뚱한 포인터로 온다 — 검사 실패의 절반이 그 탓이었다. */
+const gesture = async (frames) => {
+  try {
+    for (const f of frames) { await touch(f.t, f.p); await page.waitForTimeout(f.w || 25); }
+  } finally {
+    await touch('touchEnd', []);
+    await page.waitForTimeout(150);
+  }
+};
+
+await step('배치 모드를 다시 연다', async () => {
+  await page.evaluate(() => {
+    const g = window.__game, v = window.__view;
+    g.company.money = 5_000_000;
+    g.buyFurniture('plant');
+    v.startPlacing(g.bag[g.bag.length - 1].uid);
+    window.__ui.togglePanel(true);
+    window.__ui.renderPlaceBar();
+  });
+  await page.waitForTimeout(300);
+  if (!(await state()).placing) throw new Error('배치 모드가 안 켜짐');
+  return '화분 배치 중';
+});
+await step('두 손가락으로 끌어도 카메라가 움직이지 않는다', async () => {
+  const c0 = await camState();
+  const frames = [{ t: 'touchStart', p: [{ x: 300, y: 200, id: 1 }, { x: 520, y: 260, id: 2 }] }];
+  for (let i = 1; i <= 8; i++) {
+    frames.push({ t: 'touchMove', p: [{ x: 300 - i * 7, y: 200, id: 1 }, { x: 520 + i * 7, y: 260 + i * 5, id: 2 }] });
+  }
+  await gesture(frames);
+  const c1 = await camState();
+  if (JSON.stringify(c0) !== JSON.stringify(c1)) {
+    throw new Error(`카메라가 움직임: ${JSON.stringify(c0)} → ${JSON.stringify(c1)}`);
+  }
+  return `az/el/거리 그대로 (${c1.az}/${c1.el}/${c1.d})`;
+});
+await step('한 손가락 드래그는 가구를 옮긴다', async () => {
+  const p0 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
+  const frames = [{ t: 'touchStart', p: [{ x: 360, y: 210, id: 3 }] }];
+  for (let i = 1; i <= 8; i++) frames.push({ t: 'touchMove', p: [{ x: 360 + i * 9, y: 210 + i * 4, id: 3 }] });
+  await gesture(frames);
+  const p1 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
+  if (p0.x === p1.x && p0.z === p1.z) throw new Error('가구가 그대로');
+  return `(${p0.x}, ${p0.z}) → (${p1.x}, ${p1.z})`;
+});
+await step('십자 버튼이 반 칸씩 옮긴다', async () => {
+  const p0 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
+  const n = await page.evaluate(() => document.querySelectorAll('#placebar .pnudge .nb').length);
+  if (n !== 4) throw new Error(`십자 버튼이 ${n}개`);
+  await page.evaluate(() => document.querySelectorAll('#placebar .pnudge .nb')[0].click());
+  await page.waitForTimeout(120);
+  const p1 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
+  const d = Math.hypot(p1.x - p0.x, p1.z - p0.z);
+  if (Math.abs(d - 0.5) > 1e-6) throw new Error(`반 칸이 아니라 ${d} 만큼 움직임`);
+  return `(${p0.x}, ${p0.z}) → (${p1.x}, ${p1.z})`;
+});
+await step('조이스틱은 배치 중에도 카메라를 돌린다', async () => {
+  const c0 = await camState();
+  const r = await page.evaluate(() => {
+    const b = document.getElementById('camStick').getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width, shown: b.width > 0 };
+  });
+  if (!r.shown) throw new Error('조이스틱이 화면에 없음');
+  // 소프트웨어 GL 은 초당 몇 프레임밖에 안 돈다. 조이스틱은 프레임마다
+  // 적분되므로, 짧게 기다리면 프레임이 한 장도 안 지나갈 수 있다.
+  await gesture([
+    { t: 'touchStart', p: [{ x: r.x, y: r.y, id: 7 }] },
+    { t: 'touchMove', p: [{ x: r.x + r.w * 0.42, y: r.y, id: 7 }], w: 2500 },
+  ]);
+  const c1 = await camState();
+  if (c0.az === c1.az) throw new Error('방위각이 그대로');
+  return `az ${c0.az} → ${c1.az}`;
+});
+await step('배치를 마치고 나온다', async () => {
+  await page.evaluate(() => { window.__view.stopPlacing(); window.__ui.renderPlaceBar(); });
+  await page.waitForTimeout(200);
+  if ((await state()).placing) throw new Error('배치 모드가 안 꺼짐');
+  return '취소';
+});
+
 console.log('\n── 4. 직원 탭 (채용 · 성장) ──');
 await openTab('staff'); await page.waitForTimeout(250);
 await step('빈 책상이 없으면 채용이 막힌다', async () => {
@@ -367,10 +475,15 @@ await step('보스 HP 바가 화면에 뜬다', async () => {
    한 라운드에 죽을 수도 있다. */
 await step('스켈레톤이 매 프레임 갱신된다', async () => {
   const a = await page.evaluate(() => Array.from(window.__view.boss.inst.skel.jointData.slice(0, 32)));
-  await page.waitForTimeout(700);
-  const b = await page.evaluate(() => Array.from(window.__view.boss.inst.skel.jointData.slice(0, 32)));
   if (a.some((v) => !Number.isFinite(v))) throw new Error('조인트 행렬에 NaN');
-  const moved = a.some((v, i) => Math.abs(v - b[i]) > 1e-5);
+  // 소프트웨어 GL 은 초당 한두 프레임이다. 한 번만 재고 끝내면 그 사이에
+  // 프레임이 한 장도 안 지나가서, 멀쩡한 애니메이션을 멈췄다고 부른다.
+  let moved = false, b = a;
+  for (let i = 0; i < 12 && !moved; i++) {
+    await page.waitForTimeout(500);
+    b = await page.evaluate(() => Array.from(window.__view.boss.inst.skel.jointData.slice(0, 32)));
+    moved = a.some((v, k) => Math.abs(v - b[k]) > 1e-5);
+  }
   if (!moved) throw new Error('애니메이션이 멈춰 있음');
   return '조인트 행렬 갱신 확인';
 });
@@ -546,6 +659,48 @@ await step('저장 후 새로고침 → 회사 복원', async () => {
   if (after.floors !== before.floors) throw new Error(`층수 ${before.floors} → ${after.floors}`);
   if (after.staff !== before.staff) throw new Error(`직원 ${before.staff} → ${after.staff}`);
   return `직원 ${after.staff} · ${after.floors}층 · 출시 ${after.shipped}작 복원`;
+});
+/* 소재 '스포츠'(sports2) 는 장르 '스포츠' 와 이름이 겹쳐서 '축구'(soccer) 로
+   바뀌었다. 옛 세이브 안에는 그 id 가 프로젝트·도감·조합 기록 세 군데에
+   박혀 있으므로, 불러올 때 전부 옮겨져야 한다. */
+await step('이름이 바뀐 소재(sports2 → soccer)를 옛 세이브에서 옮긴다', async () => {
+  await page.evaluate(() => {
+    const key = 'socialdev3d.save.v2';
+    const d = JSON.parse(localStorage.getItem(key));
+    d.company.dex.contents = { ...d.company.dex.contents, sports2: true };
+    d.company.discovered = { ...d.company.discovered, 'sports|sports2': 1.6 };
+    d.company.recentCombos = ['sports|sports2'];
+    d.company.trends = { genreId: 'sports', genreKo: '스포츠', contentId: 'sports2', contentKo: '스포츠', setAt: '1-1' };
+    delete d.company.contentsOwned;      // 뽑기가 없던 시절의 세이브
+    if (d.releases && d.releases[0]) d.releases[0].contentId = 'sports2';
+    localStorage.setItem(key, JSON.stringify(d));
+  });
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => document.getElementById('boot')?.classList.contains('gone'), { timeout: 180000 });
+  await page.waitForTimeout(1200);
+  await closeModal(); await page.waitForTimeout(300);
+  const r = await page.evaluate(() => {
+    const c = window.__game.company;
+    return {
+      dex: Object.keys(c.dex.contents),
+      disc: Object.keys(c.discovered),
+      recent: c.recentCombos,
+      owned: c.contentsOwned,
+      trendKo: c.trends.contentKo,
+      rel: (window.__game.releases[0] || {}).contentId,
+    };
+  });
+  if (r.dex.includes('sports2')) throw new Error('도감에 옛 id 가 남음');
+  if (!r.dex.includes('soccer')) throw new Error('도감이 새 id 로 안 옮겨짐');
+  if (r.disc.includes('sports|sports2')) throw new Error('조합 기록에 옛 id 가 남음');
+  if (!r.disc.includes('sports|soccer')) throw new Error('조합 기록이 안 옮겨짐');
+  if (r.recent[0] !== 'sports|soccer') throw new Error('재탕 판정 기록이 안 옮겨짐: ' + r.recent[0]);
+  if (r.rel && r.rel !== 'soccer') throw new Error('출시작의 소재가 안 옮겨짐: ' + r.rel);
+  if (r.trendKo !== '축구') throw new Error('유행 표시가 안 바뀜: ' + r.trendKo);
+  // 이미 써 본 소재는 잠기지 않는다 — 아무 잘못 없는 회사가 자기 대표작을
+  // 못 만들게 되는 것이 이 이관의 유일한 실패 방식이다.
+  if (!r.owned.includes('soccer')) throw new Error('써 본 소재가 잠김');
+  return `도감·조합·유행 모두 축구로 · 보유 소재 ${r.owned.length}종`;
 });
 
 console.log('\n── 10. 렌더러 ──');

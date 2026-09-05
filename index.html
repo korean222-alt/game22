@@ -64,6 +64,19 @@
 <!-- ══ floor selector ══ -->
 <div id="floors"></div>
 
+<!-- ══ 카메라 조이스틱 ══
+     화면을 손가락으로 끌어 돌리는 것이 불편하다는 제보에서 나왔고, 배치
+     모드에서는 캔버스를 가구가 통째로 가져가므로 카메라를 움직일 길이
+     여기 말고는 없다. ⟳ 로 회전/이동을 바꾸고, ＋ − 로 확대·축소한다. -->
+<div id="campad">
+  <div id="camStick"><span class="ck"></span><div class="cknob"></div></div>
+  <div class="ccol">
+    <button class="cbtn" id="camMode" aria-label="조이스틱 기능 바꾸기">⟳</button>
+    <button class="cbtn" id="camIn" aria-label="확대">＋</button>
+    <button class="cbtn" id="camOut" aria-label="축소">−</button>
+  </div>
+</div>
+
 <!-- ══ side panel ══ -->
 <div id="side" class="card">
   <div id="tabs">

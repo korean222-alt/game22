@@ -46,6 +46,10 @@ const state = () => page.evaluate(() => {
     finished: g.finished ? g.finished.title : null,
     salesVisible: document.body.classList.contains('has-sales'),
     hpBarW: document.getElementById('aBossHp').style.width,
+    set: v.arenaSet ? v.arenaSet.id : null,
+    setKo: v.arenaSet ? v.arenaSet.def.ko : null,
+    bossX: v.boss ? Math.round(v.boss.x) : null,
+    title: document.getElementById('aTitle').textContent,
   };
 });
 const wait = async (fn, ms = 30000, what = '조건') => {
@@ -140,6 +144,19 @@ await step('아레나에 들어가면 경영 UI 가 비켜선다', async () => {
   return `보스 ${s.bossName} · 파티 ${s.party}명`;
 });
 
+/* 세트장 — 예전에는 보스가 사무실 복도 교차점에 섰다. 규칙상 안전하지만
+   연출로는 "복도 한복판에 오크가 있다" 였다. 이제 몬스터마다 자기 무대가
+   있고, 무대는 사무실에서 아주 멀리 떨어진 좌표에 지어진다. */
+await step('보스마다 전용 세트장에 선다', async () => {
+  const s = await wait((x) => x.set, 30000, '세트장');
+  if (s.set !== 'cat') throw new Error('1번 보스의 세트가 아님: ' + s.set);
+  if (s.bossX < 400) throw new Error(`보스가 아직 사무실 안이다 (x=${s.bossX})`);
+  if (!s.title.includes(s.setKo)) throw new Error('머리말에 무대 이름이 없음: ' + s.title);
+  const drawn = await page.evaluate(() => !!window.__view.gArena);
+  if (!drawn) throw new Error('세트장 메시가 GPU 에 안 올라감');
+  return `${s.setKo} (x=${s.bossX})`;
+});
+
 await step('버튼을 누르지 않아도 직원들이 알아서 때린다', async () => {
   const a = await state();
   const b = await wait((s) => s.strikes > a.strikes + 4, 20000, '타격 누적');
@@ -172,9 +189,24 @@ await step('내용을 고르면 합성 팝업이 뜨고 2번 보스가 선다', 
   return `${fusion.title} → ${s.bossName}`;
 });
 
-await step('2번 보스는 다른 몸으로 나온다', async () => {
+await step('2번 보스는 다른 몸으로 나온다 — 무대도 같이 바뀐다', async () => {
   const s = await wait((x) => x.boss && x.boss !== 'cat', 30000, '보스 모델 교체');
-  return `${s.boss}`;
+  const t = await wait((x) => x.set === s.boss, 15000, '세트장 교체');
+  return `${s.boss} · ${t.setKo}`;
+});
+
+await step('아레나에서 나오면 사무실로 돌아온다', async () => {
+  await page.evaluate(() => window.__ui.exitArena());
+  await page.waitForTimeout(600);
+  const s = await state();
+  if (s.arena) throw new Error('아레나가 안 꺼짐');
+  if (s.set) throw new Error('세트장이 안 치워짐');
+  if (s.bossX > 200) throw new Error(`보스가 아직 무대에 있다 (x=${s.bossX})`);
+  const gone = await page.evaluate(() => !window.__view.gArena);
+  if (!gone) throw new Error('세트장 메시가 안 버려짐');
+  await page.evaluate(() => window.__ui.enterArena());
+  await page.waitForTimeout(600);
+  return `보스 x=${s.bossX} 로 복귀 후 다시 입장`;
 });
 
 await step('끝까지 자동으로 굴러 완성된다', async () => {

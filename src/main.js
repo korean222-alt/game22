@@ -20,6 +20,7 @@ import { buildPlaced, buildGhost } from './world/placed.js';
 import { FURNITURE_BY_ID } from './game/furniture.js';
 import { Crew, Agent, ST } from './world/agents.js';
 import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, tauntFor } from './world/boss.js';
+import { buildArena, arenaSetFor } from './world/arena.js';
 import { Game } from './game/state.js';
 import { addMotivation } from './game/staff.js';
 import * as staffMod from './game/staff.js';
@@ -98,6 +99,12 @@ class View {
     this.bossEl = null;
     this.bossProject = null;
     this.bossFloor = 0;
+    /* ---- 아레나 세트장 ----
+       사무실에서 아주 멀리 떨어진 자리에 세트를 짓고, 아레나에 들어가면
+       카메라와 보스가 통째로 그리로 간다. 사무실은 그동안 그리지 않는다 —
+       거리로 가려지긴 하지만, 안 그리는 편이 확실하고 또 싸다. */
+    this.arenaSet = null;           // { id, def, mesh, spot, camera, light }
+    this.gArena = null;
 
     /* ---- 가구 배치 ---- */
     this.place = null;              // the piece being positioned, if any
@@ -379,6 +386,8 @@ class View {
     this.boss = new Boss(def, model);
     this.boss.phase = project.phase || 0;
     this.boss.scale = 1 + (project.phase || 0) * 0.08;
+    // 아레나 안이면 세트장을 이 종에 맞춰 다시 짓고 그 위에 세운다.
+    if (this.arena) this.useArenaSet(def.id);
     const spot = this.bossSpot(project);
     this.boss.setAnchor(spot[0], spot[1], spot[2], this.bossFloor);
     this.boss.faceTo(this.bossFaceYaw());
@@ -399,22 +408,47 @@ class View {
     if (this.bossEl) this.bossEl.style.display = 'none';
   }
 
-  /* 팀이 앉아 있는 자리들의 무게중심. 아무도 자리가 없으면 그 층 한복판. */
+  /* 보스가 설 자리.
+
+     아레나에 들어가 있으면 세트장의 한복판이다. 사무실 화면에서 보여 줄
+     때(👾 보스 버튼, 개발 착수 직후의 컷)는 팀이 앉은 층의 고정 자리 —
+     통로 교차점이 어느 층에서나 비어 있는 것이 보장된 유일한 바닥이다. */
   bossSpot(project) {
-    let sx = 0, sz = 0, n = 0, floor = this.floor;
+    if (this.arena && this.arenaSet) {
+      this.bossFloor = this.floor;
+      return this.arenaSet.spot;
+    }
+    let floor = this.floor;
     for (const id of project.team) {
       const st = this.game.staff.find((x) => x.id === id);
       const d = st && this.deskOf(st);
-      if (!d) continue;
-      sx += d.x; sz += d.z; n++;
-      floor = d.floor;
+      if (d) floor = d.floor;
     }
-    // 팀이 앉은 층에, 그 층의 고정 아레나 자리로. 무게중심을 쓰면 데몬이
-    // 자기를 때리는 책상 위에 서게 된다 — 통로 교차점이 어느 층에서나
-    // 비어 있는 것이 보장된 유일한 바닥이다.
     this.bossFloor = floor;
     const spot = bossSpot(floor);
     return [spot.x, spot.y, spot.z];
+  }
+
+  /* 세트장을 이 몬스터에 맞는 것으로 갈아 끼운다. 같은 세트면 아무것도
+     하지 않는다 — 스테이지가 넘어갈 때마다 VBO 를 다시 올릴 이유가 없다. */
+  useArenaSet(monsterId) {
+    const want = arenaSetFor(monsterId).id;
+    if (this.arenaSet && this.arenaSet.id === want) return this.arenaSet;
+    const set = buildArena(want);
+    bakeAO(set.mesh, 0.62, 1.3);
+    disposeMesh(this.gArena);
+    this.gArena = upload(splitGlass(set.mesh).solid);
+    this.arenaSet = set;
+    // 메시는 GPU 에 올라갔다. CPU 쪽 배열까지 붙들고 있을 이유는 없다.
+    set.mesh = null;
+    renderer.fitLight(set.light.center, set.light.radius);
+    return set;
+  }
+
+  clearArenaSet() {
+    disposeMesh(this.gArena);
+    this.gArena = null;
+    this.arenaSet = null;
   }
 
   /* 눈이 카메라를 향하게. 궤도 모드에서는 방위각, 1인칭에서는 내 위치. */
@@ -425,8 +459,14 @@ class View {
   }
 
   /* 보스를 화면에 잡아준다. 개발 착수와 페이즈 전환에서 부른다. */
+  /* 성공하면 true. 👾 보스 버튼은 이 값을 보고 "아직 안 나타났습니다" 를
+     띄울지 정한다 — 예전에는 아무것도 돌려주지 않아서, 보스를 제대로
+     잡아 놓고도 매번 못 찾았다는 토스트가 떴다. */
   focusBoss(dist = 40) {
-    if (!this.boss || this.walk) return;
+    if (!this.boss || this.walk) return false;
+    // 아레나에서는 카메라가 이미 무대에 맞춰져 있다. 여기서 층을 따라가면
+    // 사무실 좌표로 되돌아가 무대 밖을 비춘다.
+    if (this.arena) { cam.lookAt(...this.arenaTarget()); return true; }
     if (this.bossFloor !== undefined && this.bossFloor !== this.floor) {
       this.setFloor(this.bossFloor);
       ui.renderFloors();
@@ -434,6 +474,7 @@ class View {
     cam.lookAt(this.boss.x, this.boss.y - 1.5, this.boss.z);
     cam.goalDist = dist;
     cam.el = 0.42;
+    return true;
   }
 
   /* ---- camera / floor ---- */
@@ -502,6 +543,31 @@ class View {
     if (!this.place) return;
     this.place.rot = (this.place.rot + 1) & 3;
     this.refreshGhost();
+  }
+
+  /* 반 칸씩 밀기. 드래그 없이도 자리를 맞출 수 있어야 한다 — 손가락 하나로
+     반 칸을 조준하는 것은 폰에서 거의 불가능하고, 드래그가 어떤 이유로든
+     안 먹는 기기에서는 이것이 유일한 길이 된다.
+
+     방향은 **화면 기준**이다. 카메라를 돌려 놓고 '오른쪽' 을 눌렀는데 책상이
+     화면 왼쪽으로 가면 그 버튼은 없느니만 못하다. m4look 의 기저에서
+     화면 오른쪽은 월드 XZ 로 (cos az, -sin az), 화면 위쪽(화면 안쪽)은
+     -(sin az, cos az) 다.
+
+     그 방향을 그대로 더하면 안 된다 — movePlace 가 반 칸으로 스냅하므로,
+     비스듬한 성분은 반올림에 먹혀 아무 일도 일어나지 않는 방향이 생긴다.
+     그래서 화면 방향을 가장 가까운 월드 축으로 스냅한다. 45° 안쪽에서는
+     여전히 "누른 쪽으로 간다" 가 성립하고, 한 번 누르면 반드시 반 칸이
+     움직인다. */
+  nudgePlace(u, v, step = 0.5) {
+    const p = this.place;
+    if (!p) return;
+    const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
+    const wx = u * ca - v * sa;
+    const wz = -u * sa - v * ca;
+    const dx = Math.abs(wx) >= Math.abs(wz) ? Math.sign(wx) * step : 0;
+    const dz = Math.abs(wz) > Math.abs(wx) ? Math.sign(wz) * step : 0;
+    this.movePlace(p.x + dx, p.z + dz);
   }
 
   /* Does a footprint clear the building's own walls and fittings? Sampled on
@@ -717,7 +783,7 @@ class View {
           a.reactWith('shock', 1.2);
           a.say(ev.line, 2.2);
           this.effects.push({
-            x: a.x, y: a.floor * STOREY + 6.4, z: a.z,
+            ...this.teamFxAnchor(a),
             text: '-' + h.damage, hurt: true, stat: null, life: 0, ttl: 1.3, el: null,
           });
         }
@@ -751,23 +817,48 @@ class View {
     if (project.hp <= 0 && this.boss && !events.some((e) => e.kind === 'stageClear')) this.boss.kill();
   }
 
+  /* 팀이 맞았을 때 붉은 숫자가 뜰 자리.
+
+     사무실에서는 맞은 사람 머리 위다. 아레나에서는 그 사람의 몸이 화면에
+     없으므로 — 세트장은 사무실에서 700 유닛 떨어져 있다 — 무대의 앞쪽,
+     카메라 쪽으로 당긴 자리에 띄운다. 파티 카드가 바로 아래에 있어서
+     "우리가 맞았다" 로 읽힌다. */
+  teamFxAnchor(agent) {
+    if (!this.arena || !this.arenaSet) {
+      return { x: agent.x, y: agent.floor * STOREY + 6.4, z: agent.z };
+    }
+    const s = this.arenaSet.spot;
+    const f = 11 + this.rnd() * 3;
+    return {
+      x: s[0] + Math.sin(cam.az) * f + (this.rnd() - 0.5) * 9,
+      y: s[1] + 3.2 + this.rnd() * 1.6,
+      z: s[2] + Math.cos(cam.az) * f + (this.rnd() - 0.5) * 5,
+    };
+  }
+
   /* ══ 아레나 ══
-     보스를 화면 가운데에 놓고 낮은 각도에서 본다. 벽 자르기를 끄면 사무실이
-     통째로 보이지만, 낮은 각도에서는 앞벽이 시야를 막는다 — 그래서 켠 채로
-     둔다. 순수 카메라 연출이고 규칙은 건드리지 않는다. */
+     전용 세트장으로 들어간다. 사무실이 아니라 몬스터마다 다른 무대이고,
+     스테이지가 넘어가면 무대도 같이 바뀐다. 순수 연출이다 — 규칙은
+     game/project.js 안에서만 돈다. */
   enterArena(project) {
     this.arena = true;
-    this.ensureBoss(project);
     if (this.fp && this.fp.on) this.fp.exit();
-    if (this.bossFloor !== undefined && this.bossFloor !== this.floor) this.setFloor(this.bossFloor);
-    this._camBefore = { dist: cam.goalDist, el: cam.el, az: cam.az, cut: this.wallCut };
-    // 각도가 낮을수록 액션 RPG 처럼 보이지만, 눈이 층 안으로 들어가면 앞벽과
-    // 책상이 화면의 대부분을 검게 덮는다. 벽 윗선 위로 올라오는 각도가
-    // 이 사무실에서 보스를 실제로 볼 수 있는 가장 낮은 각도다.
-    cam.goalDist = 30;
-    cam.el = 0.52;
-    this.wallCut = true;
-    if (this.boss) cam.lookAt(...this.arenaTarget());
+    this._camBefore = {
+      dist: cam.goalDist, el: cam.el, az: cam.az, cut: this.wallCut,
+      gx: cam.gx, gy: cam.gy, gz: cam.gz, floor: this.floor,
+    };
+    const def = project ? monsterForStage(project) : null;
+    const set = this.useArenaSet(def ? def.id : 'cat');
+    this.ensureBoss(project);
+    // 보스 모델이 아직 안 왔더라도 무대는 이미 서 있다. 카메라를 무대에
+    // 맞춰 두면 로딩 몇 프레임 동안 빈 사무실이 비치는 일이 없다.
+    if (this.boss) this.boss.setAnchor(set.spot[0], set.spot[1], set.spot[2], this.floor);
+    cam.goalDist = set.camera.dist;
+    cam.el = set.camera.el;
+    cam.az = set.camera.az;
+    this.wallCut = false;
+    cam.lookAt(...this.arenaTarget());
+    cam.snap();
   }
 
   /* 화면 아래 3분의 1은 파티 카드가 쓴다. 보스의 한복판을 화면 한복판에
@@ -775,7 +866,11 @@ class View {
      밀어 올린다. 큰 놈일수록 더 내린다. */
   arenaTarget() {
     const b = this.boss;
-    if (!b) return [BUILDING.x1 / 2, this.floor * STOREY + 6, BUILDING.z1 / 2];
+    if (!b) {
+      const s = this.arenaSet;
+      if (s) return [s.spot[0], s.spot[1] + 4, s.spot[2]];
+      return [BUILDING.x1 / 2, this.floor * STOREY + 6, BUILDING.z1 / 2];
+    }
     const h = Math.max(1, b.headY - b.y);
     return [b.x, b.y + h * 0.28, b.z];
   }
@@ -783,9 +878,23 @@ class View {
   exitArena() {
     if (!this.arena) return;
     this.arena = false;
+    this.clearArenaSet();
+    // 층 카메라와 그림자 프러스텀을 사무실로 되돌린 **뒤에** 들어올 때의
+    // 시점을 얹는다. 순서를 바꾸면 setFloor 의 lookAt 이 복원을 덮어쓴다.
+    this.setFloor(this.floor);
+    // 보스도 사무실 쪽 자리로 돌아온다. 아레나 좌표에 남겨 두면 사무실
+    // 화면에서 보스 태그가 지평선 너머를 가리킨다.
+    if (this.boss && this.game.project) {
+      const spot = this.bossSpot(this.game.project);
+      this.boss.setAnchor(spot[0], spot[1], spot[2], this.bossFloor);
+    }
     const b = this._camBefore;
-    if (b) { cam.goalDist = b.dist; cam.el = b.el; this.wallCut = b.cut; }
+    if (b) {
+      cam.goalDist = b.dist; cam.el = b.el; cam.az = b.az; this.wallCut = b.cut;
+      cam.lookAt(b.gx, b.gy, b.gz);
+    }
     this._camBefore = null;
+    cam.snap();
   }
 
   celebrate(teamIds) {
@@ -831,7 +940,10 @@ class View {
 
   /* ---- DOM overlays ---- */
   drawOverlays(w, h) {
-    const showFloor = this.floor;
+    // 아레나에서는 사무실 쪽 라벨이 하나도 보이면 안 된다. 700 유닛 밖의
+    // 점이라도 카메라 뒤가 아니면 투영은 되고, 그러면 세트장 위에 방 이름과
+    // 직원 이름표가 떠 버린다.
+    const showFloor = this.arena ? -1 : this.floor;
 
     for (const { r, el } of this.roomEls) {
       if (r.floor !== showFloor) { el.style.display = 'none'; continue; }
@@ -899,7 +1011,8 @@ class View {
     const el = this.bossEl;
     if (!el) return;
     const b = this.boss, p = this.game.project;
-    if (!b || b.floor !== showFloor || b.dying) { el.style.display = 'none'; return; }
+    // 아레나에서는 층이라는 개념이 없다. 세트장 위의 보스는 언제나 보인다.
+    if (!b || (!this.arena && b.floor !== showFloor) || b.dying) { el.style.display = 'none'; return; }
     const pt = cam.project(b.x, b.headY, b.z, w, h);
     if (!pt || pt.z < -1 || pt.z > 1) { el.style.display = 'none'; return; }
     const frac = p && p.hpMax ? Math.max(0, p.hp / p.hpMax) : 1;
@@ -914,6 +1027,14 @@ class View {
 
   /* ---- draw callback handed to the renderer ---- */
   draw(L, pass) {
+    /* 아레나에서는 세트장만 그린다. 사무실은 700 유닛 밖이라 화면에 들어올
+       일이 없지만, 안 그리는 편이 확실하고 프레임도 그만큼 싸다. */
+    if (this.arena && this.gArena) {
+      if (pass === 'glass') return;
+      renderer.drawMesh(L, this.gArena, null);
+      this.drawBoss(pass);
+      return;
+    }
     if (pass === 'glass') {
       renderer.drawMesh(L, this.gGlass, null);
       // The zone patches and the ghost ride the blended pass: they are meant to
@@ -926,15 +1047,18 @@ class View {
     renderer.drawMesh(L, this.gPlaced, null);
     for (const a of this.crew.all()) renderer.drawMesh(L, a.rig, a.rig.world);
 
-    // The monster runs through its own skinned program, so it goes last and
-    // hands the pass back before anything else draws.
-    if (this.boss && skinPass && this.frameOpts) {
-      const p = this.game.project;
-      const frac = p && p.hpMax ? p.hp / p.hpMax : 1;
-      skinPass.begin(pass, this.frameOpts);
-      skinPass.draw(this.boss.inst, this.boss.drawArgs(frac));
-      skinPass.end(pass);
-    }
+    this.drawBoss(pass);
+  }
+
+  /* The monster runs through its own skinned program, so it goes last and
+     hands the pass back before anything else draws. */
+  drawBoss(pass) {
+    if (!this.boss || !skinPass || !this.frameOpts) return;
+    const p = this.game.project;
+    const frac = p && p.hpMax ? p.hp / p.hpMax : 1;
+    skinPass.begin(pass, this.frameOpts);
+    skinPass.draw(this.boss.inst, this.boss.drawArgs(frac));
+    skinPass.end(pass);
   }
 }
 
@@ -1016,6 +1140,7 @@ async function boot() {
   window.__cam = cam;
 
   wirePointer();
+  wireCamPad();
   wireWalkKeys();
   suppressBrowserGestures(canvas);
   trackViewport(resize);
@@ -1067,6 +1192,9 @@ function tick(dt) {
   // 보이지 않는 곳에서 전투만 흘러간다.
   if (ui) ui.tickBattle(dt);
   view.update(dt);
+  // 조이스틱은 카메라를 갱신하기 **전에** 읽는다. 뒤에서 읽으면 입력이
+  // 한 프레임씩 늦게 반영돼 스틱이 미끄럽게 느껴지지 않는다.
+  if (view.camTick) view.camTick(dt);
   const vp = viewportSize();
   cam.update(dt, vp.w / Math.max(1, vp.h));
 
@@ -1078,9 +1206,13 @@ function tick(dt) {
   // are half of what makes it read as an office, so the cut moves up a storey
   // and only the floors ABOVE this one come off.
   const walking = view.fp && view.fp.on;
-  const floorY = walking
-    ? (view.fp.floor + 1) * STOREY + 0.35
-    : view.floor * STOREY + BUILDING.wallH + 0.1;
+  // 아레나에는 '위층' 이 없다. 층 자르기를 그대로 두면 세트장의 벽과 비석이
+  // 사무실 층고를 기준으로 위쪽부터 녹아 사라진다.
+  const floorY = view.arena
+    ? 9999
+    : (walking
+      ? (view.fp.floor + 1) * STOREY + 0.35
+      : view.floor * STOREY + BUILDING.wallH + 0.1);
 
   // Stashed rather than passed through: the draw callback only receives the
   // uniform block and the pass name, and the skinned program needs the camera.
@@ -1226,12 +1358,136 @@ function wireFirstPerson() {
   };
 }
 
+/* ══════════════════════════ 카메라 조이스틱 ══════════════════════════
+
+   캔버스를 끌어서 카메라를 돌리는 조작은 두 가지 이유로 불편하다. 첫째,
+   가로로 든 폰에서는 화면 대부분이 이미 무언가를 하고 있어서 "빈 바닥" 을
+   찾아 짚어야 한다. 둘째, 배치 모드에서는 그 드래그를 가구가 가져간다.
+
+   그래서 카메라에 자기 조작계를 준다. 스틱 하나가 회전(⟳)과 이동(✥) 을
+   번갈아 맡고, 버튼 둘이 확대·축소를 맡는다. 속도는 프레임이 아니라 초에
+   비례하므로 60fps 든 30fps 든 같은 만큼 돈다. */
+const CAM_PAN_BOUNDS = { x0: -18, x1: 82, z0: -16, z1: 60 };
+const CAM_MODES = [
+  { id: 'orbit', icon: '⟳', ko: '회전' },
+  { id: 'pan', icon: '✥', ko: '이동' },
+];
+
+function wireCamPad() {
+  const pad = $('campad');
+  const stick = $('camStick');
+  if (!pad || !stick) return;
+  const knob = stick.querySelector('.cknob');
+  const label = stick.querySelector('.ck');
+  const modeBtn = $('camMode');
+
+  let mode = view.prefs.camMode === 'pan' ? 1 : 0;
+  let vx = 0, vy = 0, zoomDir = 0, id = null;
+
+  const paint = () => {
+    if (modeBtn) modeBtn.textContent = CAM_MODES[mode].icon;
+    if (label) label.textContent = CAM_MODES[mode].ko;
+  };
+  paint();
+
+  /* 조이스틱을 켜고 끄는 것은 설정이다. 데스크톱에서는 드래그가 이미
+     편하므로 필요 없다는 사람이 있고, 폰에서는 반대다. */
+  view.setCamPad = (on) => {
+    view.prefs.camPad = !!on;
+    savePrefs(view.prefs);
+    document.body.classList.toggle('campad', !!on);
+    if (!on) { vx = 0; vy = 0; zoomDir = 0; if (knob) knob.style.transform = ''; }
+    return view.prefs.camPad;
+  };
+  view.camPadOn = () => document.body.classList.contains('campad');
+  // 기본값은 켜짐. 처음 만나는 사람에게 조작계가 보이는 편이 낫다.
+  view.setCamPad(view.prefs.camPad === undefined ? true : view.prefs.camPad);
+
+  const set = (e) => {
+    const r = stick.getBoundingClientRect();
+    const half = r.width / 2;
+    let dx = (e.clientX - (r.left + half)) / half;
+    let dy = (e.clientY - (r.top + r.height / 2)) / half;
+    const l = Math.hypot(dx, dy);
+    if (l > 1) { dx /= l; dy /= l; }
+    // 아주 작은 흔들림은 무시한다. 엄지를 얹어 둔 것만으로 화면이 흐르면
+    // 조이스틱이 아니라 고장 난 것처럼 느껴진다.
+    const dead = 0.14;
+    const scale = (v) => (Math.abs(v) < dead ? 0 : (v - Math.sign(v) * dead) / (1 - dead));
+    vx = scale(dx); vy = scale(dy);
+    if (knob) knob.style.transform = `translate(${dx * half * 0.55}px, ${dy * half * 0.55}px)`;
+  };
+  const clear = () => { id = null; vx = 0; vy = 0; if (knob) knob.style.transform = ''; };
+
+  stick.addEventListener('pointerdown', (e) => {
+    id = e.pointerId;
+    try { stick.setPointerCapture(id); } catch (err) { /* ignore */ }
+    set(e);
+    e.preventDefault();
+    firstGesture();
+  });
+  stick.addEventListener('pointermove', (e) => { if (e.pointerId === id) set(e); });
+  for (const t of ['pointerup', 'pointercancel', 'pointerleave', 'lostpointercapture']) {
+    stick.addEventListener(t, (e) => { if (e.pointerId === id) clear(); });
+  }
+
+  if (modeBtn) {
+    modeBtn.onclick = () => {
+      mode = (mode + 1) % CAM_MODES.length;
+      view.prefs.camMode = CAM_MODES[mode].id;
+      savePrefs(view.prefs);
+      paint();
+    };
+  }
+  // 확대·축소는 누르고 있는 동안 계속 든다. 한 번에 한 칸씩이면 끝에서
+  // 끝까지 가는 데 스무 번을 눌러야 한다.
+  for (const [btnId, dir] of [['camIn', -1], ['camOut', 1]]) {
+    const b = $(btnId);
+    if (!b) continue;
+    const down = (e) => {
+      zoomDir = dir;
+      try { b.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      e.preventDefault();
+    };
+    const up = () => { zoomDir = 0; };
+    b.addEventListener('pointerdown', down);
+    for (const t of ['pointerup', 'pointercancel', 'pointerleave', 'lostpointercapture']) {
+      b.addEventListener(t, up);
+    }
+  }
+
+  view.camTick = (dt) => {
+    if (cam.fp) return;
+    if (zoomDir) cam.zoom(zoomDir * 720 * dt);
+    if (!vx && !vy) return;
+    if (CAM_MODES[mode].id === 'pan') {
+      cam.pan(vx * 620 * dt, vy * 620 * dt, CAM_PAN_BOUNDS);
+    } else {
+      // orbit() 은 픽셀 델타를 받는다. 초당 회전량을 픽셀로 환산해 넘긴다.
+      cam.orbit(vx * 300 * dt, -vy * 260 * dt);
+    }
+  };
+}
+
 /* One pointer orbits. Two pinch to zoom and drag to pan. Pointer Events cover
    mouse, pen and touch with the same code, and pointer capture keeps a drag
-   alive when the finger slides over the HUD. */
+   alive when the finger slides over the HUD.
+
+   ── 배치 모드는 캔버스를 통째로 가져간다 ──
+   예전에는 "손가락 하나면 가구, 둘이면 카메라" 였다. 그럴듯하지만 실기기
+   에서는 무너진다: 가로로 든 폰에서 반대쪽 엄지나 손바닥이 화면에 닿는
+   순간 접점이 둘이 되고, 책상을 끌던 손가락이 카메라 팬으로 바뀐다.
+   플레이어에게는 "책상을 움직이려는데 화면이 움직인다" 로 보인다 — 실제로
+   그 제보를 받았다.
+
+   그래서 배치 중에는 캔버스의 어떤 제스처도 카메라를 건드리지 않는다.
+   카메라는 화면 오른쪽 아래의 조이스틱이 맡는다. 손가락 수와 상관없이
+   결과가 하나뿐이라 흔들릴 여지가 없다. */
 function wirePointer() {
   const pts = new Map();
   let pinch = 0, mid = null, moved = 0;
+  // 배치 드래그를 쥐고 있는 포인터와, 잡은 순간의 손가락↔가구 어긋남.
+  let placeId = null, placeOff = null;
   const BOUNDS = { x0: -18, x1: 82, z0: -16, z1: 60 };
 
   const gather = () => {
@@ -1241,15 +1497,31 @@ function wirePointer() {
     return { d: Math.hypot(dx, dy), x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2 };
   };
 
-  /* While placing, one finger drags the piece across the floor instead of
-     orbiting. Two fingers still zoom and pan, so the camera is never locked
-     out — which matters, because judging a desk's position needs to be able to
-     look at it from another angle. */
+  /* 화면 좌표 → 지금 보고 있는 층의 바닥 좌표. */
+  const floorHit = (e) => {
+    const vp = viewportSize();
+    return cam.hitPlane(e.clientX, e.clientY, vp.w, vp.h, view.floor * STOREY + 0.05);
+  };
+
+  /* 잡는다. 짚은 곳과 가구 중심의 차이를 기억해 두면, 가구가 손가락 밑으로
+     순간이동하지 않고 잡은 그대로 따라온다 — 반 칸 단위로 미세하게 맞출 때
+     이것이 있고 없고가 크게 다르다. 단, 가구에서 멀리 떨어진 바닥을 짚으면
+     그건 "저기로 옮겨라" 라는 뜻이므로 어긋남을 버린다. */
+  const grabPlace = (e) => {
+    if (!view.place) return false;
+    placeId = e.pointerId;
+    const hit = floorHit(e);
+    if (!hit) { placeOff = null; return true; }
+    const dx = view.place.x - hit[0], dz = view.place.z - hit[2];
+    placeOff = Math.hypot(dx, dz) <= 6 ? [dx, dz] : null;
+    if (!placeOff) view.movePlace(hit[0], hit[2]);
+    return true;
+  };
+
   const dragPlace = (e) => {
     if (!view.place) return false;
-    const vp = viewportSize();
-    const hit = cam.hitPlane(e.clientX, e.clientY, vp.w, vp.h, view.floor * STOREY + 0.05);
-    if (hit) view.movePlace(hit[0], hit[2]);
+    const hit = floorHit(e);
+    if (hit) view.movePlace(hit[0] + (placeOff ? placeOff[0] : 0), hit[2] + (placeOff ? placeOff[1] : 0));
     return true;
   };
 
@@ -1261,9 +1533,21 @@ function wirePointer() {
     // Walking: a drag on the canvas turns your head. The stick is its own DOM
     // control, so the two can never be confused for one another.
     if (view.fp.on) { view.fp.startLook(e.pointerId, e.clientX, e.clientY); firstGesture(); return; }
+    /* 배치 중에는 첫 손가락이 가구를 쥔다. 그 뒤에 몇 개가 더 닿든 카메라는
+       움직이지 않고, 나중에 닿은 손가락이 드래그를 빼앗지도 않는다.
+
+       다만 쥔 손가락을 **잃어버리는** 경우가 실제로 있다. 브라우저가
+       제스처를 가로채면 pointerup 이 오지 않고, 그러면 placeId 가 유령
+       포인터에 붙박여 그 뒤로는 아무리 끌어도 가구가 안 움직인다. 지금
+       화면에 손가락이 하나뿐이면 이전 주인은 확실히 사라진 것이므로,
+       그 손가락이 다시 쥔다. */
+    if (view.place) {
+      if (placeId === null || pts.size === 1) grabPlace(e);
+      firstGesture();
+      return;
+    }
     const g = gather();
     if (g) { pinch = g.d; mid = g; }
-    if (pts.size === 1) dragPlace(e);
     firstGesture();
   });
 
@@ -1275,11 +1559,15 @@ function wirePointer() {
 
     pts.set(e.pointerId, { x: nx, y: ny });
     if (view.fp.on) { view.fp.moveLook(e.pointerId, nx, ny); return; }
-    // Placement mode claims one finger before the camera does: while a piece is
-    // in hand, dragging moves it. Two fingers still zoom and pan.
-    if (pts.size === 1 && !dragPlace(e)) cam.orbit(nx - prev.x, ny - prev.y);
+    if (view.place) {
+      // 쥐고 있는 손가락만 가구를 옮긴다. 나머지는 아무 일도 하지 않는다 —
+      // 특히 카메라를 건드리지 않는다.
+      if (e.pointerId === placeId) dragPlace(e);
+      return;
+    }
+    if (pts.size === 1) cam.orbit(nx - prev.x, ny - prev.y);
 
-    if (pts.size >= 2 && !view.fp.on) {
+    if (pts.size >= 2) {
       const g = gather();
       if (g) {
         if (pinch > 0 && g.d > 0) cam.zoom((pinch - g.d) * 2.0);
@@ -1298,6 +1586,7 @@ function wirePointer() {
       if (!pts.size) canvas.classList.remove('drag');
       return;
     }
+    if (e.pointerId === placeId) { placeId = null; placeOff = null; }
     // A tap rather than a drag skips whatever cutscene is running.
     if (moved < 8 && pts.size === 1 && !view.place) view.skipMeeting();
     pts.delete(e.pointerId);
@@ -1311,6 +1600,14 @@ function wirePointer() {
   };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
+  // 손가락이 캡처 밖에서 사라지는 경우(브라우저가 제스처를 가로챈 뒤 등)가
+  // 실제로 있다. 남아 있는 유령 접점 하나면 다음 드래그가 통째로 팬이 된다.
+  canvas.addEventListener('lostpointercapture', (e) => {
+    if (e.pointerId === placeId) { placeId = null; placeOff = null; }
+    pts.delete(e.pointerId);
+    if (pts.size < 2) { pinch = 0; mid = null; }
+    if (!pts.size) canvas.classList.remove('drag');
+  });
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();

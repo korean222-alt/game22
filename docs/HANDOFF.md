@@ -47,6 +47,7 @@ src/
   world/    palette props office agents           지오메트리 + 직원 상태 기계
             placed                                플레이어가 놓은 가구 → 메시 + 책상
             boss                                  보스 몬스터 상태 기계
+            arena                                 보스별 전용 세트장 (지오메트리만)
   game/     data state staff project economy dialogue events
                                                   순수 시뮬레이션 (DOM/WebGL 없음)
             furniture monsters tutorial           가구 카탈로그 · 몬스터 정의 · 튜토리얼
@@ -69,6 +70,11 @@ tools/      balance sloppy flow meeting probe     테스트 하네스
 |---|---|
 | 밸런스 숫자 | **`game/data.js` 하나뿐** — 장르/플랫폼/직업/랭크/아이템/특성/연구/홍보/계약/층값/**체력(HP)/보스 기술/상점(SHOP)/야근** |
 | 보스 외형·연출 | `world/boss.js` · 배치와 이벤트 반응은 `main.js` `View.playBattle` · 아레나 카메라는 `View.enterArena/arenaTarget` |
+| 아레나 세트장 | `world/arena.js` — 세트 하나가 함수 하나다. 카메라 각도(`camera`)와 그림자 반경(`lightRadius`)도 세트가 들고 있다. 붙이는 쪽은 `main.js` `View.useArenaSet/clearArenaSet` |
+| 카메라 조이스틱 | `main.js` `wireCamPad()` + `index.html` `#campad` + `style.css` `body.campad`/`--cam-w` |
+| 배치 조작 | `main.js` `wirePointer()` (드래그) · `View.nudgePlace` (십자) · `ui/hud.js` `renderPlaceBar()` |
+| 소재 뽑기 | `game/data.js` `CONTENT_BASE`/`CONTENT_GACHA_COST` · `game/state.js` `drawContent/ownedContents` · `ui/hud.js` `panelGacha()` |
+| 테스트용 치트 | `game/state.js` 의 `cheat*` · `ui/hud.js` `panelDevTools()` |
 | 전투 규칙 (순수) | `game/project.js` `battleTick / staffStrike / stageCleared / advanceStage` — DOM 도 시계도 모른다 |
 | 아레나 화면 | `ui/hud.js` `enterArena / tickBattle / renderArena` + `index.html` `#arena` + `style.css` `body.arena` |
 | 전투의 시계 | `main.js` `tick(dt)` 안의 `ui.tickBattle(dt)` **한 곳뿐**. rAF 를 따로 돌리면 백그라운드 탭에서 전투만 흘러간다 |
@@ -391,6 +397,14 @@ hpMax = 56 + level*3.2 + talent*26 + 환생*12
 | 아레나에서 `_onGameEvent` 가 사이드 패널을 다시 그림 | 자동 전투는 초당 서너 번 이벤트를 뿜는다. 보이지도 않는 패널을 그 빈도로 재구성하면 그 비용이 프레임에서 나간다. `inArena()` 면 HUD 만 그리고 빠진다 |
 | 보스를 `project.id` 로만 캐시 | 3연전에서 2번 보스가 1번 놈의 몸으로 나온다. 키는 `id + ':' + stage` |
 | 죽은 보스로 애니메이션 검사 | 사망 포즈는 정지 화면이다. 스켈레톤 갱신 검사는 **때리기 전**에 할 것 |
+| 손가락 **수**로 조작을 나눔 | "하나면 가구, 둘이면 카메라" 는 책상 위에서만 참이다. 가로로 든 폰에서는 반대쪽 엄지나 손바닥이 닿는 순간 접점이 둘이 되어 가구 드래그가 카메라 팬으로 바뀐다 — 플레이어에게는 "책상을 옮기려는데 화면이 움직인다" 로 보인다. **모드가 켜져 있으면 그 모드가 캔버스를 통째로 가져가고**, 카메라는 자기 조작계(조이스틱)를 따로 갖는다 |
+| 포인터 소유권을 id 로만 붙듦 | 브라우저가 제스처를 가로채면 `pointerup` 이 안 온다. 그 id 에 붙박이면 그 뒤로 아무리 끌어도 안 움직인다. 화면에 손가락이 하나뿐이면(=`pts.size === 1`) 다시 쥐게 할 것 |
+| 클래스 안에 같은 이름의 메서드를 두 번 | 나중 선언이 **조용히** 이긴다. `hud.js` 의 `panelShop` 이 그랬고, 상점 탭이 몇 달간 가구점을 열고 있었다 — 음식·장비·도감이 통째로 화면에서 사라진 채로. 에러도 경고도 없다 |
+| 소재 이름이 장르 이름과 겹침 | 스포츠 게임의 소재 카드에 '스포츠' 가 또 뜬다. 화면만 보면 버그다. **소재는 장르보다 좁게** 이름 지을 것. id 를 바꾸면 `state.js` 의 `CONTENT_ALIAS` 로 옛 세이브(프로젝트·도감·조합 기록·유행)를 옮겨야 한다 |
+| 성공 여부를 안 돌려주는 함수를 `if (!fn())` 로 씀 | `focusBoss()` 가 `undefined` 를 돌려줘서, 보스를 제대로 잡아 놓고도 매번 "아직 나타나지 않았습니다" 토스트가 떴다 |
+| 세트장 소품을 카메라 방위각 위에 세움 | 아레나 카메라는 세트 링 **안쪽**에 있어야 한다 (`dist*cos(el)` < 가장 안쪽 소품 링 반경). 밖에 두면 앞쪽 소품이 보스를 가리고, 카메라가 천천히 도는 동안 계속 지나간다 |
+| 하네스가 홈화면 안내를 안 닫음 | `#a2hs` 는 창업 직후 화면 전체를 덮는다. `page.evaluate(... .click())` 은 통과하지만 **CDP 로 쏜 진짜 터치는 전부 이 카드에 맞는다.** 터치 검사 전에 반드시 닫을 것 |
+| CDP 터치 상태를 안 비움 | `Input.dispatchTouchEvent` 의 접점은 세션에 남는다. 제스처마다 `touchEnd []` 로 끝내지 않으면 다음 `touchStart` 가 엉뚱한 포인터로 오거나 아예 안 온다 |
 
 ---
 
@@ -431,22 +445,36 @@ node tools/gltf2glb.mjs in.gltf out.glb Idle,Walk,Punch,HitReact,Death
 (setsid python3 -m http.server 8123 &)      # setsid 중요
 node tools/probe.mjs      # 부팅만 (에러/단계별 타이밍/월드 통계)
 node tools/meeting.mjs    # 창업·가구·채용 → 경로탐색 → 회의 → 착석 → 복귀
-node tools/flow.mjs       # 전체 34개 검사. 지금 34/34 통과
-node tools/battle.mjs     # 상점·장비·체력·도감·1인칭 20개. 지금 20/20 통과
-node tools/raid.mjs       # 보스 아레나 3연전·자동 전투·판매 패널 9개. 지금 9/9 통과
+node tools/flow.mjs       # 전체 플로우 + 배치 조작 + 세이브 이관 42개. 지금 42/42 통과
+node tools/battle.mjs     # 상점·소재 뽑기·장비·체력·도감·1인칭 26개. 지금 26/26 통과
+node tools/raid.mjs       # 보스 아레나 3연전·세트장·판매 패널 11개. 지금 11/11 통과
 node tools/shots.mjs      # 눈으로 볼 것들의 스크린샷 (CI 아님)
 node tools/features.mjs   # 채용·퇴사 연출, 기획서 폐기, 디버그 점수, 품질 막대,
                           # 미발견 조합, 주간 이벤트, 세일즈 태스크, 1인칭
+                          # ⚠ 현재 6/19 통과 — 하네스가 낡았다 (아래)
 ```
 
 `battle.mjs` 는 1인칭을 **방향까지** 검사한다. 스틱이 도는지가 아니라
 미는 쪽으로 실제로 가는지, 시선을 돌리면 전진 방향도 도는지, 벽에서 멈추는지를
 본다 — "1인칭이 이상하게 간다" 는 셋 중 하나가 깨진 것이다.
 
+`flow.mjs` 의 **3-b 절**은 CDP 로 진짜 멀티터치를 쏜다. 배치 중에 손가락
+두 개로 끌었을 때 `cam` 의 az/el/거리/타깃이 **한 톨도** 안 움직이는지가
+검사의 전부다 — 그 계약이 깨졌던 것이 "책상을 옮기려는데 화면이 움직인다"
+의 정체였다. 같은 절에서 십자 버튼이 정확히 반 칸을 옮기는지, 조이스틱이
+배치 중에도 카메라를 돌리는지도 같이 본다.
+
 `raid.mjs` 는 **배선**만 본다. 규칙은 node 로 돌릴 수 있고 이미 돌렸다.
 브라우저에서만 깨지는 것은 rAF 루프가 `devTick` 을 부르는가, 스테이지가
 넘어갈 때 3D 보스가 바뀌는가, 카드 팝업이 전투를 막았다가 풀어주는가,
 그리고 화면이 정말 바뀌는가다.
+
+> **`features.mjs` 는 지금 6/19 만 통과한다.** 게임이 아니라 **하네스가**
+> 낡았다 — UI 가 바뀌면서 첫 몇 단계가 어긋나고, 그 뒤가 줄줄이 무너진다
+> (없는 프로젝트에서 `criticTotal` 을 읽는 식). 같은 실패가 이 작업 **이전**
+> 커밋에서도 그대로 나온다는 것을 확인했으므로 회귀가 아니다. 여기서 보던
+> 것들은 대부분 `flow.mjs` · `battle.mjs` · `raid.mjs` 로 옮겨갔다. 손볼
+> 사람은 첫 실패부터 고칠 것 — 뒤의 실패는 전부 그 그림자다.
 
 환경변수: `PLAYWRIGHT=` (기본 `/opt/node22/.../playwright/index.mjs`),
 `PORT=` 또는 `BASE=`, `OUT=` (스크린샷 저장 위치).

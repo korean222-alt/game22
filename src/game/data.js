@@ -156,13 +156,33 @@ export const CONTENTS = [
   { id: 'robot', ko: '로봇', tags: ['fast', 'build'], bias: { impact: 1.25, usability: 1.05 } },
   { id: 'farm', ko: '농장', tags: ['casual', 'build', 'long'], bias: { retention: 1.30, social: 1.15 } },
   { id: 'dungeon', ko: '던전', tags: ['grind', 'long', 'skill'], bias: { retention: 1.20, impact: 1.10 } },
-  { id: 'sports2', ko: '스포츠', tags: ['skill', 'social'], bias: { social: 1.15, usability: 1.10 } },
+  /* 예전 id 는 'sports2', 이름은 '스포츠' 였다. 장르에도 '스포츠' 가 있어서
+     스포츠 게임의 소재 카드에 '스포츠' 가 또 떴다 — 화면만 보면 버그다.
+     소재는 장르보다 좁아야 뜻이 서므로 종목 하나로 좁혔다. 옛 세이브는
+     state.js 의 CONTENT_ALIAS 가 옮겨준다. */
+  { id: 'soccer', ko: '축구', tags: ['skill', 'social'], bias: { social: 1.15, usability: 1.10 } },
   { id: 'dino', ko: '공룡', tags: ['story', 'collect', 'build'], bias: { impact: 1.25, craze: 1.15 } },
   { id: 'pirate', ko: '해적', tags: ['story', 'build', 'collect'], bias: { impact: 1.15, retention: 1.10 } },
   { id: 'ninja', ko: '닌자', tags: ['fast', 'skill', 'grind'], bias: { impact: 1.20, usability: 1.10 } },
   { id: 'cafe', ko: '카페', tags: ['casual', 'build', 'social'], bias: { social: 1.20, retention: 1.15 } },
   { id: 'horror', ko: '공포', tags: ['story', 'short', 'skill'], bias: { impact: 1.30, craze: 1.15 } },
 ];
+
+export const CONTENT_BY_ID = new Map(CONTENTS.map((c) => [c.id, c]));
+
+/* ---------- 소재 뽑기 ----------
+   소재는 이제 처음부터 다 열려 있지 않다. 여섯 개로 시작하고 나머지는
+   🪙 코인으로 뽑는다.
+
+   코인은 그 전까지 쌓이기만 하고 쓸 데가 없는 화폐였고, 소재는 반대로
+   전부 열려 있어서 "무엇을 만들 수 있게 되었나" 가 성장으로 읽히지
+   않았다. 둘을 붙이면 한쪽은 쓸 곳이, 다른 한쪽은 뽑을 이유가 생긴다.
+
+   기본 여섯은 장르 전체와 두루 무난한 것들로 골랐다. 어느 장르를 뽑아도
+   카드 세 장이 채워지고, 그중 하나는 쓸 만해야 하기 때문이다. */
+export const CONTENT_BASE = ['fantasy', 'scifi', 'animal', 'cooking', 'school', 'zombie'];
+export const CONTENT_GACHA_COST = 3;      // 🪙 한 번 뽑는 값
+export const CONTENT_GACHA_DUP = { research: 10, coins: 1 };   // 다 모았을 때의 위로금
 
 /* ---------- development method (the second idea card) ---------- */
 export const METHODS = [
@@ -181,7 +201,7 @@ export const MASTER_COMBOS = [
   ['rhythm', 'idol'], ['sim', 'farm'], ['idle', 'farm'], ['mmo', 'fantasy'],
   ['strategy', 'sengoku'], ['action', 'zombie'], ['shoot', 'space'], ['racing', 'robot'],
   ['puzzle', 'animal'], ['adv', 'mystery'], ['raise', 'animal'], ['party', 'school'],
-  ['board', 'school'], ['sports', 'sports2'], ['sim', 'cooking'], ['adv', 'space'],
+  ['board', 'school'], ['sports', 'soccer'], ['sim', 'cooking'], ['adv', 'space'],
   ['adv', 'dino'], ['raise', 'dino'], ['sim', 'cafe'], ['idle', 'cafe'],
   ['action', 'ninja'], ['strategy', 'pirate'], ['adv', 'pirate'], ['adv', 'horror'],
   ['shoot', 'robot'], ['rpg', 'magic'], ['mmo', 'dungeon'], ['party', 'animal'],
@@ -194,7 +214,7 @@ export const MASTER_COMBOS = [
    should be able to feel these are wrong and learn it by shipping one. */
 export const BAD_COMBOS = [
   ['puzzle', 'dungeon'], ['puzzle', 'sengoku'], ['puzzle', 'horror'], ['puzzle', 'zombie'],
-  ['adv', 'sports2'], ['adv', 'cooking'], ['adv', 'cafe'],
+  ['adv', 'soccer'], ['adv', 'cooking'], ['adv', 'cafe'],
   ['mmo', 'mystery'], ['mmo', 'horror'], ['idle', 'zombie'], ['idle', 'horror'],
   ['rhythm', 'dungeon'], ['rhythm', 'sengoku'], ['rhythm', 'dino'],
   ['board', 'zombie'], ['board', 'horror'], ['racing', 'cooking'], ['racing', 'idol'],

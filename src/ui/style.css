@@ -33,6 +33,9 @@
   --rail-w:52px;
   --gap:10px;
   --fs:12px;
+  /* 카메라 조이스틱이 차지하는 오른쪽 아래 폭. 조이스틱이 꺼져 있으면 0 이
+     되고, 배틀 바·배치 툴바·토스트가 그만큼 다시 넓어진다. */
+  --cam-w:0px;
 }
 
 *{box-sizing:border-box}
@@ -158,6 +161,53 @@ body.touch #brand{display:none}
 .fl.on{border-color:rgba(232,176,85,.6);color:var(--gold);box-shadow:0 0 14px rgba(232,176,85,.22)}
 .fl.locked{opacity:.30}
 
+/* ── 카메라 조이스틱 ──
+   층 버튼 왼쪽, 화면 오른쪽 아래. 캔버스 드래그와 달리 손가락이 몇 개
+   닿아 있든 결과가 하나뿐이라, 배치 중에도 안심하고 쓸 수 있다. */
+body.campad{ --cam-w:150px }
+#campad{
+  position:fixed;z-index:12;display:none;align-items:flex-end;gap:7px;
+  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  bottom:calc(var(--sab) + var(--gap));
+  pointer-events:none;
+}
+body.campad #campad{display:flex}
+body.fp #campad,body.arena #campad,body.meeting #campad{display:none !important}
+/* 숨어 있는 동안에는 자리도 내놓는다 — 안 그러면 아레나의 배틀 바가
+   아무것도 없는 오른쪽 150px 을 비워 둔 채로 좁아진다. */
+body.campad.fp,body.campad.arena,body.campad.meeting{--cam-w:0px}
+#camStick{
+  position:relative;width:98px;height:98px;border-radius:50%;
+  pointer-events:auto;touch-action:none;cursor:grab;
+  background:rgba(16,18,23,.46);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+}
+#camStick .cknob{
+  position:absolute;left:50%;top:50%;width:40px;height:40px;margin:-20px 0 0 -20px;
+  border-radius:50%;background:rgba(232,176,85,.32);border:1px solid rgba(232,176,85,.55);
+  transition:transform .05s linear;
+}
+#camStick .ck{
+  position:absolute;left:0;right:0;top:-13px;text-align:center;
+  font-size:8.5px;letter-spacing:1.6px;color:var(--dim);pointer-events:none;
+}
+.ccol{display:flex;flex-direction:column;gap:6px;pointer-events:auto}
+.cbtn{
+  width:36px;height:33px;border-radius:9px;padding:0;
+  background:var(--pan);border:1px solid var(--edge);color:var(--txt);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  font-family:inherit;font-size:15px;font-weight:800;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;touch-action:manipulation;
+}
+.cbtn:active{background:var(--pan2)}
+.cbtn.on{border-color:rgba(232,176,85,.55);color:var(--gold)}
+@media (max-height:470px){
+  body.campad{--cam-w:126px}
+  #camStick{width:80px;height:80px}
+  #camStick .cknob{width:34px;height:34px;margin:-17px 0 0 -17px}
+  .cbtn{width:32px;height:29px;font-size:13px}
+}
+
 /* ── side panel ── */
 #side{
   position:fixed;
@@ -277,7 +327,7 @@ h4.sec:first-child{margin-top:0}
 #battle{
   position:fixed;
   left:calc(var(--sal) + var(--panel-cur) + var(--gap)*2);
-  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  right:calc(var(--sar) + var(--rail-w) + var(--gap) + var(--cam-w));
   bottom:calc(var(--sab) + var(--gap));
   margin:0 auto;max-width:480px;
   z-index:11;padding:10px 13px;display:none;
@@ -338,7 +388,7 @@ h4.sec:first-child{margin-top:0}
 #toast{
   position:fixed;
   left:calc(var(--sal) + var(--panel-cur) + var(--gap)*2);
-  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  right:calc(var(--sar) + var(--rail-w) + var(--gap) + var(--cam-w));
   bottom:calc(var(--sab) + var(--gap));
   margin:0 auto;max-width:520px;
   z-index:13;padding:8px 15px;font-size:11.5px;color:var(--dim);
@@ -362,7 +412,8 @@ body.arena #toast,body.arena.in-battle #toast{
 }
 
 #hint{
-  position:fixed;bottom:calc(var(--sab) + 10px);right:calc(var(--sar) + var(--rail-w) + var(--gap) + 4px);
+  position:fixed;bottom:calc(var(--sab) + 10px);
+  right:calc(var(--sar) + var(--rail-w) + var(--gap) + var(--cam-w) + 4px);
   z-index:9;font-size:9.5px;color:rgba(30,32,36,.55);
   text-shadow:0 1px 0 rgba(255,255,255,.4);pointer-events:none;
 }
@@ -393,13 +444,29 @@ body.placing #tut,body.in-battle #tut{display:none}
 #placebar{
   position:fixed;
   left:calc(var(--sal) + var(--gap));
-  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  right:calc(var(--sar) + var(--rail-w) + var(--gap) + var(--cam-w));
   bottom:calc(var(--sab) + var(--gap));
   margin:0 auto;max-width:520px;z-index:14;padding:9px 12px;
   display:none;align-items:center;gap:8px;
 }
 #placebar.show{display:flex}
 #placebar .btn{flex:0 0 auto}
+/* 반 칸 십자. 세 칸 × 두 줄 격자에 ▲◀▶▼ 를 앉힌다 — 가운데를 비우면
+   엄지가 네 방향을 헷갈리지 않는다. */
+.pnudge{
+  flex:0 0 auto;display:grid;gap:2px;
+  grid-template-columns:repeat(3,22px);grid-template-rows:repeat(2,16px);
+}
+.pnudge .nb{
+  padding:0;border-radius:5px;font-family:inherit;font-size:9px;line-height:1;
+  background:rgba(255,255,255,.07);border:1px solid var(--edge);color:var(--txt);
+  cursor:pointer;touch-action:manipulation;
+}
+.pnudge .nb:active{background:rgba(232,176,85,.28)}
+.pnudge .nu{grid-area:1/2/2/3}
+.pnudge .nl{grid-area:2/1/3/2}
+.pnudge .nd{grid-area:2/2/3/3}
+.pnudge .nr{grid-area:2/3/3/4}
 .pinfo{display:flex;flex-direction:column;gap:2px;margin-right:auto;min-width:0}
 .pinfo b{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pinfo .ok{font-size:10px;color:var(--good)}
@@ -960,6 +1027,14 @@ body.fp #sales,body.placing #sales{display:none !important}
 .spark i.now{background:var(--gold)}
 .sgend{font-size:8.5px;color:var(--dim);margin-top:2px}
 
+/* 소재 뽑기: 가진 것과 못 가진 것을 한 화면에 */
+.gchips{display:flex;flex-wrap:wrap;gap:3px;margin-top:7px}
+.gchip{
+  font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:6px;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);color:var(--dim);
+}
+.gchip.on{background:rgba(232,176,85,.16);border-color:rgba(232,176,85,.34);color:var(--gold)}
+
 /* 합성 팝업: 장르 ✚ 내용 ➜ 조합 보스 */
 .fuse{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;margin-bottom:8px}
 .fuse .fz{padding:4px 10px;border-radius:9px;font-size:12px;font-weight:800;
@@ -1092,5 +1167,8 @@ body.meeting #prog{display:none}
 .dexc.got{background:rgba(232,176,85,.13);border-color:rgba(232,176,85,.30)}
 .dexc.miss{opacity:.34}
 .dexc.miss .i{filter:grayscale(1)}
+/* 뽑아서 가지고는 있지만 아직 게임에 써 보지 않은 소재. */
+.dexc.held{opacity:.72;border-color:rgba(111,176,220,.30);background:rgba(111,176,220,.08)}
+.dexc.held .i{filter:grayscale(.5)}
 
 

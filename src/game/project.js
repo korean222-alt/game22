@@ -400,7 +400,7 @@ function applyDamage(project, dmg) {
    보스를 잡아도 아무 일이 없거나 프로젝트가 통째로 리셋됐다 — 죽음과
    다음 스테이지 사이에 아무 상태도 없었기 때문이다. 이제 pendingCards 가
    그 사이를 지키고, advanceStage 가 명시적으로 다음 놈을 세운다. */
-export function stageCleared(project, rnd) {
+export function stageCleared(project, rnd, ctx = {}) {
   ensureStages(project);
   const st = currentStage(project);
   const events = [{
@@ -410,7 +410,7 @@ export function stageCleared(project, rnd) {
   project.clearedHp = (project.clearedHp || 0) + st.hpMax;
 
   if (st.card === 'content' && !project.contentId) {
-    project.pendingCards = { kind: 'content', options: rollContentCards(rnd, project.genreId) };
+    project.pendingCards = { kind: 'content', options: rollContentCards(rnd, project.genreId, ctx.contents) };
     events.push({ kind: 'card', cardKind: 'content' });
   } else if (st.card === 'method' && !project.methodId) {
     project.pendingCards = { kind: 'method', options: rollMethodCards(rnd) };
@@ -523,7 +523,7 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
   if (project.hp <= 0) {
     out.dead = true;
     project.log.push({ turn: project.turn, damage: project.lastDamage, hp: 0 });
-    for (const ev of stageCleared(project, rnd)) out.events.push(ev);
+    for (const ev of stageCleared(project, rnd, ctx)) out.events.push(ev);
   }
   return out;
 }
@@ -564,7 +564,7 @@ export function battleTurn(project, staffById, rnd, ctx = {}) {
     const move = BOSS_MOVES[Math.floor(rnd() * BOSS_MOVES.length)];
     events.push(bossAttack(project, staffById, rnd, move));
   }
-  if (project.hp <= 0) for (const ev of stageCleared(project, rnd)) events.push(ev);
+  if (project.hp <= 0) for (const ev of stageCleared(project, rnd, ctx)) events.push(ev);
 
   return {
     events, total,
@@ -661,15 +661,29 @@ function bugCount(project, quality, staffById, ctx = {}) {
   return bugs + (project.bugExtra || 0);
 }
 
-function rollContentCards(rnd, genreId) {
+/* 뽑아서 가진 소재만 카드로 나온다. `owned` 가 없으면 (헤드리스 밸런스
+   시뮬레이션처럼) 전부 가진 것으로 친다. 셋을 못 채울 만큼 적게 가지고
+   있으면 나머지를 전체에서 채운다 — 카드가 두 장뿐인 화면은 어떤 이유로도
+   보여선 안 된다. */
+function contentPool(owned) {
+  if (!owned || !owned.length) return CONTENTS;
+  const set = new Set(owned);
+  const have = CONTENTS.filter((c) => set.has(c.id));
+  if (have.length >= 3) return have;
+  const fill = CONTENTS.filter((c) => !set.has(c.id));
+  return have.concat(fill.slice(0, 3 - have.length));
+}
+
+function rollContentCards(rnd, genreId, owned) {
   // Always offer one genuinely strong pairing, so the choice is "spot the good
   // one" rather than "pick between three mediocre ones". Drawing from the top
   // four made the strong option miss three times in four for genres with a
   // single standout partner.
-  const scored = CONTENTS.map((c) => ({ c, s: comboScore(genreId, c.id) }));
+  const pool = contentPool(owned);
+  const scored = pool.map((c) => ({ c, s: comboScore(genreId, c.id) }));
   scored.sort((a, b) => b.s - a.s);
   const great = scored.slice(0, 2)[Math.floor(rnd() * Math.min(2, scored.length))].c;
-  const rest = CONTENTS.filter((c) => c.id !== great.id);
+  const rest = pool.filter((c) => c.id !== great.id);
   const out = [great];
   while (out.length < 3 && rest.length) {
     out.push(rest.splice(Math.floor(rnd() * rest.length), 1)[0]);

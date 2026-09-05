@@ -30,6 +30,7 @@ import {
 import { monsterFor, monsterForStage } from '../game/monsters.js';
 import { rewardText } from '../game/events.js';
 import { FLOOR_PLANS } from '../world/office.js';
+import { arenaSetFor } from '../world/arena.js';
 import { isTouch, isFullscreen, goFullscreen, exitFullscreen, wireInstallGuide } from './device.js';
 
 const $ = (id) => document.getElementById(id);
@@ -255,7 +256,10 @@ export class UI {
 
     if (full || this._aStage !== stage || this._aProj !== p.id) {
       this._aStage = stage; this._aProj = p.id;
-      $('aTitle').textContent = `「${p.title}」`;
+      // 무대 이름을 제목 옆에 붙인다. 보스마다 세트장이 다르다는 것이
+      // 화면 어딘가에는 글자로도 적혀 있어야 한다.
+      const setKo = arenaSetFor(st.species).ko;
+      $('aTitle').textContent = `「${p.title}」 · ${setKo}`;
       $('aBossName').textContent = st.name || st.ko;
       $('aBossTag').textContent = `${st.ko} · ${stage + 1}/${n}`;
       $('aIco').textContent = ['🐱', '👹', '👿'][stage] || '👾';
@@ -384,7 +388,9 @@ export class UI {
     }
     // 개발이 시작되면 그 자리에서 보스가 솟아오른다 — 첫 타격을 기다리지 않는다.
     if (type === 'project') this.view.ensureBoss(payload);
-    if (type === 'rank') this.showRankUp(payload);
+    // 테스트 도구가 랭크를 한 번에 여러 단 올릴 때는 축하 팝업을 접는다.
+    // 네 장을 연달아 닫게 만드는 것은 확인이 아니라 벌칙이다.
+    if (type === 'rank' && !this._quietRank) this.showRankUp(payload);
     if (type === 'finished') this._finishedFlow(payload);
     if (type === 'floors') this.view.setFloorCount(payload).then(() => this.renderFloors());
     if (type === 'rescue') this.showRescue(payload);
@@ -914,6 +920,18 @@ export class UI {
     };
     box.appendChild(tg);
 
+    /* 카메라 조이스틱. 화면을 끌어 돌리는 게 불편하다는 제보에서 나왔고,
+       배치 모드에서는 캔버스를 가구가 가져가므로 사실상 여기가 카메라의
+       유일한 조작계다. 그래도 끄고 싶은 사람은 있다. */
+    if (this.view.setCamPad) {
+      const cp = el('div', 'toggle' + (this.view.camPadOn() ? ' on' : ''),
+        '<span>카메라 조이스틱</span><span class="sw"></span>');
+      cp.onclick = () => { this.view.setCamPad(!this.view.camPadOn()); this.renderPanel(); };
+      box.appendChild(cp);
+      box.appendChild(el('div', 'item',
+        '<div class="d">오른쪽 아래 스틱으로 화면을 돌리고 옮깁니다. <b>⟳</b> 로 회전/이동을 바꾸고 <b>＋ −</b> 로 확대·축소합니다.</div>'));
+    }
+
     const a2 = el('button', 'btn wide sm', '홈 화면에 추가하는 법 보기');
     a2.onclick = () => {
       const root = $('a2hs');
@@ -958,6 +976,8 @@ export class UI {
     };
     box.appendChild(rs);
 
+    this.panelDevTools(box);
+
     /* 기록 */
     box.appendChild(el('h4', 'sec', '기록'));
     for (const l of g.log.slice(0, 22)) {
@@ -965,6 +985,48 @@ export class UI {
       box.appendChild(el('div', 'item',
         `<div class="d" style="color:${col}"><b style="opacity:.6">${l.at}</b> — ${l.text}</div>`));
     }
+  }
+
+  /* ---------- 테스트 도구 ----------
+     후반부 화면(2층 이후, 높은 랭크의 상점·플랫폼)을 직접 눌러 보려면
+     지금은 몇 시간을 플레이해야 한다. 만드는 쪽에서도 노는 쪽에서도 그건
+     확인이 아니라 고행이다. 그래서 손잡이를 몇 개 밖으로 낸다.
+
+     숨기지 않고 회사 탭 맨 아래에 그냥 둔다. 이 게임에는 순위표도 대전도
+     없고, 감춘 치트는 결국 "어떻게 켜더라" 를 따로 외우게 만들 뿐이다. */
+  panelDevTools(box) {
+    const g = this.g, c = g.company;
+    box.appendChild(el('h4', 'sec', '테스트 도구'));
+    box.appendChild(el('div', 'item',
+      `<div class="d">아직 못 가 본 화면을 바로 열어 보기 위한 버튼입니다.
+        <b>2층</b>은 랭크 5, <b>3층</b>은 랭크 9부터 허가되고 돈으로 삽니다.
+        지금 랭크 ${c.rank} · 허가된 층 ${c.maxFloors || 1}층 · 입주 ${c.floors}층.</div>`));
+
+    const row = (label, fn) => {
+      const b = el('button', 'btn wide sm', label);
+      b.onclick = () => { fn(); this.renderAll(); };
+      box.appendChild(b);
+    };
+    row('💵 자금 +₩1,000,000', () => {
+      const r = g.cheatMoney(1_000_000);
+      this.toast(`자금 ${won(r.money)}`, 'good');
+    });
+    row('⭐ 랭크 +1', () => {
+      const r = g.cheatRankUp(1);
+      this.toast(`랭크 ${r.rank} · ${r.maxFloors}층까지 허가`, 'good');
+    });
+    row('🏢 2층 바로 열기 (랭크 5 + 자금)', () => {
+      this._quietRank = true;
+      try {
+        while (g.company.rank < 5) g.cheatRankUp(1);
+        g.cheatMoney(Math.max(0, g.nextFloorCost() - g.company.money) + 200000);
+      } finally { this._quietRank = false; }
+      const r = g.buyFloor();
+      this.toast(r.ok ? `랭크 ${g.company.rank} · 2층 입주 완료. 오른쪽 층 버튼으로 올라가세요.` : (r.why || '실패'),
+        r.ok ? 'good' : 'bad');
+    });
+    row('🪙 코인 +10', () => { const r = g.cheatCoins(10); this.toast(`코인 ${r.coins}`, 'good'); });
+    row('⚡ 스태미나·체력 회복', () => { g.cheatStamina(); this.toast('회복했습니다.', 'good'); });
   }
 
   /* ---------- 직원 ---------- */
@@ -1545,6 +1607,49 @@ export class UI {
       row.appendChild(b);
       box.appendChild(row);
     }
+
+    this.panelGacha(box);
+  }
+
+  /* ---------- 소재 뽑기 ----------
+     코인은 그동안 쌓이기만 하고 쓸 데가 없었고, 소재는 반대로 처음부터 전부
+     열려 있어서 "만들 수 있는 것이 늘어난다" 는 감각이 없었다. 둘을 붙였다:
+     🪙 로 뽑고, 뽑은 소재만 개발 중 '게임 내용' 카드로 나온다. */
+  panelGacha(box) {
+    const g = this.g, c = g.company;
+    const owned = g.ownedContents();
+    const locked = g.lockedContents();
+    const cost = g.gachaCost();
+
+    box.appendChild(el('h4', 'sec', `소재 뽑기 · 보유 🪙 ${c.coins}`));
+    box.appendChild(el('div', 'item',
+      `<div class="t"><span class="n">게임 소재</span>
+        <span class="j">${owned.length} / ${CONTENTS.length}종</span></div>
+       <div class="d">개발 중 <b>게임 내용</b> 카드는 여기서 뽑은 소재 중에서만 나옵니다.
+         코인은 게임 출시·새 조합 발견·세일즈 태스크로 모입니다.</div>`));
+
+    const pull = el('button', 'btn wide sm primary',
+      locked.length ? `🪙 ${cost} — 소재 뽑기 (남은 ${locked.length}종)` : `🪙 ${cost} — 전부 모았습니다 (연구로 교환)`);
+    pull.disabled = c.coins < cost;
+    pull.onclick = () => {
+      const r = g.drawContent();
+      if (!r.ok) { this.toast(r.why, 'bad'); return; }
+      if (r.dup) { this.toast('이미 모두 모았습니다. 연구 포인트로 바꿨습니다.', 'good'); return; }
+      this.openModal('소재 뽑기', `🎁 ${r.content.ko}`,
+        `<p>새 소재 <b>${r.content.ko}</b> 를 손에 넣었습니다.
+          이제 개발 중 게임 내용 카드에 나옵니다.</p>
+         <p style="color:var(--dim);font-size:11px;margin-top:6px">남은 소재 ${r.left}종</p>`,
+        null, null);
+    };
+    box.appendChild(pull);
+
+    // 가진 것과 못 가진 것을 한 화면에. 무엇을 노리고 뽑는지가 보여야 한다.
+    const chips = el('div', 'gchips');
+    for (const ct of CONTENTS) {
+      const has = owned.includes(ct.id);
+      chips.appendChild(el('span', 'gchip' + (has ? ' on' : ''), has ? ct.ko : '???'));
+    }
+    box.appendChild(chips);
   }
 
   /* ══════════════════════════════ 도감 ══════════════════════════════
@@ -1587,8 +1692,12 @@ export class UI {
       const grid = el('div', 'dexgrid');
       for (const x of list) {
         const got = !!seen[x.id];
-        const cell = el('div', 'dexc ' + (got ? 'got' : 'miss'));
-        cell.innerHTML = `<span class="i">${icon}</span><span class="n">${got ? x.ko : '???'}</span>`;
+        // 소재는 뽑아서 가지고만 있어도 이름은 보인다. 아직 게임에 써 보지
+        // 않았을 뿐이므로 도감 칸은 비워 두되, "무엇을 가졌나" 는 알려 준다.
+        const held = key === 'contents' && g.hasContent(x.id);
+        const cell = el('div', 'dexc ' + (got ? 'got' : held ? 'held' : 'miss'));
+        cell.innerHTML = `<span class="i">${icon}</span><span class="n">${got || held ? x.ko : '???'}</span>`;
+        if (key === 'contents' && !got) cell.title = held ? '가지고 있다 — 아직 써 보지 않았다' : '소재 뽑기로 얻는다';
         grid.appendChild(cell);
       }
       box.appendChild(grid);
@@ -1705,7 +1814,7 @@ export class UI {
       + '책상 하나에 직원 한 명이 앉습니다. 쾌적도가 높으면 직원 의욕이 잘 유지되고 기획력이 오릅니다.</div>'));
 
     this.panelBag(box);
-    this.panelShop(box);
+    this.panelFurnitureShop(box);
     this.panelPlaced(box);
 
     box.appendChild(el('h4', 'sec', '층'));
@@ -1800,20 +1909,24 @@ export class UI {
     }
   }
 
-  /* ---------- 가구점 ---------- */
-  panelShop(box) {
+  /* ---------- 가구점 ----------
+     이름이 panelShop 이었다. 상점 탭이 쓰는 메서드와 이름이 같아서, 클래스
+     본문에서 **나중에 선언된 이쪽이 조용히 이겼다** — 상점 탭을 열면 음식도
+     장비도 아닌 가구점이 나오고, 장비 시스템 전체가 화면에서 사라져 있었다.
+     같은 이유로 카테고리 상태(shopCat)도 두 화면이 나눠 쓰고 있었다. */
+  panelFurnitureShop(box) {
     const g = this.g;
     box.appendChild(el('h4', 'sec', '가구점'));
-    this.shopCat = this.shopCat || 'work';
+    this.furnCat = this.furnCat || 'work';
     const tabs = el('div', 'chips');
     for (const cat of FURNITURE_CATS) {
-      const b = el('button', 'btn sm' + (this.shopCat === cat.id ? ' primary' : ''), cat.ko);
-      b.onclick = () => { this.shopCat = cat.id; this.renderPanel(); };
+      const b = el('button', 'btn sm' + (this.furnCat === cat.id ? ' primary' : ''), cat.ko);
+      b.onclick = () => { this.furnCat = cat.id; this.renderPanel(); };
       tabs.appendChild(b);
     }
     box.appendChild(tabs);
 
-    for (const def of FURNITURE.filter((f) => f.cat === this.shopCat)) {
+    for (const def of FURNITURE.filter((f) => f.cat === this.furnCat)) {
       const it = el('div', 'item');
       const tags = [];
       if (def.seats) tags.push('<span class="pill great">자리 +1</span>');
@@ -1879,6 +1992,18 @@ export class UI {
     // the drag on some browsers.
     if (!this._pb) {
       const info = el('div', 'pinfo');
+      /* 반 칸씩 미는 십자 버튼. 드래그로 반 칸을 조준하는 것은 폰에서
+         사실상 불가능하고, 어떤 이유로든 드래그가 안 먹을 때 자리를 바꿀
+         유일한 길이기도 하다. 방향은 화면 기준이다. */
+      const nudge = el('div', 'pnudge');
+      for (const [cls, u, v, ch] of [
+        ['nu', 0, 1, '▲'], ['nl', -1, 0, '◀'], ['nr', 1, 0, '▶'], ['nd', 0, -1, '▼'],
+      ]) {
+        const b = el('button', 'nb ' + cls, ch);
+        b.setAttribute('aria-label', '반 칸 옮기기');
+        b.onclick = () => { this.view.nudgePlace(u, v); this.renderPlaceBar(); };
+        nudge.appendChild(b);
+      }
       const rot = el('button', 'btn sm', '⟳ 회전');
       rot.onclick = () => { this.view.rotatePlace(); this.renderPlaceBar(); };
       const ok = el('button', 'btn sm primary', '여기에 놓기');
@@ -1894,8 +2019,8 @@ export class UI {
       const cancel = el('button', 'btn sm danger', '취소');
       cancel.onclick = () => { this.view.stopPlacing(); this.renderPlaceBar(); this.togglePanel(false); };
       bar2.innerHTML = '';
-      bar2.append(info, rot, ok, cancel);
-      this._pb = { info, rot, ok, cancel };
+      bar2.append(info, nudge, rot, ok, cancel);
+      this._pb = { info, nudge, rot, ok, cancel };
     }
     bar2.classList.add('show');
     const def = FURNITURE_BY_ID.get(p.id);
