@@ -23,6 +23,7 @@ import { MeshBuilder } from '../core/meshbuilder.js';
 import { MAT } from '../core/color.js';
 import { mulberry32 } from '../core/math.js';
 import { P } from './palette.js';
+import { buildCity } from './city.js';
 import {
   wall, wallDoor, glassWall, doorway, floorField, slab, chairGuest, chairTask, confTable,
   whiteboard, wallTV, signBoard, plantTall, trashBin, troffer, fileCab, shelfUnit,
@@ -371,20 +372,27 @@ function buildSite(m, floors) {
   m.mat = 0;
   m.flag = 0;
 
-  // A few neighbours, so the windows look out on a city rather than a void.
-  const rnd = mulberry32(4242);
+  /* ── 이웃 ──
+     창밖이 빈 회색 판이면 사무실이 우주에 떠 있는 것으로 보인다.
+
+     Kenney City Kit 이 와 있으면 진짜 도시(`world/city.js`)를 세우고,
+     아직 안 왔으면 예전의 상자 스카이라인으로 되돌아간다. 첫 실행에서
+     네트워크가 느린 것이 "창밖이 비었다" 로 보이면 안 된다. */
   m.flag = SITE;
   m.mat = MAT.WALL;
-  for (let i = 0; i < 14; i++) {
-    const a = rnd() * 6.2831853;
-    const r = 120 + rnd() * 110;
-    const bx = 32 + Math.cos(a) * r, bz = 22 + Math.sin(a) * r;
-    if (Math.abs(bz - 78) < 30 && Math.abs(bx - 32) < 90) continue;
-    const h = 24 + rnd() * 90, w = 18 + rnd() * 26, d = 18 + rnd() * 26;
-    m.noSolid = true;
-    m.box(bx, h / 2, bz, w, h, d, rnd() > 0.5 ? '#9aa0a8' : '#a8a094');
-    m.noSolid = false;
+  m.noSolid = true;
+  if (!buildCity(m)) {
+    const rnd = mulberry32(4242);
+    for (let i = 0; i < 14; i++) {
+      const a = rnd() * 6.2831853;
+      const r = 120 + rnd() * 110;
+      const bx = 32 + Math.cos(a) * r, bz = 22 + Math.sin(a) * r;
+      if (Math.abs(bz - 78) < 30 && Math.abs(bx - 32) < 90) continue;
+      const h = 24 + rnd() * 90, w = 18 + rnd() * 26, d = 18 + rnd() * 26;
+      m.box(bx, h / 2, bz, w, h, d, rnd() > 0.5 ? '#9aa0a8' : '#a8a094');
+    }
   }
+  m.noSolid = false;
   m.mat = 0;
   m.flag = 0;
 }

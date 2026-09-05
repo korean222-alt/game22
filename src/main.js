@@ -18,7 +18,8 @@ import './world/palette.js';                  // registers the hex -> material m
 import { buildOffice, BUILDING, FLOOR_PLANS, STOREY, placeZones, inPlaceZone } from './world/office.js';
 import { buildPlaced, buildGhost } from './world/placed.js';
 import { loadKit } from './world/kit.js';
-import { FURNITURE_BY_ID } from './game/furniture.js';
+import { initSound } from './ui/sound.js';
+import { FURNITURE_BY_ID, footprint } from './game/furniture.js';
 import { Crew, Agent, ST, homeState } from './world/agents.js';
 import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, tauntFor } from './world/boss.js';
 import { buildArena, arenaSetFor, inArenaZone } from './world/arena.js';
@@ -128,9 +129,13 @@ class View {
   /* ---- world ---- */
   async build() {
     bootStep('가구 모델 읽는 중');
-    // 배치된 가구를 짓기 전에 키트가 와 있어야 한다. 실패하면 null 이 오고,
-    // 그때는 키트 가구가 상점에서 통째로 빠진다.
-    await loadKit();
+    /* 배치된 가구를 짓기 전에 키트가 와 있어야 한다. 실패하면 null 이 오고,
+       그때는 키트 가구가 상점에서 통째로 빠진다.
+
+       도시·자동차 팩도 같은 자리에서 기다린다 — buildOffice 안에서 창밖
+       스카이라인을 세우기 때문이다. 셋을 나란히 받으므로 부팅이 한 번의
+       왕복만큼만 길어지고, 어느 하나가 실패해도 나머지는 그대로 선다. */
+    await Promise.all([loadKit('furniture'), loadKit('city'), loadKit('car')]);
 
     bootStep('사무실 배치');
     await nextFrame();
@@ -257,7 +262,12 @@ class View {
         for (const [map, cls] of [[this.tags, 'nm'], [this.bubbles, 'bub']]) {
           const el = document.createElement('div');
           el.className = cls;
-          if (cls === 'nm') el.textContent = s.name;
+          if (cls === 'nm') {
+            el.textContent = s.name;
+            // 이름표를 누르면 그 사람의 상세가 열린다. 사무실에 서 있는
+            // 사람과 명단의 한 줄이 이어지는 유일한 자리다.
+            el.onclick = (e) => { e.stopPropagation(); if (ui) ui.openStaff(s.id); };
+          }
           el.style.display = 'none';
           ov.appendChild(el);
           map.set(s.id, el);
@@ -456,6 +466,21 @@ class View {
     this.arenaSet = null;
   }
 
+  /* 보스가 지금 화면 어디에 있나 (CSS 픽셀).
+
+     아레나의 공격 연출은 DOM 층에서 돈다 — 직원의 몸이 세트장에 없기
+     때문이다. 던진 것이 보스에게 **닿아야** 하므로, 3D 좌표를 화면
+     좌표로 옮겨 주는 자리가 하나 필요하다. */
+  bossScreen() {
+    if (!this.boss) return null;
+    const vp = viewportSize();
+    const b = this.boss;
+    const y = b.y + Math.max(1, b.headY - b.y) * 0.45;
+    const p = cam.project(b.x, y, b.z, vp.w, vp.h);
+    if (!p || p.z < -1 || p.z > 1) return null;
+    return { x: p.x, y: p.y };
+  }
+
   /* 눈이 카메라를 향하게. 궤도 모드에서는 방위각, 1인칭에서는 내 위치. */
   bossFaceYaw() {
     if (!this.boss) return 0;
@@ -506,6 +531,7 @@ class View {
      finger already means "orbit the camera". While placing, one finger moves
      the ghost and two still work the camera, so nothing is lost. */
   startPlacing(uid) {
+    if (this.pickup) this.stopPickup();
     const item = this.game.bag.find((b) => b.uid === uid);
     if (!item) return false;
     const def = FURNITURE_BY_ID.get(item.id);
@@ -522,6 +548,50 @@ class View {
     document.body.classList.add('placing');
     this.refreshGhost();
     return true;
+  }
+
+  /* ---- 회수 모드 ----
+     놓은 것을 다시 가방에 넣는 길은 원래 사무실 탭의 목록 하나뿐이었다.
+     목록에서 "책상" 이 여섯 줄이면 화면의 어느 책상인지 알 수가 없고,
+     그래서 잘못 놓은 가구를 그냥 두게 된다. 배치가 화면을 눌러서 하는
+     일이므로 회수도 화면을 눌러서 해야 한다. */
+  startPickup() {
+    if (this.place) this.stopPlacing();
+    this.pickup = true;
+    document.body.classList.add('picking');
+    this.buildZoneOverlay();
+    return true;
+  }
+
+  stopPickup() {
+    if (!this.pickup) return;
+    this.pickup = false;
+    document.body.classList.remove('picking');
+    disposeMesh(this.gZones); this.gZones = null;
+    if (ui) ui.renderPlaceBar();
+  }
+
+  /* 짚은 바닥 위에 서 있는 가구를 가방에 넣는다. 발자국 안을 먼저 보고,
+     아무것도 없으면 근처에서 가장 가까운 것을 집는다 — 폰에서 작은 화분을
+     정확히 짚기를 요구하면 그 모드는 안 쓰이게 된다. */
+  pickAt(x, z) {
+    const placed = this.game.company.placed.filter((p) => p.floor === this.floor);
+    let best = null, bestD = Infinity;
+    for (const p of placed) {
+      const def = FURNITURE_BY_ID.get(p.id);
+      if (!def) continue;
+      const f = footprint(def, p.rot);
+      const dx = Math.abs(p.x - x), dz = Math.abs(p.z - z);
+      const inside = dx * 2 <= f.w && dz * 2 <= f.d;
+      const d = inside ? -1 : Math.hypot(Math.max(0, dx - f.w / 2), Math.max(0, dz - f.d / 2));
+      if (d < bestD && (inside || d < 2.2)) { bestD = d; best = { p, def }; }
+    }
+    if (!best) return { ok: false, why: '여기엔 가구가 없습니다' };
+    const r = this.game.pickUpFurniture(best.p.uid);
+    if (!r.ok) return { ok: false, why: '회수할 수 없습니다' };
+    this.rebuildFurniture();
+    this.game.save();
+    return { ok: true, ko: best.def.ko };
   }
 
   stopPlacing() {
@@ -776,6 +846,10 @@ class View {
           a.reactWith(ev.kind === 'crit' ? 'idea' : 'type', ev.kind === 'crit' ? 1.5 : 0.7);
           if (ev.kind === 'crit') a.say(critLine(this.rnd), 2.0, 'idea');
         }
+        // 아레나에서는 흔들기도 숫자도 DOM 연출 층(hud.js `_arenaHit`)이
+        // 맡는다. 던진 것이 **닿는 순간**에 맞춰야 하는데, 여기서는 그
+        // 타이밍을 알 수 없다 — 그래서 아레나에서는 이 자리가 비어 있다.
+        if (this.arena) continue;
         if (this.boss) this.boss.hit(ev.kind === 'crit' ? 1.2 : 0.45);
         // 데미지 숫자는 맞은 쪽 — 보스 위로 뜬다. 때린 사람 위에 뜨면
         // 누가 맞고 있는지가 화면에서 사라진다.
@@ -1083,6 +1157,8 @@ class View {
 /* ══════════════════════════════════════ boot ══════════════════════════════ */
 
 let renderer, cam, view, ui, game, skinPass, tier = 'high', quality = TIERS.high;
+// 실시간 스태미나 시계를 초에 한 번만 보게 하는 누적기.
+let clockAcc = 0;
 
 async function boot() {
   bootStep('렌더러 준비');
@@ -1240,6 +1316,16 @@ function tick(dt) {
   // 전투의 시계는 화면의 시계와 같다. 따로 돌리면 탭이 백그라운드로 갔을 때
   // 보이지 않는 곳에서 전투만 흘러간다.
   if (ui) { ui.tickBattle(dt); ui.tickSales(dt); }
+  /* 실시간 스태미나. 계산은 벽시계로 하므로 프레임마다 불러도 결과가 같고,
+     탭이 백그라운드에 있었거나 앱을 껐다 켠 만큼도 한 번에 들어온다. */
+  if (game) {
+    clockAcc += dt;
+    if (clockAcc > 1) {
+      clockAcc = 0;
+      if (game.tickClock() > 0) game.save();
+      if (ui) ui.renderHUD();
+    }
+  }
   view.update(dt);
   // 조이스틱은 카메라를 갱신하기 **전에** 읽는다. 뒤에서 읽으면 입력이
   // 한 프레임씩 늦게 반영돼 스틱이 미끄럽게 느껴지지 않는다.
@@ -1643,6 +1729,22 @@ function wirePointer() {
       return;
     }
     if (e.pointerId === placeId) { placeId = null; placeOff = null; }
+    /* 회수 모드: 짚은 자리의 가구를 가방에 넣는다. 끌었으면 카메라를 돌린
+       것이므로 아무 일도 하지 않는다. */
+    if (view.pickup && moved < 8 && pts.size === 1) {
+      const hit = floorHit(e);
+      if (hit) {
+        const r = view.pickAt(hit[0], hit[2]);
+        if (ui) {
+          ui.toast(r.ok ? `${r.ko} 회수 — 가방으로` : r.why, r.ok ? 'good' : 'bad');
+          ui.renderPlaceBar();
+          ui.renderPanel();
+        }
+      }
+      pts.delete(e.pointerId);
+      if (!pts.size) canvas.classList.remove('drag');
+      return;
+    }
     // A tap rather than a drag skips whatever cutscene is running.
     if (moved < 8 && pts.size === 1 && !view.place) view.skipMeeting();
     pts.delete(e.pointerId);
@@ -1707,11 +1809,16 @@ function wireWalkKeys() {
    gesture, and only once asked. Ask on the first interaction, then stop. */
 let gestureUsed = false;
 function firstGesture() {
+  // 오디오 컨텍스트는 **제스처 안에서만** 열린다. 이 자리를 놓치면 브라우저가
+  // 정지 상태로 만들어 놓고 그 뒤로는 영영 안 울린다. gestureUsed 보다 앞에
+  // 두는 이유는, 첫 제스처가 이미 지나간 뒤에 들어온 터치도 컨텍스트를
+  // 되살릴 수 있어야 하기 때문이다 (탭을 오래 두면 suspended 로 돌아간다).
+  initSound();
   if (gestureUsed) return;
   gestureUsed = true;
   if (isTouch()) goFullscreen();
 }
-window.addEventListener('pointerdown', firstGesture, { once: true, capture: true });
+window.addEventListener('pointerdown', firstGesture, { capture: true });
 
 boot().catch((err) => {
   console.error(err);

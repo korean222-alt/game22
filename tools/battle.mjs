@@ -26,9 +26,13 @@ const step = async (label, fn) => {
   try { const r = await fn(); console.log(`  ✓ ${label}${r ? ' — ' + r : ''}`); pass++; }
   catch (e) { console.log(`  ✗ ${label}: ${e.message}`); fail++; }
 };
+/* 탭이 두 줄로 갈라졌다: 위 줄(#tabs)과 오른쪽 세로 레일(#tabside).
+   위 줄만 보면 상점·도감 탭에서 null 을 집는다. */
 const openTab = (name) => page.evaluate((n) => {
   document.body.classList.remove('panel-hidden');
-  document.querySelector(`#tabs .tab[data-tab="${n}"]`).click();
+  const t = document.querySelector(`.tabbtn[data-tab="${n}"]`);
+  if (!t) throw new Error('탭이 없다: ' + n);
+  t.click();
 }, name);
 
 /* 포인터 이벤트를 직접 쏜다. Playwright 의 마우스는 좌표가 하나뿐이라
@@ -258,7 +262,9 @@ await step('개발을 시작하고 세트장에 들어가면 3D 보스가 뜬다
     return { ok: r.ok, why: r.why };
   });
   if (!start.ok) throw new Error(start.why);
-  await page.evaluate(() => window.__ui.enterArena());
+  // 첫 진입에는 '개발 시작' 안내가 먼저 뜨고 enterArena 가 false 를 돌려준다.
+  // 하네스는 그 안내를 이미 본 것으로 치고 바로 들어간다.
+  await page.evaluate(() => { window.__game.company.devIntroSeen = true; window.__ui.enterArena(); });
   for (let i = 0; i < 30; i++) {
     if (await page.evaluate(() => !!window.__view.boss)) break;
     await page.waitForTimeout(400);

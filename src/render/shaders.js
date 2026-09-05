@@ -192,7 +192,11 @@ vec3 bumpNormal(vec3 N, vec3 P, float h, float scale){
   float det = dot(dpdx, r1);
   if(abs(det) < 1e-8) return N;
   vec3 grad = sign(det) * (dhdx*r1 + dhdy*r2);
-  return normalize(abs(det)*N - scale*grad);
+  vec3 nb = abs(det)*N - scale*grad;
+  // 두 항이 상쇄되면 normalize(0) 이 NaN 을 낳는다. 한 픽셀의 NaN 이
+  // 블룸의 다운샘플을 타고 번지면 화면에 **검은 사각형**이 뜬다 — 도시
+  // 지오메트리를 넣고 처음 본 그 증상이 이것이었다.
+  return dot(nb, nb) > 1e-12 ? normalize(nb) : N;
 }
 
 /* ---- GGX ---- */
@@ -257,7 +261,10 @@ struct Surf { vec3 albedo; float rough; float metal; vec3 emis; };
 void main(){
   if(cutAway(vW, vFlag)) discard;
 
-  vec3 N = normalize(vN);
+  /* 면적이 0 인 삼각형은 법선도 0 이다 (외부 팩의 OBJ 에는 그런 면이
+     실제로 들어 있다). normalize(0) 은 NaN 이고, NaN 한 픽셀은 블룸을 타고
+     사각형으로 번진다. */
+  vec3 N = dot(vN, vN) > 1e-12 ? normalize(vN) : vec3(0.0, 1.0, 0.0);
   vec3 V = normalize(uEye - vW);
   if(!gl_FrontFacing) N = -N;
 
@@ -379,7 +386,9 @@ void main(){
   float ndlRaw = dot(N, L);
   float ndl = max((ndlRaw + wrap) / (1.0 + wrap), 0.0);
   float sh = shadowFactor(N);
-  vec3 H = normalize(L + V);
+  // 시선이 정확히 광원 반대쪽을 보는 픽셀에서 L + V 가 0 이 된다.
+  vec3 hv = L + V;
+  vec3 H = dot(hv, hv) > 1e-8 ? normalize(hv) : N;
   float ndh = max(dot(N,H), 0.0), vdh = max(dot(V,H), 0.0);
   vec3 spec = F_Schlick(f0, vdh) * D_GGX(ndh, a) * V_SmithGGX(ndv, max(ndlRaw,1e-4), a);
   vec3 lit = (kd/3.14159265 + spec) * uSunCol * ndl * sh;
@@ -418,6 +427,10 @@ void main(){
   float fogA = 1.0 - exp(-vD/uFogFar * 1.35);
   lit = mix(lit, uFogCol, fogA*fogA*0.55);
 
+  /* 마지막 안전핀. 위의 가드를 다 지나서도 NaN 이 하나 새어 나오면 블룸이
+     그것을 사각형으로 키운다 — NaN 은 자기 자신과의 비교가 항상 거짓이므로
+     이 한 줄로 잡힌다. */
+  if(!(dot(lit, lit) >= 0.0)) lit = vec3(0.0);
   outColor = vec4(lit * uExposure, alpha);
 }`;
 
@@ -535,7 +548,8 @@ void main(){
   // across a flat-shaded low-poly face reads as a modelling error.
   float ndl = max((ndlRaw + 0.25) / 1.25, 0.0);
   float sh = shadowFactor(N);
-  vec3 H = normalize(L + V);
+  vec3 hv2 = L + V;
+  vec3 H = dot(hv2, hv2) > 1e-8 ? normalize(hv2) : N;
   vec3 spec = F_Schlick(f0, max(dot(V,H),0.0)) * D_GGX(max(dot(N,H),0.0), a)
             * V_SmithGGX(ndv, max(ndlRaw,1e-4), a);
   vec3 lit = (kd/3.14159265 + spec) * uSunCol * ndl * sh;

@@ -16,8 +16,9 @@ import {
   STARTUP_GRANT, hireDiscount,
   SHOP, SHOP_KINDS, GEAR_SLOTS, BOSSES, bossFor, BOSS_STAGES, BOSS_PHASES, RAID, OVERTIME,
   shopItem,
-  EXHAUST, ABILITY_KO, starText, starOf,
+  EXHAUST, ABILITY_KO, starText, starOf, weaponFor,
 } from '../game/data.js';
+import { HELPER_GACHA } from '../game/helpers.js';
 import {
   FURNITURE, FURNITURE_BY_ID, FURNITURE_CATS, RESELL, comfortLabel,
 } from '../game/furniture.js';
@@ -28,9 +29,10 @@ import {
 import {
   turnCost, projectQuality, projectedQuality, ideaHp, raidRounds, devStaminaCost,
   currentStage, raidProgress, ensureStages, strikePeriod, devCostOf, completion,
-  previewQuality, funScore,
+  previewQuality, funScore, canUrge, comboMult, URGE,
 } from '../game/project.js';
 import { TUTORIAL } from '../game/tutorial.js';
+import { STAMINA_REGEN } from '../game/state.js';
 import { giftText } from '../game/mail.js';
 import { AWARD_CATS, AWARD_GRADES, EXPO_PLANS, awardBar } from '../game/awards.js';
 import { monsterFor, monsterForStage } from '../game/monsters.js';
@@ -39,6 +41,7 @@ import { FLOOR_PLANS } from '../world/office.js';
 import { arenaSetFor } from '../world/arena.js';
 import { kitReady } from '../world/kit.js';
 import { isTouch, isFullscreen, goFullscreen, exitFullscreen, wireInstallGuide } from './device.js';
+import { sfx, soundOn, setSound } from './sound.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => {
@@ -234,6 +237,7 @@ export class UI {
     if (!document.body.classList.contains('arena')) return;
     document.body.classList.remove('arena');
     document.body.classList.remove('rest');
+    document.body.classList.remove('combo');
     /* 세트장에서 **먼저** 빠져나온다. 순서가 중요하다: 아래의 pauseBattle 은
        이벤트를 쏘고, 그 이벤트를 받은 쪽은 body 에서 arena 클래스가 이미
        사라진 것을 보고 "사무실이구나" 하고 회의 연출을 건다. 그때 카메라는
@@ -294,6 +298,7 @@ export class UI {
     if (ev.kind === 'stageClear') {
       this.arenaLog(`${ev.name} 격파!`, 'big');
       this._flash();
+      sfx('clear');
     } else if (ev.kind === 'stageStart') {
       this.arenaLog(`${ev.name} 등장!`, 'bad');
       this._flash();
@@ -303,9 +308,12 @@ export class UI {
       // 같은 줄로 지나가면 반격의 종류가 있다는 사실 자체가 안 보인다.
       const who = ev.all ? '전체' : (ev.hits || []).map((h) => h.name).join('·');
       this.arenaLog(`${ev.all ? '💥 ' : ''}${ev.ko}${who ? ` → ${who}` : ''} — ${ev.line}`, 'bad');
+      sfx('boss');
     } else if (ev.kind === 'crit') {
       this.arenaLog(`✨ ${ev.name} 번뜩임! ${ev.stat ? `${STAT_KO[ev.stat]} +${num(ev.gain)}` : num(ev.damage)}`, 'good');
+      this._arenaHit(ev);
     } else if (ev.kind === 'hit') {
+      this._arenaHit(ev);
       /* 만들어지고 있다는 것이 글자로도 흘러야 한다.
 
          한 방마다 한 줄씩 흘리면 초당 서너 줄이라 아무것도 안 읽힌다.
@@ -317,6 +325,7 @@ export class UI {
       }
     } else if (ev.kind === 'down') {
       this.arenaLog(`${ev.name} 쓰러짐`, 'bad');
+      sfx('down');
     } else if (ev.kind === 'revive') {
       this.arenaLog(ev.stage ? `${ev.name} 겨우 일어섰다 (피 한 칸)` : `${ev.name} 복귀`, 'good');
     } else if (ev.kind === 'exhausted') {
@@ -325,9 +334,13 @@ export class UI {
     } else if (ev.kind === 'forfeit') {
       this.arenaLog(`${ev.name} — ${ev.left}% 를 남긴 채 마감`, 'bad');
       this._flash();
+    } else if (ev.kind === 'comboEnd') {
+      // 배율이 조용히 사라지면 "갑자기 약해졌다" 로 보인다. 한 줄로 알린다.
+      if (ev.combo >= 3) this.arenaLog(`${ev.combo}연속 종료`, 'bad');
     } else if (ev.kind === 'loot') {
       this.arenaLog(`🎁 ${starText(ev.star)} ${ev.emoji} ${ev.ko}`,
         ev.star >= 4 ? 'big' : 'good');
+      sfx('loot');
       if (ev.star >= 4) this._flash();
     }
   }
@@ -404,7 +417,13 @@ export class UI {
           `<div class="apn">${s.name} <i>${JOBS[s.job].ko}</i></div>
            <div class="aph"><div class="aphf"></div></div>
            <div class="apa"><div class="apaf"></div></div>
-           <div class="apx"></div>`);
+           <div class="apx"></div>
+           <div class="apcd"></div>`);
+        /* 카드를 누르면 그 사람을 재촉한다. 자동 전투에 플레이어가 끼어드는
+           유일한 자리이고, 이것이 개발 화면을 "보는 것" 에서 "하는 것" 으로
+           바꾼다. 쿨다운 중이면 아무 일도 일어나지 않는다 — 그 사실은
+           카드가 가라앉아 있는 것으로 이미 말하고 있다. */
+        card.onclick = () => this.urgeStaff(id, card);
         box.appendChild(card);
         this._aCards.set(id, card);
       }
@@ -421,10 +440,19 @@ export class UI {
       const gauge = down ? 0 : Math.min(1, p.atb[id] || 0);
       card.querySelector('.apaf').style.width = (gauge * 100) + '%';
       card.classList.toggle('act', gauge > 0.86);
+      // 재촉 쿨다운. 띠가 다 차면 다시 누를 수 있다.
+      const since = (p.elapsed || 0) - ((p.urgeAt && p.urgeAt[id]) ?? -99);
+      const ready = canUrge(p, s);
+      card.classList.toggle('ready', ready);
+      card.classList.toggle('cool', !ready && !down);
+      const cd = card.querySelector('.apcd');
+      if (cd) cd.style.width = ready ? '0%' : Math.min(100, (since / URGE.cool) * 100) + '%';
       const x = card.querySelector('.apx');
       const txt = down ? '쓰러짐' : `체력 ${Math.round(s.hp)}/${s.hpMax}`;
       if (x.textContent !== txt) x.textContent = txt;
     }
+    this.renderCombo(p);
+    this.renderHelpers();
     this.renderQual(p);
     this.renderTray($('aTray'));
     if (document.body.classList.contains('rest')) this.renderTray($('aRestTray'));
@@ -479,29 +507,187 @@ export class UI {
   renderQual(p) {
     const box = $('aQual');
     if (!box) return;
-    if (!p) { box.innerHTML = ''; box._sig = null; return; }
+    if (!p) { box.innerHTML = ''; box._sig = null; this._qCells = null; return; }
     // 여기는 초당 스무 번 돈다. 버그 추정까지 딸려오는 devProgress() 대신
     // 필요한 것만 뽑는다 — 같은 함수를 쓰므로 값은 그대로다.
     const q = previewQuality(p);
+    const best = this.g.company.best || {};
+    const vals = { fun: Math.round(funScore(q)) };
+    for (const st of STATS) vals[st] = Math.round(q[st] || 0);
+
+    const keys = ['fun', ...STATS];
     // 여섯 줄이 **같은 자로** 그려져야 한다. 재미만 다른 곡선을 쓰던 동안은
     // 재미 11 의 막대가 화제성 9 의 막대보다 짧게 나왔다.
-    const rows = [
-      {
-        ko: '재미', txt: num(funScore(q)),
-        w: barPct(funScore(q), QUALITY_MAX, QUALITY_GAMMA), fun: true,
-      },
-      ...STATS.map((st) => ({
-        ko: STAT_KO[st], txt: num(q[st] || 0),
-        w: barPct(q[st] || 0, QUALITY_MAX, QUALITY_GAMMA), fun: false,
-      })),
-    ];
-    const sig = rows.map((r) => r.txt).join(',');
+    if (!this._qCells || this._qProj !== p.id) {
+      this._qProj = p.id;
+      this._qCells = new Map();
+      this._qMark = { ...vals };
+      this._qMarkT = 0;
+      box.innerHTML = '';
+      for (const k of keys) {
+        const row = el('div', 'q' + (k === 'fun' ? ' fun' : ''),
+          `<span class="l">${k === 'fun' ? '재미' : STAT_KO[k]}</span>
+           <span class="b"><span class="f"></span></span>
+           <span class="d"></span><span class="v">0</span>`);
+        box.appendChild(row);
+        this._qCells.set(k, {
+          row, f: row.querySelector('.f'), d: row.querySelector('.d'), v: row.querySelector('.v'),
+        });
+      }
+    }
+
+    /* 증가분은 **한 번에 한 창씩** 보여준다. 매 프레임 차이를 찍으면 한 방의
+       기여가 여섯 줄에 흩어져 소수점으로 흐르고, 결국 아무것도 안 읽힌다.
+       0.9초마다 그 창 동안 오른 만큼을 한 숫자로 세운다 — 그게 "지금 몇 점
+       오르고 있나" 에 대한 대답이다. */
+    const now = performance.now();
+    const mark = (this._qMarkT === 0) || (now - this._qMarkT > 900);
+    if (mark) this._qMarkT = now;
+
+    let anyRecord = false;
+    for (const k of keys) {
+      const c = this._qCells.get(k);
+      if (!c) continue;
+      const v = vals[k];
+      // 기록이 아직 없으면(첫 게임) 모든 줄이 신기록이 되어 ★ 가 의미를
+      // 잃는다. 비교 대상이 있을 때만 금색으로 칠한다.
+      const rec = (best[k] || 0) > 0 && v > best[k];
+      if (rec) anyRecord = true;
+      if (c._v !== v) { c._v = v; c.v.textContent = num(v); }
+      const w = barPct(v, QUALITY_MAX, QUALITY_GAMMA);
+      if (c._w !== w) { c._w = w; c.f.style.width = w + '%'; }
+      if (c._rec !== rec) { c._rec = rec; c.row.classList.toggle('rec', rec); }
+      if (mark) {
+        const diff = v - (this._qMark[k] || 0);
+        this._qMark[k] = v;
+        const txt = diff > 0 ? '+' + num(diff) : '';
+        if (c._d !== txt) { c._d = txt; c.d.textContent = txt; }
+        c.d.classList.remove('on');
+        if (txt) { void c.d.offsetWidth; c.d.classList.add('on'); }
+      }
+    }
+    $('arena').classList.toggle('record', anyRecord);
+  }
+
+  /* ---------- 재촉 ----------
+     파티 카드를 눌렀을 때. 규칙은 game/project.js 가 갖고 있고 여기서는
+     손끝의 반응만 만든다: 카드가 튀고, 콤보 숫자가 뛰고, 그 사람이 즉시
+     한 방 친다 (실제 타격은 다음 tick 이 이벤트로 내보낸다). */
+  urgeStaff(id, card) {
+    if (!this.inArena()) return;
+    const r = this.g.urge(id);
+    if (!r.ok) return;
+    sfx('combo', r.combo);
+    if (card) {
+      card.classList.remove('hit');
+      void card.offsetWidth;
+      card.classList.add('hit');
+    }
+    const box = $('aCombo');
+    if (box) {
+      box.classList.remove('bump');
+      void box.offsetWidth;
+      box.classList.add('bump');
+    }
+    this.renderCombo(this.g.project);
+  }
+
+  /* 개발 화면의 도우미 줄. 목록이 바뀔 때만 다시 짓는다 — 여기는 초당
+     스무 번 돈다. */
+  renderHelpers() {
+    const box = $('aHelp');
+    if (!box) return;
+    const list = this.g.helperBonus().list;
+    const sig = list.map((h) => h.id + h.level).join(',');
     if (box._sig === sig) return;
     box._sig = sig;
-    box.innerHTML = rows.map((r) =>
-      `<span class="q${r.fun ? ' fun' : ''}"><span class="l">${r.ko}</span>
-        <span class="b"><span class="f" style="width:${r.w}%"></span></span>
-        <span class="v">${r.txt}</span></span>`).join('');
+    box.innerHTML = list.map((h) =>
+      `<span class="ah"><b>${h.def.icon}</b>${h.def.ko}${h.level > 1 ? ` Lv.${h.level}` : ''}</span>`).join('');
+  }
+
+  /* 콤보 표시. 0 이면 통째로 비켜선다 — 아무것도 안 하고 있을 때 화면
+     아래에 '0 연속' 이 떠 있으면 그건 정보가 아니라 잔소리다. */
+  renderCombo(p) {
+    const on = !!(p && p.combo > 0);
+    document.body.classList.toggle('combo', on);
+    if (!on) return;
+    const n = $('aComboN'), x = $('aComboX'), bar = $('aComboBar');
+    if (n && n.textContent !== String(p.combo)) n.textContent = p.combo;
+    if (x) {
+      const t = '×' + comboMult(p).toFixed(2);
+      if (x.textContent !== t) x.textContent = t;
+    }
+    if (bar) bar.style.width = Math.max(0, Math.min(1, (p.comboT || 0) / URGE.window) * 100) + '%';
+  }
+
+  /* ══════════════════════ 공격 연출 ══════════════════════
+     "직원이 때리고 있다" 가 화면에 보여야 한다. 아레나에서 직원의 몸은
+     화면에 없으므로 — 세트장은 사무실에서 700 유닛 밖이다 — 아래의 파티
+     카드에서 보스가 선 자리로 **자기 도구를 던진다**. 프로그래머는 노트북,
+     디자이너는 타블렛, 사운드는 마이크. 무엇을 만들고 있는지가 그림이 된다.
+
+     맞는 순간 충격파가 퍼지고 그 자리에서 점수가 튄다. 회사 최고 기록을
+     넘긴 축이면 금색으로. */
+  _arenaHit(ev) {
+    const layer = $('aFx');
+    if (!layer || !this.inArena()) return;
+    // 자동 전투는 초당 몇 방씩 나온다. 살아 있는 연출이 너무 많아지면
+    // 폰에서 이 층이 프레임을 먹는다 — 넘치면 그냥 건너뛴다.
+    if (layer.childElementCount > 14) return;
+
+    const card = this._aCards && this._aCards.get(ev.staffId);
+    const from = card ? card.getBoundingClientRect() : null;
+    const to = this.view.bossScreen();
+    if (!to) return;
+    const x0 = from ? from.left + from.width / 2 : to.x;
+    const y0 = from ? from.top : window.innerHeight;
+    const crit = ev.kind === 'crit';
+
+    const shot = el('div', 'afx' + (crit ? ' crit' : ''), weaponFor(ev.jobId) || '💥');
+    layer.appendChild(shot);
+    const dur = crit ? 420 : 300;
+    // 포물선으로 던진다. 직선으로 가면 던진 것이 아니라 미끄러진 것으로 보인다.
+    const arc = -Math.min(150, Math.abs(y0 - to.y) * 0.45 + 40);
+    const anim = shot.animate([
+      { transform: `translate(${x0}px, ${y0}px) rotate(0deg)`, opacity: 0 },
+      { transform: `translate(${(x0 + to.x) / 2}px, ${(y0 + to.y) / 2 + arc}px) rotate(${crit ? 360 : 200}deg)`, opacity: 1, offset: 0.5 },
+      { transform: `translate(${to.x}px, ${to.y}px) rotate(${crit ? 720 : 400}deg)`, opacity: 1 },
+    ], { duration: dur, easing: 'cubic-bezier(.3,.05,.6,1)' });
+    anim.onfinish = () => {
+      shot.remove();
+      this._arenaImpact(to, ev, crit);
+    };
+    // 애니메이션이 어떤 이유로든 안 끝나도 층에 쓰레기가 남지 않게 한다.
+    setTimeout(() => shot.remove(), dur + 900);
+  }
+
+  _arenaImpact(to, ev, crit) {
+    const layer = $('aFx');
+    if (!layer) return;
+    const ring = el('div', 'afxh' + (crit ? ' crit' : ''));
+    ring.style.left = to.x + 'px';
+    ring.style.top = to.y + 'px';
+    layer.appendChild(ring);
+    setTimeout(() => ring.remove(), 420);
+
+    if (this.view.boss) this.view.boss.hit(crit ? 1.2 : 0.45);
+    // 소리는 **닿는 순간**에 난다. 던지는 순간에 내면 눈과 귀가 어긋난다.
+    sfx(crit ? 'crit' : 'hit');
+
+    /* 튀는 숫자는 **점수**다. 남은 작업량은 왼쪽 기둥의 막대가 이미 말하고
+       있고, 여기서 알고 싶은 것은 "지금 몇 점 올랐나" 이기 때문이다. */
+    const best = (this.g.company.best || {});
+    const p = this.g.project;
+    const rec = ev.stat && p && (best[ev.stat] || 0) > 0
+      ? Math.round(previewQuality(p)[ev.stat] || 0) > best[ev.stat] : false;
+    const pop = el('div', 'afxp' + (crit ? ' crit' : '') + (rec ? ' rec' : ''),
+      ev.stat
+        ? `<span class="k">${STAT_KO[ev.stat]}</span>+${num(ev.gain)}${rec ? ' ★' : ''}`
+        : `+${num(ev.damage)}`);
+    pop.style.left = (to.x + (Math.random() - 0.5) * 60) + 'px';
+    pop.style.top = (to.y - 6 + (Math.random() - 0.5) * 30) + 'px';
+    layer.appendChild(pop);
+    setTimeout(() => pop.remove(), 1050);
   }
 
   _wireModal() {
@@ -674,6 +860,20 @@ export class UI {
     b.classList.toggle('panel-hidden', hide);
   }
 
+  /* 한 사람의 상세 화면을 연다. 3D 이름표, 층별 배치 목록, 개발 팀 목록이
+     전부 여기로 들어온다 — 이름이 적힌 곳은 어디든 눌리는 것이 맞다. */
+  openStaff(id) {
+    if (!this.g.staff.some((s) => s.id === id)) return;
+    this.selectedStaff = id;
+    this.openTab('staff');
+    if (this.view.focusStaff) this.view.focusStaff(id);
+    // 명단이 길면 고른 카드가 화면 밖에 있다. 열자마자 그 자리로 보낸다.
+    requestAnimationFrame(() => {
+      const on = document.querySelector('#panel .item.on');
+      if (on && on.scrollIntoView) on.scrollIntoView({ block: 'center' });
+    });
+  }
+
   openTab(name) {
     const t = document.querySelector(`.tabbtn[data-tab="${name}"]`);
     if (!t) return;
@@ -686,6 +886,13 @@ export class UI {
 
   /* ---------- game events ---------- */
   _onGameEvent(type, payload) {
+    // 소리는 여기 한 곳에서 붙인다. 액션마다 흩뿌리면 새 액션이 생길 때마다
+    // 빠뜨리고, 빠뜨린 것은 아무도 눈치채지 못한다.
+    if (type === 'week') sfx('week');
+    else if (type === 'release') sfx('release');
+    else if (type === 'award') sfx('award');
+    else if (type === 'helper') sfx('loot');
+    else if (type === 'stamina') sfx('coin');
     // 아레나에서는 알림이 로그 리본으로 간다. 화면 한복판은 보스의 자리고,
     // 자동 전투는 초당 몇 줄씩 나오므로 토스트로 받으면 서로를 덮는다.
     if (type === 'log') {
@@ -1174,6 +1381,13 @@ export class UI {
     set('hRank', c.rank);
     set('hStam', c.stamina);
     $('hStamMax').textContent = '/' + c.staminaMax;
+    // 다음 한 점까지 남은 시간. 가득 차 있으면 아무것도 적지 않는다.
+    const eta = $('hStamEta');
+    if (eta) {
+      const left = this.g.staminaEta();
+      const txt = left > 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : '';
+      if (eta.textContent !== txt) eta.textContent = txt;
+    }
     set('hMoney', num(c.money));
     set('hCoins', c.coins);
     set('hFans', num(c.fans));
@@ -1303,6 +1517,13 @@ export class UI {
     const dFun = prevFun === undefined ? 0 : pg.fun - prevFun;
     $('pgFunD').textContent = dFun > 0 ? `+${dFun}` : '';
 
+    // 회사 최고 기록을 넘긴 축은 금색이 된다. 아레나의 기둥과 같은 규칙 —
+    // 두 화면이 같은 것을 다르게 말하면 그건 정보가 아니라 혼란이다.
+    const best = g.company.best || {};
+    const funRec = (best.fun || 0) > 0 && pg.fun > best.fun;
+    const funEl = $('pgFun');
+    if (funEl) funEl.classList.toggle('rec', funRec);
+
     const stats = $('pgStats');
     stats.innerHTML = '';
     const mx = Math.max(1, ...STATS.map((st) => pg.quality[st]));
@@ -1310,10 +1531,11 @@ export class UI {
     for (const st of STATS) {
       const v = pg.quality[st];
       const d = prev[st] === undefined ? 0 : v - prev[st];
-      stats.appendChild(el('div', 'pgs',
+      const rec = (best[st] || 0) > 0 && v > best[st];
+      stats.appendChild(el('div', 'pgs' + (rec ? ' rec' : ''),
         `<span class="l">${STAT_KO[st]}</span>
          <span class="b"><span class="f" style="width:${v / mx * 100}%"></span></span>
-         <span class="v">${v}</span><span class="d">${d > 0 ? '+' + d : ''}</span>`));
+         <span class="v">${v}${rec ? '★' : ''}</span><span class="d">${d > 0 ? '+' + d : ''}</span>`));
     }
     this._lastQ = { ...pg.quality };
 
@@ -1385,14 +1607,32 @@ export class UI {
     ]) box.appendChild(el('div', 'row', `<span>${k}</span><b>${v}</b>`));
 
     box.appendChild(el('h4', 'sec', '주간 진행'));
+    /* 달력을 미는 데 코인이 든다. 공짜였을 때는 무엇을 만들든 상관없이
+       이 버튼을 연타하는 것이 시상식·판매·계약을 가장 빨리 굴리는 길이었다.
+       스태미나는 이제 실시간으로 차므로, 코인이 없어도 게임은 굴러간다. */
+    const wkChk = g.canNextWeek();
+    const wkCost = g.weekCoinCost();
     const wk = el('button', 'btn primary wide',
-      g.pendingEvent ? '이번 주 사건을 먼저 처리하세요' : '다음 주로 (스태미나 · 체력 회복)');
+      g.pendingEvent ? '이번 주 사건을 먼저 처리하세요'
+        : (wkCost
+          ? `다음 주로 · 🪙 ${wkCost} (연속 넘김)`
+          : '다음 주로 (스태미나 · 체력 회복)'));
+    wk.disabled = !wkChk.ok && !g.pendingEvent;
     wk.onclick = () => {
       if (g.pendingEvent) { this._eventFlow(); return; }
-      g.nextWeek();
+      const r = g.nextWeek();
+      if (r && r.blocked && r.why) this.toast(r.why, 'bad');
       g.save();
     };
     box.appendChild(wk);
+    if (wkCost && !g.pendingEvent) {
+      box.appendChild(el('div', 'item',
+        `<div class="d" style="color:var(--warn)">${wkChk.ok
+          ? `아무것도 하지 않고 <b>${c.weekRun}주</b>를 연달아 넘겼습니다. 이번 주는 코인 ${wkCost}개.`
+          : `코인이 모자랍니다 (보유 ${c.coins}).`}<br>
+         기획서를 쓰거나 개발에 들어가거나 계약을 받으면 <b>다시 무료</b>가 됩니다.
+         스태미나는 <b>${Math.round(STAMINA_REGEN / 60)}분에 1</b>씩 저절로 차니 기다려도 됩니다.</div>`));
+    }
 
     /* 세일즈 태스크 — the standing checklist */
     const tasks = g.tasks();
@@ -1421,7 +1661,9 @@ export class UI {
     };
     box.appendChild(ot);
     box.appendChild(el('div', 'item',
-      '<div class="d">스태미나는 <b>다음 주</b>·<b>야근</b>·<b>상점의 음료</b> 셋으로 찬다. 체력은 주간 휴식과 <b>음식</b>으로 회복한다.</div>'));
+      `<div class="d">스태미나는 <b>${Math.round(STAMINA_REGEN / 60)}분에 1씩 저절로</b> 차고,
+       <b>다음 주</b>·<b>야근</b>·<b>상점의 음료</b>로도 채운다. 게임을 꺼 둔 사이에도 찬다.
+       체력은 주간 휴식과 <b>음식</b>으로 회복한다.</div>`));
 
     /* 계약 — the safety net */
     box.appendChild(el('h4', 'sec', '계약 일감'));
@@ -1504,6 +1746,15 @@ export class UI {
       }
       box.appendChild(row);
     }
+
+    /* 소리 — 절차적으로 만들기 때문에 끄고 켜는 것 말고 조절할 것이 없다.
+       전화기를 조용한 데서 꺼내는 사람이 반드시 있으므로 끄는 길은 있어야
+       하고, 그 선택은 저장된다. */
+    box.appendChild(el('h4', 'sec', '소리'));
+    const snd = el('button', 'btn wide sm' + (soundOn() ? ' primary' : ''),
+      soundOn() ? '🔊 효과음 켜짐' : '🔇 효과음 꺼짐');
+    snd.onclick = () => { setSound(!soundOn()); if (soundOn()) sfx('buy'); this.renderPanel(); };
+    box.appendChild(snd);
 
     /* 1인칭 */
     box.appendChild(el('h4', 'sec', '1인칭 둘러보기'));
@@ -2433,6 +2684,8 @@ export class UI {
   panelShop(box) {
     const g = this.g, c = g.company;
     box.appendChild(this._bagLink('산 물건은 🎒 가방 탭에 쌓입니다.'));
+    // 도우미가 맨 위다. 상점 물건 스무 줄 아래에 두면 아무도 못 찾는다.
+    this.panelHelpers(box);
     /* 분류 */
     box.appendChild(el('h4', 'sec', `상점 · 보유 ${won(c.money)}`));
     const cats = el('div', 'shopcat');
@@ -2464,6 +2717,79 @@ export class UI {
     }
 
     this.panelGacha(box);
+  }
+
+  /* ---------- 도우미 ----------
+     코인으로 뽑아 모으는 마스코트들. 낀 도우미는 개발 배틀의 숫자를 조금씩
+     밀어 주고, 겹쳐 뽑으면 레벨이 오른다.
+
+     자리 수를 랭크가 여는 것이 이 화면의 핵심이다 — 처음부터 셋을 다 끼면
+     뽑기의 재미가 첫 판에 끝난다. */
+  panelHelpers(box) {
+    const g = this.g, c = g.company;
+    const slots = g.helperSlotCount();
+    const list = g.helperList();
+    const bonus = g.helperBonus();
+
+    box.appendChild(el('h4', 'sec',
+      `도우미 <span class="hint">${(c.helperSlots || []).length} / ${slots} 자리</span>`));
+
+    const pull = el('button', 'btn primary wide',
+      `🎁 도우미 뽑기 · 🪙 ${HELPER_GACHA.coins}`);
+    pull.disabled = c.coins < HELPER_GACHA.coins;
+    pull.onclick = () => {
+      const r = g.drawHelperGacha();
+      if (!r.ok) { this.toast(r.why, 'bad'); return; }
+      this.rollHelper(r);
+    };
+    box.appendChild(pull);
+
+    if (!list.length) {
+      box.appendChild(el('div', 'item',
+        '<div class="d">아직 도우미가 없습니다. 뽑으면 개발 현장 아래에 함께 서고, '
+        + '한 방·번뜩임·보물상자를 조금씩 밀어 줍니다.</div>'));
+      return;
+    }
+
+    const eff = [];
+    if (bonus.dmg > 1) eff.push(`한 방 +${Math.round((bonus.dmg - 1) * 100)}%`);
+    if (bonus.crit > 0) eff.push(`번뜩임 +${(bonus.crit * 100).toFixed(1)}%p`);
+    if (bonus.loot > 1) eff.push(`상자 +${Math.round((bonus.loot - 1) * 100)}%`);
+    if (bonus.plan > 1) eff.push(`기획 +${Math.round((bonus.plan - 1) * 100)}%`);
+    if (bonus.urge < 1) eff.push(`재촉 -${Math.round((1 - bonus.urge) * 100)}%`);
+    if (bonus.heal > 0) eff.push('개발 중 회복');
+    box.appendChild(el('div', 'row',
+      `<span>지금 효과</span><b>${eff.length ? eff.join(' · ') : '없음'}</b>`));
+
+    for (const h of list) {
+      const it = el('div', 'helper' + (h.equipped ? ' on' : ''));
+      it.innerHTML = `<span class="hi">${h.def.icon}</span>
+        <span class="ht"><b>${h.def.ko} <i>Lv.${h.level}</i></b>
+        <span class="hd">${starText(h.def.star)} · ${h.def.desc}</span></span>`;
+      const b = el('button', 'btn sm' + (h.equipped ? ' primary' : ''), h.equipped ? '해제' : '장착');
+      b.onclick = () => {
+        const r = g.toggleHelper(h.def.id);
+        if (!r.ok) this.toast(r.why, 'bad');
+        this.renderPanel();
+      };
+      it.appendChild(b);
+      box.appendChild(it);
+    }
+    box.appendChild(el('div', 'item',
+      `<div class="d">자리는 랭크가 엽니다 — 랭크 5에 두 자리, 랭크 12에 세 자리. 같은 도우미를 또 뽑으면 레벨이 오릅니다.</div>`));
+  }
+
+  /* 도우미 뽑기 결과. 룰렛과 같은 연출을 쓴다 — 결과는 이미 정해져 있고,
+     이건 그 결과를 보여주는 방식이다. */
+  rollHelper(r) {
+    this.openModal('도우미', r.isNew ? '새 도우미!' : `${r.def.ko} 레벨 ${r.level}`,
+      `<div style="text-align:center;padding:6px 0">
+         <div style="font-size:52px;line-height:1.1">${r.def.icon}</div>
+         <div style="font-size:15px;font-weight:900;margin-top:4px">${r.def.ko}</div>
+         <div style="font-size:12px;color:var(--gold);margin-top:2px">${starText(r.def.star)}</div>
+         <div style="font-size:12px;color:var(--dim);margin-top:6px">${r.def.desc}</div>
+         ${r.isNew ? '' : `<div style="font-size:11.5px;color:var(--good);margin-top:6px">겹쳐서 레벨 ${r.level} — 효과가 세집니다</div>`}
+       </div>`, null, () => this.renderPanel());
   }
 
   /* ---------- 소재 뽑기 ----------
@@ -2621,6 +2947,7 @@ export class UI {
   /* ---------- 운영 ---------- */
   panelLive(box) {
     const g = this.g;
+    this.panelChart(box);
     const live = g.managed();
     box.appendChild(el('h4', 'sec', `운영 중 ${live.length} / ${g.info().managedCap}`));
     if (!live.length) box.appendChild(el('div', 'item', '<div class="d">운영 중인 게임이 없습니다.</div>'));
@@ -2676,6 +3003,19 @@ export class UI {
       + '책상 하나에 직원 한 명이 앉습니다. 쾌적도가 높으면 직원 의욕이 잘 유지되고 기획력이 오릅니다.</div>'));
 
     box.appendChild(this._bagLink('산 가구는 가방에 들어갑니다.'));
+
+    /* 회수는 화면을 눌러서 한다. 목록에서 "책상" 여섯 줄 중 어느 것이
+       화면의 그 책상인지 고르는 것은 사실상 불가능하다. */
+    const pick = el('button', 'btn wide sm',
+      c.placed.length ? '🧹 치우기 — 화면에서 눌러 가방으로' : '놓은 가구가 없습니다');
+    pick.disabled = !c.placed.length;
+    pick.onclick = () => {
+      this.view.startPickup();
+      this.togglePanel(true);
+      this.renderPlaceBar();
+    };
+    box.appendChild(pick);
+
     this.panelFurnitureShop(box);
     this.panelPlaced(box);
 
@@ -2728,9 +3068,48 @@ export class UI {
     box.appendChild(el('h4', 'sec', '층별 배치'));
     for (let i = 0; i < c.floors; i++) {
       const people = perFloor[i] || [];
-      box.appendChild(el('div', 'row',
-        `<span>${i + 1}F ${FLOOR_PLANS[i].short}</span><b>${people.map((s) => s.name).join(', ') || '비어 있음'}</b>`));
+      const row = el('div', 'row', `<span>${i + 1}F ${FLOOR_PLANS[i].short}</span>`);
+      const names = el('b', 'names');
+      if (!people.length) names.textContent = '비어 있음';
+      // 이름은 누를 수 있다. 층 목록에서 사람을 발견하고 상세를 보려고
+      // 직원 탭으로 가서 다시 찾는 것은 같은 일을 두 번 하는 것이다.
+      for (const s of people) {
+        const b = el('button', 'namebtn', s.name);
+        b.onclick = () => this.openStaff(s.id);
+        names.appendChild(b);
+      }
+      row.appendChild(names);
+      box.appendChild(row);
     }
+  }
+
+  /* ---------- 주간 판매 차트 ----------
+     우리 게임과 경쟁사 게임이 같은 표에서 유저 수로 줄을 선다.
+
+     이것이 있기 전에는 출시 뒤에 볼 것이 자금뿐이었다. 20만 명이 많은
+     것인지 적은 것인지는 옆에 다른 회사의 숫자가 있어야 알 수 있고,
+     "1위" 는 큰 숫자와 다른 종류의 사실이다. */
+  panelChart(box) {
+    const g = this.g, c = g.company;
+    const rows = g.chart();
+    box.appendChild(el('h4', 'sec',
+      `주간 판매 차트${c.chartWeeksNo1 ? ` <span class="hint">1위 ${c.chartWeeksNo1}주</span>` : ''}`));
+    if (!rows.length) {
+      box.appendChild(el('div', 'item',
+        '<div class="d">아직 차트에 오른 게임이 없습니다. 게임을 출시하면 경쟁사와 같은 표에서 순위를 다툽니다.</div>'));
+      return;
+    }
+    for (const r of rows) {
+      const row = el('div', 'chartrow' + (r.mine ? ' mine' : '') + (r.rank === 1 ? ' top' : ''));
+      row.innerHTML = `<span class="cr">${r.rank}</span>
+        <span class="ci">${r.icon}</span>
+        <span class="ct"><b>${r.title}</b><i>${r.studio}</i></span>
+        <span class="cu">${num(r.users)}</span>`;
+      box.appendChild(row);
+    }
+    const rivals = (c.rivalGames || []).filter((r) => r.managing).length;
+    box.appendChild(el('div', 'item',
+      `<div class="d">경쟁사 운영작 ${rivals}편. 1위를 지키면 매주 팬이 늘어납니다.</div>`));
   }
 
   /* ---------- 가방 ----------
@@ -2850,6 +3229,21 @@ export class UI {
   renderPlaceBar() {
     const bar2 = $('placebar');
     if (!bar2) return;
+
+    /* 회수 모드는 툴바가 한 줄이면 된다: 무엇을 하는 모드인지와 끝내는
+       버튼. 배치 툴바와 같은 자리를 쓰므로 여기서 먼저 갈라진다. */
+    if (this.view.pickup) {
+      this._pb = null;
+      bar2.innerHTML = '';
+      bar2.classList.add('show');
+      const info = el('div', 'pinfo',
+        '<b>가구 회수</b><span class="ok">치울 가구를 화면에서 누르세요</span>');
+      const done = el('button', 'btn sm primary', '끝내기');
+      done.onclick = () => { this.view.stopPickup(); this.renderPlaceBar(); this.togglePanel(false); };
+      bar2.append(info, done);
+      return;
+    }
+
     const p = this.view.place;
     if (!p) { bar2.classList.remove('show'); document.body.classList.remove('placing'); return; }
 
@@ -3156,6 +3550,7 @@ export class UI {
   }
 
   toast(text, kind) {
+    sfx(kind === 'bad' ? 'bad' : 'tap');
     const t = $('toast');
     t.textContent = text;
     t.className = 'card show ' + (kind || '');

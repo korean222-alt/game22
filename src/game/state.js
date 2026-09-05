@@ -31,9 +31,18 @@ import {
   generateProposal, startProject, battleTurn, battleTick, chooseCard, finishProject, debug,
   turnCost, seedProjectIds, previewQuality, previewBugs, funScore,
   ensureStages, currentStage, raidProgress, teamDown, advanceStage, stageName,
-  forfeitStage, completion,
+  forfeitStage, completion, projectQuality,
+  urgeStaff, canUrge, comboMult, URGE,
 } from './project.js';
 import { TASKS, rollEvent, grantReward, rewardText } from './events.js';
+import {
+  RIVALS, marketScale, rivalReleaseChance, makeRivalRelease, tickRival,
+  buildChart, myBestRank, CHART_FAN_BONUS,
+} from './rivals.js';
+import {
+  HELPERS, HELPER_BY_ID, HELPER_GACHA, helperSlots, helperBonus, helperLevel,
+  drawHelper,
+} from './helpers.js';
 import {
   MAIL_CAP, welcomeMail, fanMail, fanMailChance, dlMail, DL_MARKS,
   recordMail, sealMail, giftText,
@@ -69,6 +78,33 @@ const aliasContent = (id) => CONTENT_ALIAS[id] || id;
    길어야 한다: 정점이 보통 3주차에 서므로, 열두 주면 오르고 꺾이고 식는
    모양이 한 화면에 다 들어온다. 주당 1.5초면 막대가 서는 것이 눈에 보인다. */
 const SALES = { secs: 18, weeks: 12 };
+
+/* ---------- 실시간 스태미나 ----------
+   3분에 한 점. 게임을 닫아 둔 사이에도 차므로 계산은 벽시계로 한다.
+
+   이 시계가 생기면서 스태미나는 "주를 넘겨야만 차는 것" 이 아니게 됐고,
+   그래서 다음 주로 넘기기에 값을 매길 수 있게 됐다 — 코인이 하나도 없는
+   회사도 기다리면 기획서를 뽑고 계약을 받을 수 있다. 막다른 길이 없다는
+   설계 원칙(HANDOFF 3.6)을 지키는 것이 이 시계의 진짜 역할이다. */
+export const STAMINA_REGEN = 180;       // 초/1점
+/* 같은 시계로 체력도 조금씩 돈다. 코인이 없어 주를 못 넘기는 회사가
+   탈진한 팀을 영원히 못 일으키면 그것이 막다른 길이다. 주간 회복(78%)에
+   비하면 한참 느리다 — 밥과 휴식을 대체하지 않을 만큼만. */
+const HP_REGEN_PER_TICK = 0.020;        // 한 점 찰 때마다 최대 체력의 2%
+
+/* ---------- 다음 주로 넘기기 ----------
+   달력을 미는 데 값이 붙는다. 예전에는 공짜라서, 무엇을 만들든 상관없이
+   버튼을 연타하는 것이 시상식·계약·판매를 가장 빨리 굴리는 방법이었다.
+   코인은 출시·수상·편지·태스크에서만 나오므로, 이제 시간을 미는 것은
+   **게임을 만들어서 번 것을 쓰는** 행동이다. */
+export const WEEK_COIN = 1;
+/* 값이 붙지 않는 넘김의 수. 지난번 넘김 이후에 회사가 뭐라도 했으면
+   (돈을 썼거나 스태미나를 썼으면) 카운터가 0 으로 돌아가므로, 평범하게
+   플레이하는 사람은 이 값을 절대 안 넘긴다. 값을 무는 것은 **아무것도
+   안 하고 달력만 미는** 연속 넘김뿐이다 — 그게 상을 빨리 받으려고
+   버튼을 연타하던 그 행동이다. */
+export const FREE_WEEK_SKIPS = 1;
+export const MAX_WEEK_COIN = 3;
 
 export class Game {
   constructor(seed = Date.now() & 0x7fffffff) {
@@ -127,6 +163,32 @@ export class Game {
       overtimeUsed: false,
       spentOnShop: 0,
       devIntroSeen: false,          // 개발 화면이 무엇인지 한 번 설명했나
+      /* ---- 실시간 스태미나 ----
+         스태미나가 "다음 주로 넘기기" 로만 찼을 때는, 그 버튼을 연타하는
+         것이 언제나 최적이었다 — 공짜였고, 달력만 앞으로 밀면 시상식도
+         계약도 알아서 굴러왔다. 이제 스태미나는 **실제 시간**으로 찬다
+         (STAMINA_REGEN 초에 1). 게임을 꺼 둔 사이에도 차므로 벽시계를
+         저장하고, 돌아올 때 그동안 지난 만큼 한 번에 넣는다. */
+      stamAt: Date.now(),
+      // 아무것도 하지 않고 연속으로 넘긴 주의 수. 무엇이든 하면 0 이 된다.
+      weekRun: 0,
+      /* ---- 경쟁사 ----
+         라이벌이 낸 게임들과, 우리가 차트에서 몇 위였나. 지난주 순위를
+         들고 있어야 "1위를 뺏겼다" 를 말할 수 있다. */
+      rivalGames: [],
+      rivalSeq: 0,
+      chartRank: 0,          // 지난주 우리 최고 순위 (0 = 차트 밖)
+      chartWeeksNo1: 0,      // 1위를 지킨 주의 누계
+      /* ---- 도우미 ----
+         뽑아서 모으고, 랭크가 열어 주는 자리 수만큼 낀다.
+         helpers 는 { id: 보유 수 }, helperSlots 는 지금 낀 id 목록. */
+      helpers: {},
+      helperSlots: [],
+      helperPulls: 0,
+      /* 축별 최고 기록. 개발 중인 점수가 이 값을 넘으면 화면이 금색이 된다 —
+         "지금 만들고 있는 게 우리 회사 역사상 제일 좋은 것" 이 실시간으로
+         보이는 것이, 자동 전투를 끝까지 보게 만드는 유일한 이유다. */
+      best: {},
       /* ---- 편지함 ----
          받은 편지가 최신순으로 쌓인다. 선물이 붙은 편지는 수령하기 전까지
          지워지지 않는다 — 정리하다가 상금을 버리는 일은 없어야 한다. */
@@ -220,8 +282,70 @@ export class Game {
       research: this.company.research,
       trends: this.company.trends,
       contents: this.ownedContents(),
+      // 낀 도우미가 주는 배율. project.js 가 이걸 읽어 한 방·번뜩임·상자에
+      // 얹는다. 없으면 전부 1 이라 예전과 완전히 같은 수가 나온다.
+      helpers: this.helperBonus(),
       ...extra,
     };
+  }
+
+  /* ══════════════════════ 도우미 ══════════════════════ */
+  helperSlotCount() { return helperSlots(this.company.rank); }
+
+  helperBonus() {
+    const c = this.company;
+    return helperBonus(c.helpers, (c.helperSlots || []).slice(0, this.helperSlotCount()));
+  }
+
+  helperList() {
+    const c = this.company;
+    return HELPERS
+      .filter((h) => (c.helpers || {})[h.id])
+      .map((h) => ({
+        def: h, count: c.helpers[h.id], level: helperLevel(c.helpers[h.id]),
+        equipped: (c.helperSlots || []).includes(h.id),
+      }));
+  }
+
+  /* 코인으로 한 마리. 이미 있는 것이 나오면 레벨이 오른다 — 뽑기가 손해로
+     끝나는 순간이 없어야 두 번째를 돌린다. */
+  drawHelperGacha() {
+    const c = this.company;
+    const cost = HELPER_GACHA.coins;
+    if (c.coins < cost) return { ok: false, why: `코인이 부족합니다 (🪙 ${cost} 필요)` };
+    c.coins -= cost;
+    c.helperPulls = (c.helperPulls || 0) + 1;
+    const def = drawHelper(this.rnd);
+    c.helpers = c.helpers || {};
+    const had = c.helpers[def.id] || 0;
+    c.helpers[def.id] = had + 1;
+    // 첫 마리는 자리가 비어 있으면 알아서 낀다. 뽑고 나서 어디에 넣는지를
+    // 또 찾아야 하면, 뽑은 순간의 기쁨이 심부름으로 바뀐다.
+    c.helperSlots = c.helperSlots || [];
+    if (!had && c.helperSlots.length < this.helperSlotCount()) c.helperSlots.push(def.id);
+    this.note(had
+      ? `${def.icon} ${def.ko} — 레벨 ${helperLevel(had + 1)}!`
+      : `${def.icon} ${def.ko} 합류!`, def.star >= 4 ? 'good' : '');
+    this.emit('helper', { def, level: helperLevel(had + 1), isNew: !had });
+    this.save();
+    return { ok: true, def, level: helperLevel(had + 1), isNew: !had };
+  }
+
+  toggleHelper(id) {
+    const c = this.company;
+    if (!(c.helpers || {})[id]) return { ok: false, why: '없는 도우미' };
+    c.helperSlots = c.helperSlots || [];
+    const i = c.helperSlots.indexOf(id);
+    if (i >= 0) c.helperSlots.splice(i, 1);
+    else {
+      if (c.helperSlots.length >= this.helperSlotCount()) {
+        return { ok: false, why: `자리가 ${this.helperSlotCount()}개뿐입니다` };
+      }
+      c.helperSlots.push(id);
+    }
+    this.emit('helper', null);
+    this.save();
+    return { ok: true };
   }
 
   /* ---------- 소재 뽑기 ----------
@@ -313,6 +437,143 @@ export class Game {
     return { ok: true };
   }
 
+  /* ---------- 실시간 시계 ----------
+     main.js 의 프레임 루프가 매 프레임 부르지만, 실제로 보는 것은 벽시계다.
+     그래서 탭이 백그라운드에 있었거나 앱을 껐다 켜도 결과가 같다.
+
+     순수 시뮬레이션 안에서 Date.now() 를 쓰는 유일한 자리다. 헤드리스
+     시뮬레이션(tools/balance.mjs)은 이 함수를 부르지 않으므로 밸런스
+     계산에는 시계가 끼어들지 않는다. */
+  tickClock(now = Date.now()) {
+    const c = this.company;
+    if (!c.stamAt) { c.stamAt = now; return 0; }
+    // 시계가 뒤로 갔으면(기기 시간 변경) 그냥 지금으로 맞춘다.
+    if (now < c.stamAt) { c.stamAt = now; return 0; }
+    const max = this.info().staminaMax;
+    if (c.stamina >= max) { c.stamAt = now; return 0; }
+    const step = STAMINA_REGEN * 1000;
+    const ticks = Math.floor((now - c.stamAt) / step);
+    if (ticks <= 0) return 0;
+    const gain = Math.min(ticks, max - c.stamina);
+    c.stamina += gain;
+    // 남은 나머지는 다음 판으로 넘긴다. 매번 now 로 리셋하면 프레임마다
+    // 시계가 0 으로 돌아가 영원히 한 점도 안 찬다.
+    c.stamAt += ticks * step;
+    if (c.stamina >= max) c.stamAt = now;
+    for (const st of this.staff) {
+      syncHp(st);
+      if (st.hp < st.hpMax) healHp(st, st.hpMax * HP_REGEN_PER_TICK * ticks);
+    }
+    // 스태미나가 찼다는 것 자체가 하나의 사건이다 — 소리와 HUD 가 이걸 듣는다.
+    this.emit('stamina', gain);
+    this.emit('staff', null);
+    return gain;
+  }
+
+  /* 다음 한 점까지 남은 초. HUD 가 이걸로 카운트다운을 찍는다. */
+  staminaEta(now = Date.now()) {
+    const c = this.company;
+    if (c.stamina >= this.info().staminaMax) return 0;
+    const left = STAMINA_REGEN * 1000 - ((now - (c.stamAt || now)) % (STAMINA_REGEN * 1000));
+    return Math.max(0, Math.ceil(left / 1000));
+  }
+
+  /* ---------- 최고 기록 ----------
+     완성된 게임의 축 점수를 회사 기록과 비교해 큰 쪽을 남긴다.
+     `fun` 은 다섯 축에서 유도되는 값이라 같이 저장해 둔다 — 화면에서
+     여섯 줄을 같은 규칙으로 칠하려면 여섯 개가 다 있어야 한다. */
+  recordBests(project) {
+    if (!project) return null;
+    const c = this.company;
+    c.best = c.best || {};
+    const q = projectQuality(project);
+    const beaten = [];
+    for (const [k, v] of Object.entries({ ...q, fun: funScore(q) })) {
+      const val = Math.round(v || 0);
+      if (val > (c.best[k] || 0)) { beaten.push(k); c.best[k] = val; }
+    }
+    return beaten;
+  }
+
+  /* 지금 만들고 있는 게임이 회사 기록을 넘긴 축들. UI 가 금색으로 칠한다. */
+  recordsNow(project = this.project) {
+    if (!project) return {};
+    const c = this.company, best = c.best || {};
+    const q = previewQuality(project);
+    const out = {};
+    for (const [k, v] of Object.entries({ ...q, fun: funScore(q) })) {
+      out[k] = Math.round(v || 0) > (best[k] || 0);
+    }
+    return out;
+  }
+
+  /* ══════════════════════ 경쟁사와 차트 ══════════════════════
+     매주: 라이벌 게임이 한 주를 살고, 새 게임이 나오고, 차트를 다시 세운다.
+     그리고 우리 순위가 바뀌었으면 그것을 사건으로 알린다. */
+  _tickRivals() {
+    const c = this.company;
+    c.rivalGames = c.rivalGames || [];
+    for (const r of c.rivalGames) tickRival(r, this.rnd);
+    // 서비스가 끝난 게임은 차트에서 빠지고, 목록도 무한정 자라지 않는다.
+    c.rivalGames = c.rivalGames.filter((r) => r.managing).slice(-12);
+
+    const scale = marketScale(c, this.releases);
+    for (const rv of RIVALS) {
+      if (this.rnd() >= rivalReleaseChance(rv)) continue;
+      c.rivalSeq = (c.rivalSeq || 0) + 1;
+      const rel = makeRivalRelease(rv, scale, this.rnd, c.rivalSeq);
+      c.rivalGames.push(rel);
+      // 우리가 운영 중일 때만 알린다. 아무것도 안 팔고 있는 회사에게 남의
+      // 신작은 소식이 아니라 소음이다.
+      if (this.releases.some((r) => r.managing)) {
+        this.note(`${rv.icon} ${rv.ko}가 「${rel.title}」을 출시했습니다.`);
+      }
+    }
+
+    const chart = this.chart();
+    const rank = myBestRank(chart);
+    const was = c.chartRank || 0;
+    if (rank === 1) {
+      c.chartWeeksNo1 = (c.chartWeeksNo1 || 0) + 1;
+      // 1위는 팬을 부른다. 차트가 숫자로만 존재하면 장식이 된다.
+      const gain = Math.round(chart[0].users * CHART_FAN_BONUS);
+      if (gain > 0) c.fans += gain;
+      if (was !== 1) this.note(`👑 「${chart[0].title}」이 주간 차트 1위입니다!`, 'good');
+      else this.note(`👑 차트 1위 유지 (${c.chartWeeksNo1}주째) · 팬 +${gain.toLocaleString('ko-KR')}`, 'good');
+    } else if (was === 1 && rank > 1) {
+      const top = chart[0];
+      this.note(`차트 1위를 ${top.studio}의 「${top.title}」에 내줬습니다.`, 'bad');
+    }
+    c.chartRank = rank;
+    this._maybeRankUp();
+    this.emit('chart', chart);
+  }
+
+  /* 이번 주 차트. UI 가 그대로 그린다. */
+  chart(limit = 8) {
+    return buildChart(this.releases, this.company.rivalGames, this.company.name, limit);
+  }
+
+  /* ---------- 재촉 ----------
+     개발 화면에서 직원 카드를 눌렀을 때. 규칙은 project.js 안에 있고
+     여기서는 이벤트만 흘린다. */
+  urge(staffId) {
+    const p = this.project;
+    if (!p) return { ok: false };
+    const s = this.staff.find((x) => x.id === staffId);
+    if (!s) return { ok: false };
+    const r = urgeStaff(p, s);
+    if (r.ok) this.emit('urge', { staffId, name: s.name, combo: r.combo, mult: r.mult });
+    return r;
+  }
+
+  canUrge(staffId) {
+    const s = this.staff.find((x) => x.id === staffId);
+    return this.project && s ? canUrge(this.project, s) : false;
+  }
+
+  comboMult() { return comboMult(this.project); }
+
   roleOf(staffer) { return role(staffer); }
 
   teamOf(project) {
@@ -327,6 +588,8 @@ export class Game {
   spend(n) {
     if (this.company.money < n) return false;
     this.company.money -= n;
+    // 돈이 나갔다 = 회사가 뭔가 했다. 연속 넘김 카운터가 풀린다.
+    this._acted();
     return true;
   }
 
@@ -515,6 +778,7 @@ export class Game {
     const cost = itemCost(s, item);
     if (!this.spend(cost)) return { ok: false, why: '자금 부족' };
     this.company.stamina -= stam;
+    this._acted();
     const r = giveItem(s, itemId, this.company.rank);
     if (!r.ok) { this.company.money += cost; this.company.stamina += stam; return r; }
     this.note(`${s.name}에게 ${item.ko} 지급 → Lv.${s.level}`, 'good');
@@ -563,6 +827,7 @@ export class Game {
   makeProposal() {
     if (this.company.stamina < 1) return { ok: false, why: '스태미나 부족' };
     this.company.stamina -= 1;
+    this._acted();
     // The staffer with the most planning weight is credited as the author, and
     // is the one who gains motivation if the game ships.
     let author = null, best = -1;
@@ -570,8 +835,10 @@ export class Game {
       const p = proposalPower(s, this.floorRoleOf(s));
       if (p > best) { best = p; author = s; }
     }
-    const pr = generateProposal(this.rnd, author, this.totalPlanPower(), this.company.rank,
-      this.company.research);
+    // 기획 요정 같은 도우미는 기획서 굴림에 얹힌다.
+    const hb = this.helperBonus();
+    const pr = generateProposal(this.rnd, author,
+      this.totalPlanPower() * (hb.plan || 1), this.company.rank, this.company.research);
     this.proposals.unshift(pr);
     this.dexSee('genres', pr.genreId);
     if (this.proposals.length > 8) this.proposals.pop();
@@ -610,7 +877,7 @@ export class Game {
     const seriesOf = seriesOfId ? this.releases.find((r) => r.id === seriesOfId) : null;
     const p = startProject({
       proposal: pr, platformId, monetizeId, team,
-      rank: this.company.rank, seriesOf,
+      rank: this.company.rank, seriesOf, helpers: this.helperBonus(),
     });
     // 스태미나는 **여기서** 나간다. 게임을 만드는 데 쓰는 것이 스태미나이고,
     // 보스를 잡는 데 쓰는 것은 직원들의 체력이다.
@@ -619,6 +886,7 @@ export class Game {
     }
     if (!this.spend(p.devCost)) return { ok: false, why: `개발비 부족 (₩${p.devCost.toLocaleString()})` };
     this.company.stamina -= p.devStamina;
+    this._acted();
 
     this.proposals = this.proposals.filter((x) => x.id !== proposalId);
     this.project = p;
@@ -824,6 +1092,11 @@ export class Game {
       title: p.title,
     };
 
+    // 축별 최고 기록을 갱신한다. 개발 화면이 "지금 신기록" 을 금색으로
+    // 보여주려면 비교 대상이 필요하고, 그 대상은 **완성된 게임**이어야
+    // 한다 — 만들다 만 숫자를 기록으로 치면 기록이 계속 앞질러 간다.
+    this.recordBests(p);
+
     this.project = null;
     this.finished = p;
     this.company.marketingId = 'none';
@@ -855,6 +1128,7 @@ export class Game {
     if (!p || p.bugs <= 0) return { ok: false, why: '고칠 버그가 없다' };
     if (this.company.stamina < 1) return { ok: false, why: '스태미나 부족' };
     this.company.stamina -= 1;
+    this._acted();
     const wasHof = p.hallOfFame;
     const r = debug(p, this.staffById(), this.rnd);
     const gained = r.gained > 0 ? ` · 평론가 +${r.gained}점 (${p.criticTotal}점)` : '';
@@ -1343,6 +1617,7 @@ export class Game {
     if (this.company.contract) return { ok: false, why: '이미 계약을 진행 중' };
     if (this.company.stamina < c.stamina) return { ok: false, why: '스태미나 부족' };
     this.company.stamina -= c.stamina;
+    this._acted();
     const pay = contractPay(c, this.company.rank);
     this.company.contract = { id, ko: c.ko, weeksLeft: c.weeks, pay, research: c.research };
     this.note(`${c.ko} 수주. ${c.weeks}주 뒤 ₩${pay.toLocaleString()} 입금.`);
@@ -1687,11 +1962,48 @@ export class Game {
   }
 
   /* ---------- the week clock ---------- */
+  /* 이번 주를 넘기는 데 드는 코인.
+
+     한 번은 언제나 공짜다. 값이 붙는 것은 **연속으로** 넘길 때뿐이고,
+     그 사이에 무엇이든 하면(기획서·개발·디버그·계약·채용·구매 — 돈이나
+     스태미나가 나가는 모든 행동) 카운터가 0 으로 돌아간다.
+
+     이 규칙이 없으면 둘 중 하나가 된다: 공짜면 버튼 연타가 언제나 최적이고
+     (상도 계약도 판매도 달력만 밀면 굴러온다), 매번 코인을 받으면 코인이
+     마른 회사가 시간을 못 흘려 아무것도 못 하게 된다. */
+  weekCoinCost() {
+    const n = this.company.weekRun || 0;
+    if (n < FREE_WEEK_SKIPS) return 0;
+    return Math.min(MAX_WEEK_COIN, WEEK_COIN * (n - FREE_WEEK_SKIPS + 1));
+  }
+
+  canNextWeek() {
+    if (this.pendingEvent) return { ok: false, why: '이번 주 사건을 먼저 처리하세요' };
+    const cost = this.weekCoinCost();
+    if (this.company.coins < cost) {
+      return { ok: false, why: `코인 ${cost} 필요 (보유 ${this.company.coins})` };
+    }
+    return { ok: true, cost };
+  }
+
+  /* 회사가 무엇이든 했다. 연속 넘김 카운터를 되돌린다. */
+  _acted() { if (this.company) this.company.weekRun = 0; }
+
   nextWeek() {
     const c = this.company;
     // An unanswered event blocks the week: the whole point of a choice is that
     // the world waits for it.
     if (this.pendingEvent) { this.emit('event', this.pendingEvent); return { blocked: true }; }
+
+    /* 달력을 미는 값. 코인이 없으면 주는 넘어가지 않는다 — 대신 스태미나가
+       실시간으로 차므로 기다리는 동안에도 게임은 굴러간다. */
+    const cost = this.weekCoinCost();
+    if (c.coins < cost) {
+      this.note(`연속으로 넘기려면 코인 ${cost}개가 필요합니다. 무엇이든 하면 다시 무료입니다.`, 'bad');
+      return { blocked: true, why: `코인 ${cost} 필요` };
+    }
+    if (cost) c.coins -= cost;
+    c.weekRun = (c.weekRun || 0) + 1;
 
     /* 팀이 전부 쓰러진 채로 주를 넘기면, 그 단계는 거기서 마감된다.
 
@@ -1714,6 +2026,9 @@ export class Game {
       // 다운로드는 줄어들 수 있는 숫자가 아니다.
       this.addDl(Math.max(0, r.users - before));
     }
+    // 경쟁사도 한 주를 산다. 우리 게임이 식는 동안 남의 게임은 뜬다.
+    this._tickRivals();
+
     const costs = weeklyCosts(c, this.staff);
     this.earn(income);
     c.money -= costs;
@@ -1724,7 +2039,11 @@ export class Game {
       if (c.contract.weeksLeft <= 0) {
         this.earn(c.contract.pay);
         c.researchPts += c.contract.research;
-        this.note(`${c.contract.ko} 납품 완료. ₩${c.contract.pay.toLocaleString()} · 연구 +${c.contract.research}`, 'good');
+        // 코인이 마르지 않게 하는 자리. 계약은 스태미나로 받고 스태미나는
+        // 실시간으로 차므로, 이 한 개가 "코인이 없어 주가 안 넘어간다" 를
+        // 영구적인 벽이 아니라 기다림으로 만든다.
+        c.coins += 1;
+        this.note(`${c.contract.ko} 납품 완료. ₩${c.contract.pay.toLocaleString()} · 연구 +${c.contract.research} · 코인 +1`, 'good');
         c.contract = null;
         this.emit('contract', null);
       }
@@ -1759,7 +2078,10 @@ export class Game {
       }
     }
 
+    // 한 주가 지나면 스태미나는 가득 찬다. 코인을 낸 대가가 이것이다.
+    c.staminaMax = this.info().staminaMax;
     c.stamina = c.staminaMax;
+    c.stamAt = Date.now();
     c.overtimeUsed = false;
 
     // Idle staff drift back toward a neutral mood; a shipped game is what
@@ -1937,6 +2259,30 @@ export class Game {
       }
       c.overtimeUsed = !!c.overtimeUsed;
       c.spentOnShop = c.spentOnShop || 0;
+      // 실시간 스태미나·최고 기록이 없던 세이브. 시계는 지금부터 돌고,
+      // 기록은 이미 출시한 게임들에서 되짚는다.
+      c.stamAt = c.stamAt || Date.now();
+      c.weekRun = c.weekRun || 0;
+      c.rivalGames = Array.isArray(c.rivalGames) ? c.rivalGames : [];
+      c.rivalSeq = c.rivalSeq || 0;
+      c.chartRank = c.chartRank || 0;
+      c.chartWeeksNo1 = c.chartWeeksNo1 || 0;
+      c.helpers = (c.helpers && typeof c.helpers === 'object') ? c.helpers : {};
+      c.helperSlots = Array.isArray(c.helperSlots)
+        ? c.helperSlots.filter((id) => HELPER_BY_ID.has(id) && c.helpers[id]) : [];
+      c.helperPulls = c.helperPulls || 0;
+      c.staminaMax = rankInfo(c.rank).staminaMax;
+      c.stamina = Math.min(c.stamina || 0, c.staminaMax);
+      if (!c.best || typeof c.best !== 'object') {
+        c.best = {};
+        for (const r of g.releases) {
+          const q = r.quality || {};
+          for (const [k, v] of Object.entries({ ...q, fun: funScore(q) })) {
+            const val = Math.round(v || 0);
+            if (val > (c.best[k] || 0)) c.best[k] = val;
+          }
+        }
+      }
       c.devIntroSeen = !!c.devIntroSeen;
       /* 편지함·행사가 없던 세이브. 빈 값으로 열리면 되고, 지난 출시작에는
          날짜가 없으니 시상식 심사 대상에서 자연히 빠진다. */

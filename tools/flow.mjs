@@ -29,9 +29,14 @@ const step = async (label, fn) => {
   try { const r = await fn(); console.log(`  ✓ ${label}${r ? ' — ' + r : ''}`); pass++; }
   catch (e) { console.log(`  ✗ ${label}: ${e.message}`); fail++; }
 };
+/* 탭이 두 줄로 갈라졌다: 위 줄(#tabs)에 회사·직원·개발·사무실, 오른쪽
+   세로 레일(#tabside)에 상점·가방·도감·운영·편지·행사. 위 줄만 보던 이
+   하네스는 가방 탭에서 null 을 집어 3절 전체가 무너졌다. */
 const openTab = (name) => page.evaluate((n) => {
   document.body.classList.remove('panel-hidden');
-  document.querySelector(`#tabs .tab[data-tab="${n}"]`).click();
+  const t = document.querySelector(`.tabbtn[data-tab="${n}"]`);
+  if (!t) throw new Error('탭이 없다: ' + n);
+  t.click();
 }, name);
 /* Buttons first: a staff row contains the text of every button inside it, so
    searching in document order would hit the row and toggle the panel shut. */
@@ -101,7 +106,12 @@ await step('회사 이름 팝업 → 지원금', async () => {
   await closeModal(); await page.waitForTimeout(400);
   const s = await state();
   if (!s.founded) throw new Error('창업 처리가 되지 않음');
-  if (s.money !== 180000) throw new Error(`지원금이 ₩${s.money.toLocaleString()}`);
+  // 숫자를 여기에 박아 두면 밸런스를 고칠 때마다 하네스가 거짓말을 한다.
+  // 검사하려는 것은 "창업 지원금이 실제로 들어왔는가" 이므로 data.js 에
+  // 적힌 값을 그때그때 읽어서 맞춘다.
+  const want = await page.evaluate(async () =>
+    (await import('/src/game/data.js')).STARTUP_GRANT);
+  if (s.money !== want) throw new Error(`지원금이 ₩${s.money.toLocaleString()} (기대 ₩${want.toLocaleString()})`);
   return `「플로우 스튜디오」 · 지원금 ₩${s.money.toLocaleString()}`;
 });
 /* 창업이 끝나면 '홈 화면에 추가' 안내가 화면 전체를 덮는다. 실제 플레이어는
@@ -442,6 +452,13 @@ await step('회의 종료 후 개발 가능', async () => {
 
 console.log('\n── 6. 개발 전투 · 보스 몬스터 ──');
 await page.evaluate(() => { window.__view.meetingScenes = false; });
+/* 보스는 **아레나 안에만** 선다. 사무실 복도에 몬스터가 서 있던 시절의
+   하네스는 여기서 그냥 기다렸고, 그래서 6절이 통째로 실패했다. */
+await page.evaluate(() => {
+  window.__game.company.devIntroSeen = true;
+  window.__ui.enterArena();
+});
+await page.waitForTimeout(600);
 await step('아이디어 몬스터가 소환된다', async () => {
   for (let i = 0; i < 40; i++) {
     if ((await state()).boss) break;
@@ -489,29 +506,35 @@ await step('스켈레톤이 매 프레임 갱신된다', async () => {
   if (!moved) throw new Error('애니메이션이 멈춰 있음');
   return '조인트 행렬 갱신 확인';
 });
+/* 아레나의 타격 연출은 이제 두 박자다: 직원이 자기 도구를 던지고
+   (`.afx`), 그것이 **닿는 순간** 보스가 흔들리고 점수가 튄다 (`.afxp`).
+   그래서 흔들림은 devTurn() 직후가 아니라 300ms 쯤 뒤에 온다 — 한 번만
+   재고 실패라고 부르면 안 된다. */
 await step('타격하면 몬스터가 반응한다', async () => {
   const before = await page.evaluate(() => window.__view.boss.inst.clip.name);
   // 자동 전투가 된 뒤로 한 턴은 스태미나를 먹지 않는다. 데미지 숫자도
   // 라운드 합계 하나가 아니라 사람마다 하나씩 뜬다.
   await page.evaluate(() => window.__game.devTurn());
-  const hit = await page.evaluate(() => ({
-    clip: window.__view.boss ? window.__view.boss.inst.clip.name : null,
-    flash: window.__view.boss ? window.__view.boss.flash : 0,
-    fx: window.__view.effects.length,
-  }));
-  if (!hit.clip) throw new Error('보스가 사라짐');
-  if (hit.flash <= 0) throw new Error('피격 플래시가 없음');
-  if (!hit.fx) throw new Error('보스 데미지 이펙트가 큐에 들어가지 않음');
-  // The DOM node is created on the frame that projects it, and software GL
-  // renders at a few frames a second, so give it real time rather than a tick.
-  let dom = 0;
-  for (let i = 0; i < 12; i++) {
-    dom = await page.evaluate(() => document.querySelectorAll('.dmg').length);
-    if (dom) break;
-    await page.waitForTimeout(250);
+  let shots = 0;
+  for (let i = 0; i < 12 && !shots; i++) {
+    shots = await page.evaluate(() => document.querySelectorAll('#aFx .afx').length);
+    if (!shots) await page.waitForTimeout(120);
   }
-  if (!dom) throw new Error('보스 위에 데미지 숫자가 안 뜸');
-  return `${before} → ${hit.clip} · 데미지 팝업 ${dom}`;
+  let hit = null;
+  for (let i = 0; i < 20; i++) {
+    hit = await page.evaluate(() => ({
+      clip: window.__view.boss ? window.__view.boss.inst.clip.name : null,
+      flash: window.__view.boss ? window.__view.boss.flash : 0,
+      pops: document.querySelectorAll('#aFx .afxp').length,
+    }));
+    if (!hit.clip || (hit.flash > 0 && hit.pops)) break;
+    await page.waitForTimeout(200);
+  }
+  if (!hit.clip) throw new Error('보스가 사라짐');
+  if (!shots) throw new Error('직원이 던지는 연출이 없음');
+  if (hit.flash <= 0) throw new Error('피격 플래시가 없음');
+  if (!hit.pops) throw new Error('맞은 자리에 점수가 안 뜸');
+  return `${before} → ${hit.clip} · 투척 ${shots} · 점수 팝업 ${hit.pops}`;
 });
 let cards = 0;
 await step('HP를 0까지 (카드 2장 선택)', async () => {

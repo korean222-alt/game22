@@ -202,6 +202,13 @@ export function trackViewport(onChange) {
     const r = document.documentElement.style;
     r.setProperty('--vh', h + 'px');
     r.setProperty('--vw', w + 'px');
+    /* position:fixed 의 bottom/right 은 **레이아웃** 뷰포트를 기준으로
+       잡힌다. 브라우저 툴바가 보이는 동안에는 그 영역이 실제로 보이는
+       영역보다 크므로, 화면 아래에 붙인 UI 가 툴바 뒤로 들어가 잘린다.
+       차이를 재서 안전 여백에 더하면 같은 CSS 로 홈화면 앱과 브라우저
+       양쪽에서 잘리지 않는다. */
+    r.setProperty('--vcut', Math.max(0, (window.innerHeight || h) - h) + 'px');
+    r.setProperty('--vcutr', Math.max(0, (window.innerWidth || w) - w) + 'px');
     document.body.classList.toggle('portrait', h > w);
     // Below this the panel and the 3D view cannot both be useful at once, so
     // the layout switches to a compact, collapsible arrangement.

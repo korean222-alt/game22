@@ -42,7 +42,9 @@
 <!-- ══ top HUD: 랭크 · 스태미나 · 자금 · 코인 · 날짜 ══ -->
 <div id="hud" class="card">
   <div class="hz"><span class="hk">RANK</span><b id="hRank">1</b></div>
-  <div class="hz"><span class="hk">STAM</span><b id="hStam">8</b><i id="hStamMax">/8</i></div>
+  <!-- 스태미나는 실시간으로 찬다. 다음 한 점까지 남은 시간이 여기 붙는다 —
+       숫자만 있으면 "언제 차는지" 를 알 길이 없다. -->
+  <div class="hz stam"><span class="hk">STAM</span><b id="hStam">8</b><i id="hStamMax">/8</i><em id="hStamEta"></em></div>
   <div class="hz money"><span class="hi">💵</span><b id="hMoney">0</b></div>
   <div class="hz coins"><span class="hi">🪙</span><b id="hCoins">0</b></div>
   <div class="hz fans"><span class="hk">팬</span><b id="hFans">0</b></div>
@@ -111,6 +113,12 @@
      개발에 착수하면 여기로 들어온다. 위에 보스, 아래에 팀, 가운데는 3D
      사무실 그대로. 버튼으로 때리지 않는다 — 직원들이 알아서 친다. -->
 <div id="arena">
+  <!-- 보스 정보는 화면 **왼쪽 기둥**에 세로로 선다.
+       예전에는 이 카드가 화면 위쪽을 가로로 가득 채웠고, 공정·이름·체력·
+       완성도·품질 여섯 줄이 쌓이면서 세로로도 화면의 절반을 먹었다 —
+       정작 보러 들어온 보스가 카드 뒤에 완전히 가려졌다. 세로 기둥은 폭을
+       3분의 1도 안 쓰면서 같은 정보를 다 담고, 오른쪽 3분의 2가 통째로
+       무대로 남는다. -->
   <div class="ahead">
     <!-- 이 화면이 무엇인지를 맨 위에 글자로 적는다. 괴물이 사무실에 서
          있으면 처음 보는 사람은 이게 왜 경영 게임인지 알 수가 없다 —
@@ -124,8 +132,10 @@
     <div class="atop">
       <span class="apips" id="aPips"></span>
       <span class="atitle" id="aTitle">—</span>
-      <span class="aturn" id="aTurn"></span>
+      <!-- 회사 최고 기록을 넘긴 축이 하나라도 있으면 켜진다. -->
+      <span class="arec">신기록</span>
     </div>
+    <div class="atop"><span class="aturn" id="aTurn"></span></div>
     <!-- 공정. 지금 어느 단계를 만들고 있나. -->
     <div class="asteps" id="aSteps"></div>
     <div class="aname">
@@ -144,6 +154,13 @@
 
   <div id="aLog"></div>
   <div id="aFlash"></div>
+  <!-- ══ 공격 연출 층 ══
+       직원이 자기 도구를 보스에게 던진다. 파티 카드에서 출발해 보스가 선
+       자리로 날아가고, 맞는 순간 점수가 튄다. 3D 로 하지 않는 이유는
+       직원의 몸이 이 화면에 없기 때문이다 — 세트장은 사무실에서 700 유닛
+       떨어져 있다. 화면 좌표로 던지면 "누가 쳤는지" 가 파티 카드와 이어져
+       읽힌다. -->
+  <div id="aFx"></div>
 
   <!-- 팀 전원이 쓰러졌을 때. 여기서 밥을 먹여 일으키지 못하면 이 단계는
        남은 체력째로 마감되고 다음 보스로 넘어간다. -->
@@ -163,6 +180,13 @@
   </div>
 
   <div class="afoot">
+    <!-- ══ 콤보 ══
+         직원 카드를 연달아 누르면 쌓인다. 숫자가 크게 뛰어야 "지금 뭔가
+         잘 되고 있다" 가 손끝으로 전해진다. -->
+    <!-- 지금 붙어 있는 도우미. 전투 중에 보여야 장착이 선택이 된다. -->
+    <div id="aHelp"></div>
+    <div id="aCombo"><b id="aComboN">0</b><span>연속</span><i id="aComboX">×1.00</i>
+      <span class="cbar"><span class="cbf" id="aComboBar"></span></span></div>
     <div id="aParty"></div>
     <div id="aTray"></div>
     <div class="arow">

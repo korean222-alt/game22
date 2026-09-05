@@ -106,6 +106,21 @@ export const JOB_ROLE = {
   networker: 'net', networker2: 'net', architect: 'net',
 };
 
+/* ---------- 직업의 무기 ----------
+   개발 배틀에서 직원이 보스에게 던지는 것. 프로그래머는 노트북을,
+   디자이너는 타블렛을, 사운드는 마이크를 던진다.
+
+   순수 연출용 표지만 여기 사는 이유는 직업 정의 옆이 아니면 새 직업을
+   추가할 때 반드시 빠뜨리기 때문이다 — 빠뜨리면 기본값(💥)이 나간다. */
+export const JOB_WEAPON = {
+  planner: '📋', planner2: '📋', director: '🗂️',
+  programmer: '💻', programmer2: '💻', techlead: '🖥️',
+  designer: '🖊️', designer2: '🎨', cdirector: '🖼️',
+  sound: '🎤', sound2: '🎹', audioprod: '🎛️',
+  networker: '📡', networker2: '📱', architect: '🗄️',
+};
+export const weaponFor = (job) => JOB_WEAPON[job] || '💥';
+
 /* Which raw ability drives each job's battle damage. */
 export const JOB_ABILITY = {
   planner: 'plan', planner2: 'plan', director: 'plan',
@@ -342,7 +357,11 @@ export function rankInfo(rank) {
     // Stamina has to cover development AND staff training AND proposals, and
     // it is the real throughput limiter: every point is another battle turn,
     // so this curve decides how many games a year the studio can ship.
-    staminaMax: Math.min(38, 8 + Math.floor(r * 1.0)),
+    // 실시간 회복(3분/1점)이 생기면서 상한을 한 칸 올렸다. 크게 올리면
+    // 처리량이 통째로 움직인다 — 8 → 14 로 올려 봤더니 5년차 출시작이
+    // 125편(기준 65~83)이 되고 금상이 18개 나왔다. 지금 값은 랭크 1 에서
+    // 11 (예전 9), 랭크 10 에서 20 (예전 18) 이다.
+    staminaMax: Math.min(46, 10 + Math.floor(r * 1.05)),
     managedCap: 3,
   };
 }
@@ -361,7 +380,7 @@ export const RANK_UP_FANS = (rank) => Math.round(900 * Math.pow(2.2, rank - 1));
    rookie hires (about ₩20,000), a feature-phone project (₩25,000) and a couple
    of months of payroll still leaves room to make the office liveable — and not
    so much room that the first decision is free. */
-export const STARTUP_GRANT = 180000;
+export const STARTUP_GRANT = 100000;
 
 /* ---------- 긴급 지원금 ----------
    The design rule is that a player is never permanently stuck. A studio that
@@ -896,18 +915,23 @@ export function starOf(item) { return Math.max(1, Math.min(STAR_MAX, (item && it
    한가운데의 싸움이 로딩 바와 다를 게 없었다.
 
      perStrike   한 번 칠 때 상자가 떨어질 확률
-     onClear     보스 한 마리를 잡으면 확정으로 주는 개수
+     onClear     보스 한 마리를 잡았을 때 상자가 떨어질 확률
      perStage    한 스테이지에서 나올 수 있는 상한 (긴 싸움이 곧 이득이
                  되면 일부러 약한 팀으로 오래 끄는 쪽이 최적이 된다)
      weights     ★1..★5 의 기본 분포
      luck        야심(strain)이 별 분포를 오른쪽으로 미는 세기. ★5 대작을
                  만들면 상자에서도 큰 것이 나온다. */
 export const TREASURE = {
-  perStrike: 0.010,
-  onClear: 1,
-  perStage: 3,
-  weights: [54, 27, 12, 5, 2],
-  luck: 0.7,
+  perStrike: 0.0045,
+  /* 격파 보상은 **확률**이다. 확정으로 주면 한 게임에 상자 세 개가 보장되고,
+     그러면 상점은 "돈이 남을 때 들르는 곳" 이 된다. 상자가 안 나오는 판이
+     있어야 나오는 판이 사건이 된다. */
+  onClear: 0.45,
+  perStage: 2,
+  /* ★4·★5 는 사실상 사고여야 한다. 예전 분포(5%/2%)로는 데뷔작 한 편에
+     ★4 장비가 붙는 일이 잦았고, 상점의 비싼 칸이 통째로 의미를 잃었다. */
+  weights: [72, 21, 6, 0.9, 0.1],
+  luck: 0.5,
 };
 
 /* 별 하나를 뽑는다. `push` 는 0..1 — 클수록 높은 별이 잘 나온다. */

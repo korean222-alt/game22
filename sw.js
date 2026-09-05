@@ -12,7 +12,7 @@
    handler below caches each on first use — so a first launch on mobile data
    stays small and the monster is instant every time after. */
 
-const CACHE = 'sds3d-v8';
+const CACHE = 'sds3d-v9';
 
 const ASSETS = [
   "./",
@@ -26,13 +26,17 @@ const ASSETS = [
   "./src/core/gltf.js",
   "./src/core/math.js",
   "./src/core/meshbuilder.js",
+  "./src/game/awards.js",
   "./src/game/data.js",
   "./src/game/dialogue.js",
   "./src/game/economy.js",
   "./src/game/events.js",
   "./src/game/furniture.js",
+  "./src/game/mail.js",
+  "./src/game/helpers.js",
   "./src/game/monsters.js",
   "./src/game/project.js",
+  "./src/game/rivals.js",
   "./src/game/staff.js",
   "./src/game/state.js",
   "./src/game/tutorial.js",
@@ -44,6 +48,7 @@ const ASSETS = [
   "./src/ui/device.js",
   "./src/ui/firstperson.js",
   "./src/ui/hud.js",
+  "./src/ui/sound.js",
   "./src/ui/style.css",
   "./src/world/agents.js",
   "./src/world/arena.js",
@@ -52,8 +57,11 @@ const ASSETS = [
   "./src/world/palette.js",
   "./src/world/placed.js",
   "./src/world/kit.js",
+  "./src/world/city.js",
   "./src/world/props.js",
   "./assets/furniture/kit.json",
+  "./assets/city/kit.json",
+  "./assets/city/cars.json",
   "./icons/icon-180.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

@@ -20,7 +20,7 @@ import {
 import { JOBS, JOB_ABILITY } from './data.js';
 import {
   power, basePower, ability, motivationMult, traitMult, traitAdd, hasTrait, traitsOf,
-  gearAxis, drainHp, hpRatio, syncHp, upSpeedMult, upCritAdd,
+  gearAxis, drainHp, hpRatio, syncHp, healHp, upSpeedMult, upCritAdd,
 } from './staff.js';
 
 let _pid = 1;
@@ -231,7 +231,7 @@ export function devCostOf({ platformId, grade, seriesN = 1, monetizeId = null })
   return Math.round(platform.cost * gradeMult * seriesMult * (money ? money.cost || 1 : 1));
 }
 
-export function startProject({ proposal, platformId, monetizeId, team, rank, seriesOf }) {
+export function startProject({ proposal, platformId, monetizeId, team, rank, seriesOf, helpers }) {
   const genre = GENRES.find((g) => g.id === proposal.genreId);
   const platform = PLATFORMS.find((p) => p.id === platformId);
   const seriesN = seriesOf ? seriesOf.seriesN + 1 : 1;
@@ -283,6 +283,11 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
     down: {},                    // staffId -> 남은 기절 시간(초)
     bossAtb: 0,
     elapsed: 0,                  // 전투 경과 시간(초)
+    // 재촉과 콤보. urgeAt 은 사람별 마지막 재촉 시각(elapsed 기준)이다.
+    urgeAt: {},
+    combo: 0, comboT: 0, comboBest: 0,
+    // 착수 시점의 도우미가 정하는 재촉 쿨다운 배율. 전투 중에는 안 바뀐다.
+    urgeCool: helpers && helpers.urge ? helpers.urge : 1,
     staminaSpent: 0,
     contentId: null,
     methodId: null,
@@ -379,10 +384,11 @@ export function currentStage(project) {
    싸움을 길게 끄는 쪽이 최적이 된다. 상자는 싸움의 **덤**이지 목적이 아니다.
 
    `force` 는 보스를 잡았을 때처럼 확정으로 하나 주는 자리에서 쓴다. */
-export function rollTreasure(project, rnd, force = false) {
+export function rollTreasure(project, rnd, force = false, ctx = {}) {
   if (!project) return null;
   if ((project.lootThisStage || 0) >= TREASURE.perStage) return null;
-  if (!force && rnd() >= TREASURE.perStrike) return null;
+  const lootMult = (ctx.helpers && ctx.helpers.loot) || 1;
+  if (!force && rnd() >= TREASURE.perStrike * lootMult) return null;
   const strain = projectStrain(project);
   const push = Math.max(0, Math.min(1, (strain - 0.30) / 0.95));
   const star = rollStar(rnd, push);
@@ -413,6 +419,70 @@ export function turnCost() { return 0; }
    한 사람이 지금 칠 수 있는가. 체력이 0 이면 쓰러진 것으로 보고 잠깐 쉰다 —
    완전히 빠지는 게 아니라 몇 초 뒤 다시 일어선다. 팀 전체가 동시에 쓰러지면
    그 주에는 더 못 싸우고, 주간 회복이 이들을 일으킨다. */
+/* ══════════════════════ 재촉과 콤보 ══════════════════════
+   자동 전투에는 누를 것이 없었다. 지켜보는 것과 밥을 먹이는 것뿐이라,
+   화면을 켜 두고 다른 일을 해도 결과가 같았다 — 그러면 개발 현장은
+   로딩 바와 다를 게 없다.
+
+   그래서 **재촉**을 붙인다. 파티 카드를 누르면 그 사람의 게이지가 즉시
+   차고 한 방이 나간다. 연달아 성공하면 팀 콤보가 쌓여 모두의 한 방이
+   세지고, 잠깐 손을 놓으면 식는다.
+
+   두 가지가 이것을 자동 전투의 대체가 아니라 **가속**으로 만든다:
+     · 한 방은 여전히 그 사람의 체력을 먹는다. 연타는 팀을 갈아 넣는다.
+     · 사람마다 쿨다운이 있다. 한 명만 계속 두들길 수는 없다.
+
+   COMBO.step 이 콤보 한 칸의 배율이고 max 가 상한이다. 상한이 없으면
+   손가락이 빠른 사람이 밸런스를 통째로 벗어난다. */
+export const URGE = {
+  cool: 1.15,        // 한 사람을 다시 재촉하기까지 (초)
+  window: 2.6,       // 이 안에 다음 재촉이 없으면 콤보가 식는다
+  step: 0.05,        // 콤보 한 칸이 더하는 배율
+  max: 0.55,         // 콤보 배율 상한 (+55%)
+  critStep: 0.012,   // 콤보 한 칸이 더하는 번뜩임 확률
+  critMax: 0.15,
+};
+
+/* 지금 콤보가 주는 배율. 0 콤보면 1 이다. */
+export function comboMult(project) {
+  if (!project || !project.combo) return 1;
+  return 1 + Math.min(URGE.max, project.combo * URGE.step);
+}
+export function comboCrit(project) {
+  if (!project || !project.combo) return 0;
+  return Math.min(URGE.critMax, project.combo * URGE.critStep);
+}
+
+/* 이 사람을 지금 재촉할 수 있나. UI 가 카드를 흐리게 만드는 데도 쓴다. */
+export function canUrge(project, s) {
+  if (!project || !s) return false;
+  if (project.done || project.pendingCards || project.hp <= 0) return false;
+  if (!project.team.includes(s.id)) return false;
+  if ((project.down && project.down[s.id] > 0) || s.hp <= 0) return false;
+  const t = (project.urgeAt && project.urgeAt[s.id]) || -99;
+  return (project.elapsed || 0) - t >= urgeCool(project);
+}
+
+/* 재촉 쿨다운. 도우미가 줄여 준다. 값을 프로젝트에 박아 두는 이유는,
+   전투가 도는 동안 회사 상태를 다시 읽지 않기 위해서다 — 도우미를 전투
+   중에 바꿔 끼우는 길은 없으므로 착수 시점의 값이 곧 그 게임의 값이다. */
+export function urgeCool(project) {
+  return URGE.cool * ((project && project.urgeCool) || 1);
+}
+
+/* 재촉한다. 게이지를 채우고 콤보를 한 칸 올린다. 실제 타격은 다음 tick 이
+   내보낸다 — 규칙을 한 곳(battleTick)에만 두기 위해서다. */
+export function urgeStaff(project, s) {
+  if (!canUrge(project, s)) return { ok: false };
+  project.urgeAt = project.urgeAt || {};
+  project.urgeAt[s.id] = project.elapsed || 0;
+  project.atb[s.id] = 1;
+  project.combo = (project.combo || 0) + 1;
+  project.comboBest = Math.max(project.comboBest || 0, project.combo);
+  project.comboT = URGE.window;
+  return { ok: true, combo: project.combo, mult: comboMult(project) };
+}
+
 export function canFight(s) {
   if (!s) return false;
   syncHp(s);
@@ -445,6 +515,8 @@ export function staffStrike(project, s, rnd, ctx = {}) {
 
   const combo = content ? comboScore(project.genreId, project.contentId) : 1.0;
   const res = researchEffect(ctx.research);
+  // 낀 도우미. 없으면 전부 1 이라 예전과 완전히 같은 수가 나온다.
+  const help = ctx.helpers || {};
   const phaseMult = 1 / (stage.dmg || 1);
   const weakMult = (project.weak || 0) > 0 ? WEAK_MULT : 1;
   const dmgMult = (method ? method.dmg : 1) * (0.85 + combo * 0.15) * res.dmg * phaseMult * weakMult;
@@ -456,12 +528,16 @@ export function staffStrike(project, s, rnd, ctx = {}) {
   const teamMood = ctx.teamMood || 0;
 
   const critChance = 0.06 + Math.min(0.30, (s.motivation + teamMood * 2) * 0.006)
-    + traitAdd(s, 'crit') + upCritAdd(s) + (project.critBonus || 0);
+    + traitAdd(s, 'crit') + upCritAdd(s) + (project.critBonus || 0)
+    + comboCrit(project) + (help.crit || 0);
   const crit = rnd() < critChance;
   const roll = 1 - variance + rnd() * variance * 2;
   const fan = hasTrait(s, 'genreFan') && s.favGenre === project.genreId
     ? (TRAITS.genreFan.genreBonus || 1) : 1;
-  let dmg = base * dmgMult * roll * traitMult(s, 'dmg') * fan;
+  // 콤보는 데미지와 품질에 **같이** 걸린다. 데미지에만 걸면 재촉이
+  // "빨리 끝내기" 가 되고, 품질에만 걸면 아무도 안 누른다.
+  const cmb = comboMult(project);
+  let dmg = base * dmgMult * roll * traitMult(s, 'dmg') * fan * cmb * (help.dmg || 1);
   if (crit) { dmg *= 2.2; project.crits += 1; }
   dmg = Math.max(1, Math.round(dmg));
 
@@ -471,7 +547,7 @@ export function staffStrike(project, s, rnd, ctx = {}) {
     const bias = (genre.bias[stat] || 1) * (content ? (content.bias[stat] || 1) : 1)
       * (method && method.focus ? (method.focus[stat] || 1) : 1);
     const add = base * w * qMult * bias * roll * (crit ? 1.8 : 1)
-      * traitMult(s, 'quality') * fan * gearAxis(s, stat);
+      * traitMult(s, 'quality') * fan * gearAxis(s, stat) * cmb;
     project.raw[stat] += add;
     gains[stat] = (gains[stat] || 0) + add;
     if (!gained || add > gained.amount) gained = { stat, amount: add };
@@ -489,7 +565,9 @@ export function staffStrike(project, s, rnd, ctx = {}) {
 
   return {
     kind: crit ? 'crit' : 'hit',
-    staffId: s.id, name: s.name, job: job.ko,
+    // jobId 는 연출이 쓴다 — 직업마다 다른 것을 던지게 하려면 한국어 이름이
+    // 아니라 id 가 필요하다.
+    staffId: s.id, name: s.name, job: job.ko, jobId: s.job,
     // 이번 한 방이 **어느 축을 얼마나** 올렸나. 데미지만 돌려주면 화면에는
     // 때린 것만 보이고 만들어진 것은 안 보인다.
     damage: dmg, stat: gained ? gained.stat : null,
@@ -519,9 +597,9 @@ export function stageCleared(project, rnd, ctx = {}) {
   }];
   project.clearedHp = (project.clearedHp || 0) + st.hpMax;
 
-  // 잡으면 상자가 하나 확정으로 떨어진다. 스테이지 상한은 여기서 풀린다 —
+  // 잡으면 상자가 떨어질 **수도** 있다. 스테이지 상한은 여기서 풀린다 —
   // 다음 보스는 새 상한으로 시작한다.
-  for (let i = 0; i < TREASURE.onClear; i++) {
+  if (rnd() < TREASURE.onClear) {
     const loot = rollTreasure(project, rnd, true);
     if (loot) events.push(loot);
   }
@@ -612,6 +690,18 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
   const step = Math.min(0.25, Math.max(0, dt));
   project.elapsed = (project.elapsed || 0) + step;
 
+  /* 콤보는 손을 놓으면 식는다. 식는 순간을 이벤트로 알리는 이유는, 배율이
+     사라진 것을 화면이 조용히 처리하면 플레이어에게는 "갑자기 약해졌다" 로
+     보이기 때문이다. */
+  if (project.combo > 0) {
+    project.comboT = (project.comboT || 0) - step;
+    if (project.comboT <= 0) {
+      out.events.push({ kind: 'comboEnd', combo: project.combo });
+      project.combo = 0;
+      project.comboT = 0;
+    }
+  }
+
   let teamMood = 0;
   const pool = [];
   for (const id of project.team) {
@@ -623,6 +713,11 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
   }
   if (!pool.length) { out.idle = true; return out; }
   const c2 = { ...ctx, teamMood };
+
+  /* 야식 셰프 같은 도우미의 회복. 전투 중에 아주 천천히 도는 물방울이라
+     밥을 대체하지는 못하고, 긴 싸움의 마지막 한 스테이지를 버티게 한다. */
+  const heal = (ctx.helpers && ctx.helpers.heal) || 0;
+  if (heal > 0) for (const s of pool) if (s.hp > 0) healHp(s, s.hpMax * heal * step);
 
   // ---- 직원들의 게이지 ----
   let anyUp = false;
@@ -648,7 +743,7 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
       project.atb[s.id] -= 1;
       out.events.push(staffStrike(project, s, rnd, c2));
       // 때리다 보면 상자가 떨어진다. 배틀을 지켜볼 이유가 여기 있다.
-      const loot = rollTreasure(project, rnd);
+      const loot = rollTreasure(project, rnd, false, c2);
       if (loot) out.events.push(loot);
       // 한 사람이 한 번 칠 때마다 라운드 카운터도 조금씩 돈다.
       project.turn = Math.max(1, Math.round(project.strikes / Math.max(1, pool.length)));

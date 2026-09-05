@@ -126,7 +126,9 @@ await step('착수에 스태미나가 든다 — 전투에는 들지 않는다',
 
 console.log('\n── 2. 아레나 ──');
 await step('아레나에 들어가면 경영 UI 가 비켜선다', async () => {
-  await page.evaluate(() => window.__ui.enterArena());
+  // 첫 진입에는 '개발 시작' 안내가 먼저 뜨고 enterArena 가 false 를 돌려준다.
+  // 하네스는 그 안내를 이미 본 것으로 치고 바로 들어간다.
+  await page.evaluate(() => { window.__game.company.devIntroSeen = true; window.__ui.enterArena(); });
   await page.waitForTimeout(300);
   const s = await state();
   if (!s.arena) throw new Error('body.arena 가 안 붙음');
@@ -204,7 +206,9 @@ await step('아레나에서 나오면 사무실로 돌아온다', async () => {
   if (s.bossX > 200) throw new Error(`보스가 아직 무대에 있다 (x=${s.bossX})`);
   const gone = await page.evaluate(() => !window.__view.gArena);
   if (!gone) throw new Error('세트장 메시가 안 버려짐');
-  await page.evaluate(() => window.__ui.enterArena());
+  // 첫 진입에는 '개발 시작' 안내가 먼저 뜨고 enterArena 가 false 를 돌려준다.
+  // 하네스는 그 안내를 이미 본 것으로 치고 바로 들어간다.
+  await page.evaluate(() => { window.__game.company.devIntroSeen = true; window.__ui.enterArena(); });
   await page.waitForTimeout(600);
   return `보스 x=${s.bossX} 로 복귀 후 다시 입장`;
 });
