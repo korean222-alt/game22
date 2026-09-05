@@ -111,6 +111,9 @@
     <div class="ahp"><div class="ahpf" id="aBossHp"></div><span class="ahptx" id="aBossHpTx"></span></div>
     <div class="atot"><div class="atotf" id="aTotal"></div></div>
     <div class="atotk">전체 진행</div>
+    <!-- 지금까지 쌓인 품질. 보스를 때리는 동안 무엇이 오르고 있는지가
+         보여야, 어느 카드를 고를지가 판단이 된다. -->
+    <div class="aq" id="aQual"></div>
   </div>
 
   <div id="aLog"></div>
@@ -189,7 +192,9 @@
      운영 중인 타이틀이 있으면 화면 오른쪽에 붙는다. 주마다 매출이 줄어드는
      모양이 보여야, 다음 게임을 언제 시작할지 판단할 수 있다. -->
 <div id="sales" class="card">
-  <div class="sgh"><b>판매 현황</b><span id="sgWeek"></span></div>
+  <button class="sgh" id="sgHead" type="button" aria-expanded="true">
+    <b>판매 현황</b><span id="sgWeek"></span><i class="sgcar">▾</i>
+  </button>
   <div id="sgList"></div>
 </div>
 

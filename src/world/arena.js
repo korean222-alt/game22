@@ -23,6 +23,13 @@ import { P } from './palette.js';
    230 까지 흩어져 있다. 그 어느 것과도 겹치지 않는 자리. */
 export const ARENA_ORIGIN = { x: 520, z: 520 };
 
+/* 이 좌표가 세트장 안인가. 카메라를 되돌리는 자리들이 이걸 물어본다 —
+   사무실을 그리는 중에 세트장 좌표로 돌아가면 화면에 아무것도 남지 않고,
+   그 빈 화면은 "게임이 죽었다" 와 구분되지 않는다. */
+export function inArenaZone(x, z) {
+  return Math.abs(x - ARENA_ORIGIN.x) < 300 && Math.abs(z - ARENA_ORIGIN.z) < 300;
+}
+
 const TAU = Math.PI * 2;
 
 /* ---------- 공통 조각 ---------- */

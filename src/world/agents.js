@@ -18,6 +18,9 @@ import { STOREY } from './props.js';
 
 export const ST = { SIT: 'sit', WALK: 'walk', STAND: 'stand', MEET: 'meet', TALK: 'talk' };
 
+/* 이 자리에서 어떤 자세로 일하는가. 스탠딩 책상에는 의자가 없다. */
+export const homeState = (home) => (home && home.stand ? ST.STAND : ST.SIT);
+
 const WALK_SPEED = 8.0;      // world units per second
 const TURN_RATE = 7.0;
 
@@ -50,7 +53,7 @@ export class Agent {
 
   sitAt(seat) {
     this.placeAt(seat.x, seat.z, seat.yaw, seat.floor ?? this.floor);
-    this.state = ST.SIT;
+    this.state = seat.stand ? ST.STAND : ST.SIT;
   }
 
   /* Walk to a point. `nav` is the floor's grid; when it cannot find a route the
@@ -203,12 +206,12 @@ export class Crew {
   get(id) { return this.agents.get(id); }
   all() { return [...this.agents.values()]; }
 
-  /* Send everyone home to their desk. */
+  /* Send everyone home to their desk. 서서 쓰는 자리는 서서 일한다. */
   sendHome(ids) {
     for (const a of this.all()) {
       if (ids && !ids.includes(a.id)) continue;
       if (!a.home) continue;
-      a.goTo({ x: a.home.seatX, z: a.home.seatZ, yaw: a.home.yaw, floor: a.home.floor, state: ST.SIT },
+      a.goTo({ x: a.home.seatX, z: a.home.seatZ, yaw: a.home.yaw, floor: a.home.floor, state: homeState(a.home) },
         this.navFor(a.floor));
     }
   }
@@ -280,12 +283,15 @@ export class Crew {
       if (a.busy || a.walking || a.state === ST.MEET) continue;
       if (t < a.idleUntil) continue;
 
-      if (a.state === ST.STAND) {
+      // 서 있다는 것만으로는 '자리를 비웠다' 가 아니다. 스탠딩 책상에
+      // 배정된 사람은 자기 자리에서 서서 일한다 — 이 구분(spotKey)이 없으면
+      // 그 사람이 1분마다 자기 자리로 '돌아가서' 앉아 버린다.
+      if (a.state === ST.STAND && a.spotKey) {
         // Been standing at a spot long enough; head back to the desk.
         if (a.home) {
           this.spotTaken.delete(a.spotKey);
           a.spotKey = null;
-          a.goTo({ x: a.home.seatX, z: a.home.seatZ, yaw: a.home.yaw, floor: a.home.floor, state: ST.SIT },
+          a.goTo({ x: a.home.seatX, z: a.home.seatZ, yaw: a.home.yaw, floor: a.home.floor, state: homeState(a.home) },
             this.navFor(a.floor));
         }
         a.idleUntil = t + 40 + rnd() * 70;

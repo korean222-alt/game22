@@ -239,7 +239,10 @@ await step('장비를 채우면 능력치와 품질 축이 같이 오른다', as
 });
 
 console.log('\n── 2. 개발 시작과 진행 패널 ──');
-await step('개발을 시작하면 3D 보스가 뜬다', async () => {
+/* 보스는 **아레나 안에만** 선다. 사무실 복도에 몬스터가 서 있던 시절의
+   검사가 남아 있어서, 착수만 하고 보스를 찾다가 늘 실패했다. 착수 → 세트장
+   입장 → 보스, 가 지금의 경로다. */
+await step('개발을 시작하고 세트장에 들어가면 3D 보스가 뜬다', async () => {
   const start = await page.evaluate(() => {
     const g = window.__game, v = window.__view;
     v.meetingScenes = false;                 // 연출은 flow.mjs 가 이미 본다
@@ -255,6 +258,7 @@ await step('개발을 시작하면 3D 보스가 뜬다', async () => {
     return { ok: r.ok, why: r.why };
   });
   if (!start.ok) throw new Error(start.why);
+  await page.evaluate(() => window.__ui.enterArena());
   for (let i = 0; i < 30; i++) {
     if (await page.evaluate(() => !!window.__view.boss)) break;
     await page.waitForTimeout(400);
@@ -262,17 +266,20 @@ await step('개발을 시작하면 3D 보스가 뜬다', async () => {
   const r = await page.evaluate(() => ({
     boss: window.__view.boss ? window.__view.boss.def.ko : null,
     tris: window.__view.boss ? window.__view.boss.model.prims.reduce((a, p) => a + p.count / 3, 0) : 0,
-    label: document.getElementById('bBoss').textContent,
-    inBattle: document.body.classList.contains('in-battle'),
+    label: document.getElementById('aBossName').textContent,
+    inBattle: document.body.classList.contains('arena'),
     stages: window.__game.project.stages.length,
   }));
   if (!r.boss) throw new Error('보스가 안 생겼다');
-  if (!r.inBattle) throw new Error('배틀 UI 가 안 떴다');
+  if (!r.inBattle) throw new Error('아레나가 안 열렸다');
   if (r.stages !== 3) throw new Error('보스가 3마리가 아니다: ' + r.stages);
   return `${r.boss} · 삼각형 ${r.tris}개 · 라벨 "${r.label}" · ${r.stages}연전`;
 });
 
 await step('진행 패널이 완성 값과 같은 숫자를 보여준다', async () => {
+  // 진행 패널은 사무실 화면의 카드다. 세트장에서는 비켜서 있으므로 나온다.
+  await page.evaluate(() => window.__ui.exitArena());
+  await page.waitForTimeout(200);
   for (let i = 0; i < 6; i++) {
     await page.evaluate(() => { if (!window.__game.project.pendingCards) window.__game.devTurn(); });
     await page.waitForTimeout(60);
@@ -317,6 +324,8 @@ await step('보스가 반격하고 팀의 체력이 준다', async () => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     if (!g.project) return { none: true };
+    // 사무실로 나오면 전투가 멈춘다. 헤드리스로 굴리려면 다시 풀어야 한다.
+    g.pauseBattle(false);
     const team0 = g.project.team.slice();
     const hp0 = g.staff.filter((s) => team0.includes(s.id)).reduce((a, s) => a + s.hp, 0);
     let attacks = 0, cleared = 0;

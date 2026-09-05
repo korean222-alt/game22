@@ -15,7 +15,7 @@ import {
   GENRES, CONTENTS, METHODS, PLATFORMS, MONETIZE, STATS,
   comboScore, TITLE_WORDS_A, TITLE_WORDS_B, researchEffect, TRAITS,
   bossFor, BOSS_MOVES, BOSS_STAGES, WEAK_TURNS, WEAK_MULT, HP, RAID,
-  devStamina, EXHAUST,
+  devStamina, EXHAUST, strainOf,
 } from './data.js';
 import { JOBS, JOB_ABILITY } from './data.js';
 import {
@@ -291,6 +291,10 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
     done: false,
     devCost: devCostOf({ platformId, grade: proposal.grade, seriesN, monetizeId }),
     devStamina: devStaminaCost({ platformId, grade: proposal.grade, seriesN, monetizeId }),
+    // 이 프로젝트가 사람에게 매기는 부담. 타격의 체력 소모와 보스의 반격이
+    // 둘 다 이 값을 곱해서 본다 — ★1 데뷔작에서는 거의 아무도 쓰러지지 않고,
+    // ★5 대작에서는 밥을 사지 않으면 못 끝낸다.
+    strain: strainOf(proposal.grade, platform),
     // 탈진으로 못 만들고 넘긴 비율. 완성도가 이 값을 본다.
     unfinished: 0,
     forfeits: 0,
@@ -315,6 +319,18 @@ export function ensureStages(project) {
   project.strikes = Math.max(1, (project.turn || 1) * Math.max(1, project.team.length));
   project.atb = {}; project.down = {}; project.bossAtb = 0; project.elapsed = 0;
   return project;
+}
+
+/* 이 프로젝트의 부담 배율. 예전 저장 파일에는 없는 값이라 기획서 등급에서
+   다시 뽑는다 — 없으면 1 로 두는 쪽이 쉽지만, 그러면 옛 세이브만 유독
+   사람이 잘 죽는다. */
+export function projectStrain(project) {
+  if (project && typeof project.strain === 'number') return project.strain;
+  const grade = project && project.proposal ? project.proposal.grade : 1;
+  const platform = project ? PLATFORMS.find((p) => p.id === project.platformId) : null;
+  const v = strainOf(grade, platform);
+  if (project) project.strain = v;
+  return v;
 }
 
 /* ---------- 탈진 마감 ----------
@@ -433,7 +449,8 @@ export function staffStrike(project, s, rnd, ctx = {}) {
   }
 
   // 개발은 사람을 갈아 넣는다. 한 방마다 체력이 빠지고, 빠지면 느려진다.
-  const spent = drainHp(s, Math.max(1, s.hpMax * HP.turnCost));
+  // 얼마나 갈리는지는 프로젝트의 야심이 정한다 (strain).
+  const spent = drainHp(s, Math.max(1, s.hpMax * HP.turnCost * projectStrain(project)));
 
   project.strikes = (project.strikes || 0) + 1;
   if (project.weak > 0) project.weak -= 1;
@@ -478,6 +495,7 @@ export function stageCleared(project, rnd, ctx = {}) {
     events.push({ kind: 'card', cardKind: 'method' });
   } else if ((project.stage || 0) < project.stages.length - 1) {
     advanceStage(project);
+    for (const ev of reviveTeam(project, ctx.staffById)) events.push(ev);
     events.push({ kind: 'stageStart', stage: project.stage, name: currentStage(project).name });
   } else {
     events.push({ kind: 'complete' });
@@ -499,6 +517,32 @@ export function advanceStage(project) {
   project.weak = WEAK_TURNS;   // 새 보스가 나온 직후에는 잠깐 빈틈이 있다
   project.bossAtb = 0;
   return true;
+}
+
+/* ---------- 보스와 보스 사이 ----------
+   쓰러진 채로 다음 보스 앞에 서게 두면, 한 마리를 놓친 순간 남은 두 마리는
+   볼 것도 없이 탈진 마감이 된다. 그래서 무대가 바뀔 때 쓰러진 사람은
+   **피 한 칸**으로 일어선다. 회복이 아니라 재개다 — 밥을 안 사면 곧 또 눕는다.
+
+   반환값은 일어선 사람들의 이벤트다. 아레나 로그가 이걸 읽는다. */
+export function reviveTeam(project, staffById) {
+  const out = [];
+  if (!staffById) return out;
+  for (const id of project.team) {
+    const s = staffById.get(id);
+    if (!s) continue;
+    syncHp(s);
+    const want = Math.max(1, Math.round(s.hpMax * EXHAUST.reviveHp));
+    if (s.hp < want) {
+      s.hp = want;
+      out.push({ kind: 'revive', staffId: s.id, name: s.name, hp: s.hp, hpMax: s.hpMax, stage: true });
+    }
+    if (project.down) project.down[s.id] = 0;
+    if (project.atb) project.atb[s.id] = 0;
+  }
+  project.exhausted = false;
+  project.exhaustT = 0;
+  return out;
 }
 
 /* 스테이지 이름. 2번 보스는 고른 조합이, 3번은 마감이 이름을 준다. */
@@ -584,7 +628,7 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
   if (project.hp <= 0) {
     out.dead = true;
     project.log.push({ turn: project.turn, damage: project.lastDamage, hp: 0 });
-    for (const ev of stageCleared(project, rnd, ctx)) out.events.push(ev);
+    for (const ev of stageCleared(project, rnd, { ...ctx, staffById })) out.events.push(ev);
   }
   return out;
 }
@@ -625,7 +669,7 @@ export function battleTurn(project, staffById, rnd, ctx = {}) {
     const move = BOSS_MOVES[Math.floor(rnd() * BOSS_MOVES.length)];
     events.push(bossAttack(project, staffById, rnd, move));
   }
-  if (project.hp <= 0) for (const ev of stageCleared(project, rnd, ctx)) events.push(ev);
+  if (project.hp <= 0) for (const ev of stageCleared(project, rnd, { ...ctx, staffById })) events.push(ev);
 
   return {
     events, total,
@@ -641,7 +685,10 @@ export function battleTurn(project, staffById, rnd, ctx = {}) {
 export function bossAttack(project, staffById, rnd, move) {
   const pool = project.team.map((id) => staffById.get(id)).filter(Boolean);
   const hits = [];
-  const n = Math.min(pool.length, move.targets || 1);
+  // 'all' 은 전원. 한 명만 노리는 기술과 전체기가 섞여 나온다.
+  const all = move.targets === 'all';
+  const n = all ? pool.length : Math.min(pool.length, move.targets || 1);
+  const strain = projectStrain(project);
   const picked = new Set();
   for (let i = 0; i < n && picked.size < pool.length; i++) {
     let s = null, guard = 0;
@@ -649,7 +696,7 @@ export function bossAttack(project, staffById, rnd, move) {
     if (picked.has(s.id)) continue;
     picked.add(s.id);
     syncHp(s);
-    const dealt = drainHp(s, s.hpMax * move.hp * (0.85 + rnd() * 0.3));
+    const dealt = drainHp(s, s.hpMax * move.hp * strain * (0.85 + rnd() * 0.3));
     hits.push({ staffId: s.id, name: s.name, damage: dealt, hp: s.hp, hpMax: s.hpMax });
   }
   // 상한이 없으면 긴 프로젝트일수록 버그가 선형으로 쌓여, 디버그가 선택이
@@ -659,7 +706,7 @@ export function bossAttack(project, staffById, rnd, move) {
   project.attacks = (project.attacks || 0) + 1;
   return {
     kind: 'boss', move: move.id, ko: move.ko, line: move.line,
-    bugs: move.bugs || 0, hits,
+    all, bugs: move.bugs || 0, hits,
   };
 }
 
@@ -763,7 +810,7 @@ function rollMethodCards(rnd) {
   return out.map((m) => ({ id: m.id, ko: m.ko, desc: m.desc }));
 }
 
-export function chooseCard(project, optionId) {
+export function chooseCard(project, optionId, staffById) {
   ensureStages(project);
   if (!project.pendingCards) return { ok: false };
   const kind = project.pendingCards.kind;
@@ -775,12 +822,14 @@ export function chooseCard(project, optionId) {
   // 이 두 줄이 없던 것이 "보스를 잡아도 아무 일도 안 일어난다" 의 정체였다.
   const last = (project.stage || 0) >= project.stages.length - 1;
   let started = null;
+  let revived = [];
   if (project.hp <= 0 && !last) {
     advanceStage(project);
+    revived = reviveTeam(project, staffById);
     started = { stage: project.stage, name: currentStage(project).name };
   }
   const complete = project.hp <= 0 && last;
-  return { ok: true, kind, complete, started };
+  return { ok: true, kind, complete, started, revived };
 }
 
 /* The in-development panel has to read from the SAME curve the result screen

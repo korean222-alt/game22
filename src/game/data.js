@@ -256,13 +256,18 @@ export function comboLabel(score) {
 export const UNKNOWN_COMBO = { ko: '미지의 조합', cls: 'ok' };
 
 /* ---------- platforms ---------- */
+/* `market` 은 그 플랫폼에 사람이 몇 명이나 있는가다. 규칙에는 쓰이지 않고
+   화면에만 뜨지만, 임의의 숫자는 아니다 — `fans`(초기 유입 배율)를 사람
+   수로 환산한 값이라 "SNS 가 스마트폰보다 넓다" 는 표시와 실제 유입 계산이
+   같은 방향을 가리킨다. `share` 는 그 시장의 구매력(ARPU 배율)이다.
+   어느 플랫폼으로 낼지가 고민이 되려면 넓이와 구매력이 따로 보여야 한다. */
 export const PLATFORMS = [
-  { id: 'feature', ko: '피처폰', rank: 0, fans: 0.55, hp: 0.62, cost: 20000, share: 0.55 },
-  { id: 'smart', ko: '스마트폰', rank: 2, fans: 1.00, hp: 1.60, cost: 55000, share: 1.00 },
-  { id: 'sns', ko: 'SNS 플랫폼', rank: 5, fans: 1.35, hp: 2.60, cost: 120000, share: 1.25 },
-  { id: 'tablet', ko: '태블릿', rank: 9, fans: 1.20, hp: 3.20, cost: 190000, share: 1.10 },
-  { id: 'console', ko: '콘솔 크로스', rank: 14, fans: 1.60, hp: 5.00, cost: 380000, share: 1.45 },
-  { id: 'own', ko: '자체 플랫폼', rank: 20, fans: 2.10, hp: 7.50, cost: 800000, share: 2.00 },
+  { id: 'feature', ko: '피처폰', rank: 0, fans: 0.55, hp: 0.62, cost: 20000, share: 0.55, market: 4_200_000, note: '누구나 가지고 있지만 지갑은 얇다.' },
+  { id: 'smart', ko: '스마트폰', rank: 2, fans: 1.00, hp: 1.60, cost: 55000, share: 1.00, market: 21_000_000, note: '표준. 넓이도 구매력도 무난하다.' },
+  { id: 'sns', ko: 'SNS 플랫폼', rank: 5, fans: 1.35, hp: 2.60, cost: 120000, share: 1.25, market: 34_000_000, note: '입소문이 가장 빠르게 퍼진다.' },
+  { id: 'tablet', ko: '태블릿', rank: 9, fans: 1.20, hp: 3.20, cost: 190000, share: 1.10, market: 27_000_000, note: '오래 붙잡고 하는 게임에 맞는다.' },
+  { id: 'console', ko: '콘솔 크로스', rank: 14, fans: 1.60, hp: 5.00, cost: 380000, share: 1.45, market: 52_000_000, note: '한 명이 쓰는 돈이 크다. 개발비도 크다.' },
+  { id: 'own', ko: '자체 플랫폼', rank: 20, fans: 2.10, hp: 7.50, cost: 800000, share: 2.00, market: 96_000_000, note: '수수료가 없다. 회사가 곧 시장이다.' },
 ];
 
 /* ---------- monetisation ----------
@@ -546,17 +551,24 @@ export function bossFor(genreId) {
 /* 보스의 반격. `hp` 는 대상 직원 최대 체력에 대한 비율, `bugs` 는 이 공격이
    완성작에 남기는 버그 수다. 3턴마다 하나가 나오고, 페이즈가 바뀔 때는
    반드시 큰 것이 나온다. */
-/* 수치를 한 번 내렸다. 예전 값은 "턴을 눌러야 진행되는" 전투를 전제로 잡혀
-   있었다. 자동 전투에서는 보스가 자기 게이지로 훨씬 자주 치므로, 같은 숫자를
-   두면 데뷔작 한 판에 팀이 두세 번 쓰러진다 — 실제로 그랬다. */
+/* `targets` 는 몇 명을 때리는가다. 'all' 은 팀 전원 — 한 명만 노리는 기술과
+   전체를 쓸어 가는 기술이 섞여 있어야, 화면을 보고 있는 쪽에서 "이번 건
+   위험하다" 가 구분된다. 전체기는 한 사람당 데미지를 낮춰 잡는다: 같은
+   비율로 전원을 때리면 그 한 방에 팀이 통째로 눕는다.
+
+   반격이 드물어진(BOSS_STAGES 의 atk) 대신 한 명만 노리는 기술은 세졌다.
+   자주 조금씩 깎이는 것보다, 가끔 크게 맞고 그 한 명을 챙기는 쪽이 화면에서
+   읽힌다. 총량은 프로젝트의 야심(strainOf)이 다시 한 번 곱해서 정한다. */
 export const BOSS_MOVES = [
   { id: 'spec', ko: '사양 변경', hp: 0.045, bugs: 1, targets: 2, line: '기획이 또 바뀌었다!' },
-  { id: 'bug', ko: '버그 폭주', hp: 0.033, bugs: 2, targets: 1, line: '재현이 안 되는 버그다!' },
+  { id: 'bug', ko: '버그 폭주', hp: 0.052, bugs: 2, targets: 1, line: '재현이 안 되는 버그다!' },
   { id: 'deadline', ko: '납기 압박', hp: 0.058, bugs: 0, targets: 2, line: '출시일이 앞당겨졌다!' },
-  { id: 'crash', ko: '컴퓨터 응답 없음', hp: 0.052, bugs: 1, targets: 1, line: '저장을 안 했다…' },
+  { id: 'crash', ko: '컴퓨터 응답 없음', hp: 0.062, bugs: 1, targets: 1, line: '저장을 안 했다…' },
   { id: 'review', ko: '리뷰 폭격', hp: 0.040, bugs: 1, targets: 2, line: '내부 평가가 최악이다!' },
+  { id: 'allnight', ko: '전원 야근', hp: 0.030, bugs: 1, targets: 'all', line: '오늘은 다 같이 남는다!' },
+  { id: 'rework', ko: '전면 재작업', hp: 0.036, bugs: 2, targets: 'all', line: '처음부터 다시 만든다!' },
 ];
-export const BOSS_RAGE = { id: 'rage', ko: '격노', hp: 0.13, bugs: 2, targets: 4, line: '아이디어가 형태를 바꾼다!' };
+export const BOSS_RAGE = { id: 'rage', ko: '격노', hp: 0.055, bugs: 2, targets: 'all', line: '아이디어가 형태를 바꾼다!' };
 
 /* ---------- 3연전 ----------
    보스는 하나가 세 번 변신하는 게 아니라 **세 마리**다. 장르를 정하면 장르
@@ -566,11 +578,15 @@ export const BOSS_RAGE = { id: 'rage', ko: '격노', hp: 0.13, bugs: 2, targets:
    "지금 어디까지 왔나" 가 보인다.
 
    dmg 는 그 스테이지의 방어력이다(데미지가 그만큼 나눠진다). species 는
-   world/boss.js 가 불러올 3D 모델. */
+   world/boss.js 가 불러올 3D 모델.
+
+   atk 는 반격 주기(초)다. 짧을수록 자주 때린다 — 예전 값(7.6/5.6/4.4)에서는
+   반격 로그가 초 단위로 흘러가서 어느 것이 무슨 기술인지 볼 수가 없었다.
+   드물게, 대신 한 방이 기억에 남는 쪽으로 옮겼다. */
 export const BOSS_STAGES = [
-  { ko: '장르 보스', species: 'cat', dmg: 1.00, share: 0.24, atk: 7.6, card: 'content' },
-  { ko: '조합 보스', species: 'orc', dmg: 1.08, share: 0.32, atk: 5.6, card: 'method' },
-  { ko: '마감 보스', species: 'demon', dmg: 1.16, share: 0.44, atk: 4.4, card: null },
+  { ko: '장르 보스', species: 'cat', dmg: 1.00, share: 0.24, atk: 10.5, card: 'content' },
+  { ko: '조합 보스', species: 'orc', dmg: 1.08, share: 0.32, atk: 8.2, card: 'method' },
+  { ko: '마감 보스', species: 'demon', dmg: 1.16, share: 0.44, atk: 6.4, card: null },
 ];
 
 /* 이름이 바뀐 뒤로도 예전 저장 파일과 UI 가 phase 를 읽는다. 스테이지
@@ -621,7 +637,30 @@ export const EXHAUST = {
   qualityLoss: 0.62, // 못 만든 비율 × 이 값만큼 완성도가 깎인다
   minQuality: 0.34,  // 완성도의 하한 — 전부 뻗어도 게임은 나온다
   bugs: 9,           // 못 만든 비율 × 이 개수만큼 버그가 더 붙는다
+  /* 보스가 바뀌면 쓰러진 사람도 **피 한 칸**으로 일어선다. 한 마리를 잡고
+     다음 놈 앞에 시체로 서 있으면, 남은 두 마리는 볼 것도 없이 탈진 마감이
+     된다 — 한 스테이지의 실패가 프로젝트 전체의 실패로 확정되는 자리였다.
+     한 칸은 "이어서 싸울 수는 있지만 곧 또 눕는다" 의 양이다. */
+  reviveHp: 0.20,    // 다음 보스가 설 때 되살아나는 최대 체력 비율
 };
+
+/* ---------- 부담 ----------
+   같은 40회 타격이라도 ★1 피처폰 데뷔작과 ★5 콘솔 대작이 사람을 똑같이
+   갈아 넣으면 안 된다. 데뷔작에서 직원이 줄줄이 쓰러지면 플레이어가 배우는
+   것은 "밥을 사라" 가 아니라 "이 게임은 원래 이렇다" 이고, 그러면 상점이
+   의미를 잃는다.
+
+   `strainOf` 는 한 프로젝트가 사람에게 매기는 배율이다. 타격마다 빠지는
+   체력과 보스의 반격이 **둘 다** 이 값을 곱해서 본다:
+
+     ★1 · 피처폰   0.34 → 밥을 안 사도 아무도 쓰러지지 않고, 절반쯤 남긴다
+     ★3 · 스마트폰 0.66 → 후반에 한둘이 눕는다
+     ★5 · 콘솔     1.11 → 밥을 안 사면 못 끝낸다 */
+export function strainOf(grade, platform) {
+  const g = Math.max(1, Math.min(5, grade || 1));
+  const rank = platform ? (platform.rank || 0) : 0;
+  return Math.max(0.30, Math.min(1.25, 0.34 + (g - 1) * 0.15 + rank * 0.012));
+}
 
 /* ---------- 직원 강화 ----------
    레벨은 아이템(돈+스태미나)으로 오르고, 경험치는 게임을 내면 오른다. 그

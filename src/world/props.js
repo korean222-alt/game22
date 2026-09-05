@@ -267,15 +267,19 @@ export function pedestal(m, x, z, ry) {
    be built the other way round — a panel spanning the desk's depth, with the
    quad wound so its face pointed away as well — which put every screen edge-on
    to the person using it and lit from behind. */
-export function monitor(m, x, z, ry, w, tilt) {
+/* `top` 은 이 모니터가 올라앉을 상판의 높이다. 기본값은 보통 책상이고,
+   스탠딩 책상처럼 상판이 높은 가구는 자기 높이를 넘긴다 — 예전에는 이 값이
+   상수라서, 스탠딩 책상 위의 모니터가 상판 **속에** 박혀 있었다. */
+export function monitor(m, x, z, ry, w, tilt, top) {
   const ww = w || 2.3, h = ww * 0.60;
+  const y0 = top === undefined ? DESK_Y : top;
   // Unit vectors: `a` runs across the desk, `n` runs from the desk to the seat.
   const ax = Math.cos(ry), az = -Math.sin(ry);
   const nx = Math.sin(ry), nz = Math.cos(ry);
   m.mat = MAT.METAL;
-  m.boxY(x, DESK_Y + 0.20, z, 1.0, 0.14, 0.7, ry, P.charcoal);         // foot
-  m.boxY(x, DESK_Y + 0.62, z, 0.26, 0.86, 0.26, ry, P.charcoal);       // stem
-  const cy = DESK_Y + 1.32;
+  m.boxY(x, y0 + 0.20, z, 1.0, 0.14, 0.7, ry, P.charcoal);         // foot
+  m.boxY(x, y0 + 0.62, z, 0.26, 0.86, 0.26, ry, P.charcoal);       // stem
+  const cy = y0 + 1.32;
   m.boxY(x, cy, z, ww + 0.20, h + 0.24, 0.20, ry, P.black);            // bezel
   m.mat = MAT.SCREEN;
   // Screen face as an explicit UV quad so the shader's desktop lands square.
@@ -292,16 +296,20 @@ export function monitor(m, x, z, ry, w, tilt) {
   void tilt;
 }
 
-export function keyboard(m, x, z, ry) {
+/* 상판 위에 놓이는 소품들. 마지막 인자는 그 상판의 높이다 — 기본은 보통
+   책상이고, 상판이 높은 가구가 자기 높이를 넘겨준다. */
+export function keyboard(m, x, z, ry, top) {
+  const y0 = top === undefined ? DESK_Y : top;
   m.mat = MAT.GLOSS;
-  m.boxY(x, DESK_Y + 0.17, z, 0.62, 0.12, 1.90, ry, P.charcoal);
-  m.boxY(x + Math.cos(ry) * 1.35, DESK_Y + 0.18, z - Math.sin(ry) * 1.35, 0.42, 0.14, 0.62, ry, P.charcoal);
+  m.boxY(x, y0 + 0.17, z, 0.62, 0.12, 1.90, ry, P.charcoal);
+  m.boxY(x + Math.cos(ry) * 1.35, y0 + 0.18, z - Math.sin(ry) * 1.35, 0.42, 0.14, 0.62, ry, P.charcoal);
   m.mat = 0;
 }
 
-export function mug(m, x, z, col) {
+export function mug(m, x, z, col, top) {
+  const y0 = top === undefined ? DESK_Y : top;
   m.mat = MAT.GLOSS;
-  m.cyl(x, DESK_Y + 0.38, z, 0.30, 0.60, col || '#e8e4d8', 10);
+  m.cyl(x, y0 + 0.38, z, 0.30, 0.60, col || '#e8e4d8', 10);
   m.mat = 0;
 }
 
@@ -313,12 +321,13 @@ export function papers(m, x, z, ry, n) {
   m.mat = 0;
 }
 
-export function penCup(m, x, z) {
+export function penCup(m, x, z, top) {
+  const y0 = top === undefined ? DESK_Y : top;
   m.mat = MAT.GLOSS;
-  m.cyl(x, DESK_Y + 0.40, z, 0.24, 0.64, P.charcoal, 8);
+  m.cyl(x, y0 + 0.40, z, 0.24, 0.64, P.charcoal, 8);
   for (let i = 0; i < 4; i++) {
     const a = i * 1.57;
-    m.box(x + Math.cos(a) * 0.09, DESK_Y + 0.85, z + Math.sin(a) * 0.09, 0.07, 0.9, 0.07,
+    m.box(x + Math.cos(a) * 0.09, y0 + 0.85, z + Math.sin(a) * 0.09, 0.07, 0.9, 0.07,
       ['#c94f4f', '#3f6bb8', '#3d8a4f', '#e0c04a'][i]);
   }
   m.mat = 0;
@@ -763,17 +772,40 @@ export function supplyShelf(m, x, z, ry) {
   m.mat = 0;
 }
 
-/* Standing desk: same footprint as a workstation top, raised. */
-export function standDesk(m, x, z, ry) {
+/* ---------- 스탠딩 책상 ----------
+   세 군데가 틀어져 있었다. 모니터를 `z - 0.9` 라는 **월드 좌표**로 놓아서
+   책상을 90도 돌리면 모니터만 옆으로 떨어져 나갔고, 그 모니터의 받침이
+   보통 책상 높이(DESK_Y)에 고정돼 있어서 4.1 짜리 상판 속에 박혀 있었으며,
+   앉는 자리에 의자가 없어서 배정된 직원이 허공에 앉아 있었다.
+
+   다리는 상판의 양 끝(±2.0)이 아니라 안쪽(±1.5)으로 들여 세운다. 끝에
+   붙어 있으면 정면에서 볼 때 상판이 다리 위에 얹힌 게 아니라 다리에
+   꽂힌 것처럼 보인다. */
+const STAND_TOP = 3.55;
+
+export function standDesk(m, x, z, ry, variant) {
+  // 로컬 좌표: +X 가 책상을 따라 옆, +Z 가 사람이 서는 쪽.
+  const R = (lx, lz) => [x + lx * Math.cos(ry) + lz * Math.sin(ry), z - lx * Math.sin(ry) + lz * Math.cos(ry)];
   m.mat = MAT.WOOD;
-  m.boxY(x, 4.1, z, 5.2, 0.22, 2.6, ry, P.birch, shade(P.birch, 1.05));
+  m.boxY(x, STAND_TOP, z, 5.2, 0.22, 2.6, ry, P.birch, shade(P.birch, 1.05));
   m.mat = MAT.METAL;
   for (const k of [-1, 1]) {
-    m.boxY(x + Math.sin(ry) * k * 2.0, 2.0, z + Math.cos(ry) * k * 2.0, 0.55, 4.0, 0.55, ry, P.steelDk);
-    m.boxY(x + Math.sin(ry) * k * 2.0, 0.14, z + Math.cos(ry) * k * 2.0, 1.4, 0.28, 2.2, ry, P.steelDk);
+    const [lx, lz] = R(k * 1.5, 0);
+    m.boxY(lx, STAND_TOP / 2, lz, 0.55, STAND_TOP - 0.11, 0.55, ry, P.steelDk);
+    m.boxY(lx, 0.14, lz, 1.4, 0.28, 2.2, ry, P.steelDk);
   }
   m.mat = 0;
-  monitor(m, x, z - 0.9, ry, 2.4);
+  const mo = R(0, -0.75); monitor(m, mo[0], mo[1], ry, 2.4, 0, STAND_TOP);
+  const kb = R(0, 0.55); keyboard(m, kb[0], kb[1], ry, STAND_TOP);
+  const cup = R(-1.9, 0.4);
+  if ((variant || 0) % 2) penCup(m, cup[0], cup[1], STAND_TOP);
+  else mug(m, cup[0], cup[1], '#4f7fc9', STAND_TOP);
+  // 서서 쓰는 책상이라 의자는 없다. 이 자리에 배정된 직원은 앉지 않고
+  // 선다 (world/placed.js 의 stand 슬롯). 두 다리를 잇는 가로대만 둔다 —
+  // 사람이 서는 자리(+Z 쪽 2.0)에 판을 깔면 발이 그 판에 박힌다.
+  m.mat = MAT.METAL;
+  m.boxY(x, 0.62, z, 0.34, 0.34, 3.0, ry + Math.PI / 2, P.steelDk);
+  m.mat = 0;
 }
 
 /* A potted ficus in a woven basket — softer than the moulded planter. */

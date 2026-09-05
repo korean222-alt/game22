@@ -549,9 +549,20 @@ export class Game {
   beginDevelopment({ proposalId, platformId, monetizeId, teamIds, seriesOfId }) {
     if (this.project) return { ok: false, why: '이미 개발 중' };
     if (this.finished) return { ok: false, why: '완성작을 먼저 출시하세요' };
-    // 실시간 판매는 더 이상 화면을 막지 않는다. 오른쪽 카드에서 혼자 돌고,
-    // 그 사이에도 기획서를 뽑고 다음 게임에 착수할 수 있다 — 15초 동안
-    // 아무것도 못 하게 만드는 것은 연출이 아니라 대기시간이었다.
+    /* 앞의 게임이 아직 팔리고 있으면 다음 게임에 착수할 수 없다.
+
+       한동안 이 자리를 열어 두었는데, 그러면 출시가 아무 무게도 없는 사건이
+       된다 — 파는 화면이 오른쪽에서 도는 동안 다음 게임을 시작해 버리면
+       판매 곡선을 보는 사람이 아무도 없다. 정산 확인 버튼 하나를 누르는
+       값으로 "이 게임은 여기까지" 를 매듭짓게 한다. */
+    if (this.sales) {
+      return {
+        ok: false,
+        why: this.sales.ended
+          ? '판매 정산을 먼저 확인하세요'
+          : `「${this.sales.title}」 판매 중입니다. 정산이 끝나면 다음 게임을 시작할 수 있습니다`,
+      };
+    }
     const pr = this.proposals.find((p) => p.id === proposalId);
     if (!pr) return { ok: false, why: '없는 기획서' };
     const team = teamIds.map((id) => this.staff.find((s) => s.id === id)).filter(Boolean);
@@ -648,7 +659,7 @@ export class Game {
     ensureStages(p);
     const st = currentStage(p);
     const left = Math.round((p.hp / Math.max(1, p.hpMax)) * 100);
-    const events = forfeitStage(p, this.rnd, this.ctx());
+    const events = forfeitStage(p, this.rnd, this.ctx({ staffById: this.staffById() }));
     if (!events.length) return { ok: false, why: '지금은 마감할 수 없다' };
     p.exhausted = false;
     p.exhaustT = 0;
@@ -686,7 +697,7 @@ export class Game {
   pickCard(optionId) {
     const p = this.project;
     if (!p || !p.pendingCards) return { ok: false };
-    const r = chooseCard(p, optionId);
+    const r = chooseCard(p, optionId, this.staffById());
     if (r.kind === 'content') {
       const c = CONTENTS.find((x) => x.id === p.contentId);
       this.note(`게임 내용 결정: ${c ? c.ko : p.contentId}`);
@@ -697,7 +708,13 @@ export class Game {
     }
     if (r.started) {
       this.note(`${r.started.name} 등장!`, 'bad');
-      this.emit('battle', { project: p, events: [{ kind: 'stageStart', ...r.started }] });
+      // 쓰러져 있던 사람은 다음 보스가 설 때 피 한 칸으로 일어선다. 그
+      // 이벤트를 같이 흘려야 아레나 로그와 파티 카드가 같은 순간에 바뀐다.
+      const evs = [{ kind: 'stageStart', ...r.started }, ...(r.revived || [])];
+      if ((r.revived || []).length) {
+        this.note(`쓰러졌던 ${r.revived.length}명이 겨우 일어섰다.`, 'good');
+      }
+      this.emit('battle', { project: p, events: evs });
     }
     if (r.complete) this._completeProject();
     else this.emit('project', p);

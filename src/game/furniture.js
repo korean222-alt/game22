@@ -24,8 +24,8 @@ export const FURNITURE = [
     w: 5.4, d: 4.6, desc: '모니터 두 대. 앉은 사람의 의욕이 잘 유지된다.',
   },
   {
-    id: 'standDesk', ko: '스탠딩 책상', cat: 'work', price: 34000, seats: true, comfort: 4,
-    w: 4.2, d: 3.4, desc: '허리가 편하다. 쾌적도가 크게 오른다.',
+    id: 'standDesk', ko: '스탠딩 책상', cat: 'work', price: 34000, seats: true, stand: true, comfort: 4,
+    w: 5.6, d: 4.4, desc: '앉지 않고 서서 쓴다. 허리가 편하고 쾌적도가 크게 오른다.',
   },
   {
     id: 'cubeWall', ko: '파티션', cat: 'work', price: 4500, comfort: 1,

@@ -192,10 +192,10 @@ await step('홍보를 고르면 출시 확인이 뜨고, 출시하면 판매가 
   return '판매 시작';
 });
 
-/* 판매는 더 이상 화면을 막지 않는다. 오른쪽 레일의 카드 하나로 돌고,
-   그동안에도 기획서를 뽑고 다음 게임에 착수할 수 있다 — 15초 동안 아무것도
-   못 하게 만드는 것은 연출이 아니라 대기시간이었다. */
-await step('판매 중에도 다른 작업을 할 수 있다', async () => {
+/* 파는 동안에는 다음 게임을 시작할 수 없다. 화면은 막지 않는다 — 기획서도
+   뽑고 직원도 키운다 — 그러나 **착수**만은 정산을 확인한 뒤다. 출시가 아무
+   무게도 없는 사건이 되면 판매 곡선을 보는 사람이 아무도 없다. */
+await step('판매 중에는 다음 게임에 착수할 수 없다', async () => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     g.company.money += 5_000_000;
@@ -207,17 +207,16 @@ await step('판매 중에도 다른 작업을 할 수 있다', async () => {
       monetizeId: g.availableMonetize()[0].id,
       teamIds: g.staff.map((s) => s.id), seriesOfId: null,
     });
-    return { ok: res.ok, why: res.why, selling: !!g.sales };
+    const btn = [...document.querySelectorAll('#panel button')].find((b) => b.textContent.includes('판매 중'));
+    return {
+      ok: res.ok, why: res.why, selling: !!g.sales,
+      project: !!g.project, proposals: g.proposals.length, btn: btn ? btn.disabled : null,
+    };
   });
   if (!r.selling) throw new Error('판매가 이미 끝났다 — 검사가 성립하지 않는다');
-  if (!r.ok) throw new Error('판매 중이라고 착수가 막혔다: ' + r.why);
-  // 원상 복구: 뒤의 검사들은 판매만 도는 상태를 본다. 착수에 나간 개발비도
-  // 되돌린다 — 안 그러면 다음 검사의 "자금이 실시간으로 오른다" 가 음수로 찍힌다.
-  await page.evaluate(() => {
-    const g = window.__game;
-    if (g.project) { g.company.money += g.project.devCost; g.project = null; }
-  });
-  return '판매 중 착수 가능';
+  if (r.ok || r.project) throw new Error('판매 중인데 착수가 됐다');
+  if (!r.proposals) throw new Error('막혔는데 기획서가 사라졌다');
+  return r.why;
 });
 
 await step('판매 카드가 화면을 막지 않는다', async () => {

@@ -36,7 +36,7 @@ import {
 const DRAW = {
   desk: (m, x, z, ry, i) => workstation(m, x, z, ry, i % 4, false),
   deskDual: (m, x, z, ry, i) => workstation(m, x, z, ry, i % 4, true),
-  standDesk: (m, x, z, ry) => standDesk(m, x, z, ry),
+  standDesk: (m, x, z, ry, i) => standDesk(m, x, z, ry, i),
   cubeWall: (m, x, z, ry) => cubeWall(m, x, z, ry, 3.6, 4.0),
   shelf: (m, x, z, ry) => shelfUnit(m, x, z, ry, 7.0, 6.2, true),
   fileCab: (m, x, z, ry) => fileCab(m, x, z, ry, 4, 2.4),
@@ -228,15 +228,21 @@ export function buildPlaced(placed) {
       // The chair sits 2.6 behind the desk and the occupant faces the desk, so
       // their yaw is the desk's rotation turned around — the same convention
       // the generated pods used, kept identical so agents seat the same way.
+      //
+      // 서서 쓰는 가구(stand)에는 그 의자가 없다. 자리는 상판 바로 앞이고
+      // 배정된 직원은 앉지 않고 선다 — 의자 없는 자리에 앉히면 허공에
+      // 앉아 있게 된다. 그것이 스탠딩 책상 버그의 절반이었다.
+      const away = def.stand ? 2.0 : 2.6;
       desks.push({
         id: it.uid,
         floor: it.floor, role: plan.role,
         x: it.x, z: it.z, ry,
-        seatX: it.x + 2.6 * Math.sin(ry),
-        seatZ: it.z + 2.6 * Math.cos(ry),
+        seatX: it.x + away * Math.sin(ry),
+        seatZ: it.z + away * Math.cos(ry),
         yaw: ry + Math.PI,
         y: base,
         kind: it.id,
+        stand: !!def.stand,
       });
     }
     i++;

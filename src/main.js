@@ -19,9 +19,9 @@ import { buildOffice, BUILDING, FLOOR_PLANS, STOREY, placeZones, inPlaceZone } f
 import { buildPlaced, buildGhost } from './world/placed.js';
 import { loadKit } from './world/kit.js';
 import { FURNITURE_BY_ID } from './game/furniture.js';
-import { Crew, Agent, ST } from './world/agents.js';
+import { Crew, Agent, ST, homeState } from './world/agents.js';
 import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, tauntFor } from './world/boss.js';
-import { buildArena, arenaSetFor } from './world/arena.js';
+import { buildArena, arenaSetFor, inArenaZone } from './world/arena.js';
 import { Game } from './game/state.js';
 import { addMotivation } from './game/staff.js';
 import * as staffMod from './game/staff.js';
@@ -280,7 +280,7 @@ class View {
         if (d) {
           setTimeout(() => {
             if (!this.crew.get(a.id)) return;
-            a.goTo({ x: d.seatX, z: d.seatZ, yaw: d.yaw, floor: d.floor, state: ST.SIT },
+            a.goTo({ x: d.seatX, z: d.seatZ, yaw: d.yaw, floor: d.floor, state: homeState(d) },
               this.crew.navFor(a.floor));
           }, 1100);
         }
@@ -289,7 +289,7 @@ class View {
         // from nowhere. Desks can also be picked up mid-game, so a reassignment
         // has to re-seat someone who is already placed — otherwise they carry
         // on typing at a desk that is back in the bag.
-        a.sitAt({ x: d.seatX, z: d.seatZ, yaw: d.yaw, floor: d.floor });
+        a.sitAt({ x: d.seatX, z: d.seatZ, yaw: d.yaw, floor: d.floor, stand: d.stand });
         a.placed = true;
       } else if (!d && (!a.placed || moved)) {
         // Nowhere to sit: stand in the ground-floor lobby, which is the one
@@ -661,6 +661,10 @@ class View {
     // Not while the player is walking around: hijacking the camera out of a
     // first-person view is disorienting, and the team is right there anyway.
     if (this.fp && this.fp.on) return Promise.resolve();
+    // 회의는 사무실에서 한다. 세트장에 있는 채로 열면 카메라가 700 유닛
+    // 밖의 좌표를 '돌아갈 자리' 로 붙들고, 회의가 끝나는 순간 화면이 빈다.
+    // UI 가 먼저 나가 주는 것이 정상 경로지만, 규칙은 여기 한 줄로 둔다.
+    if (this.arena) this.exitArena();
     if (!this.meetingScenes || !teamIds || !teamIds.length) return Promise.resolve();
     const mtg = this.crew.meetingOn(this.floor);
     if (!mtg) return Promise.resolve();
@@ -737,6 +741,9 @@ class View {
     const c = this.camSaved;
     this.camSaved = null;
     if (!c) return;
+    // 저장된 자리가 세트장 안이면 되돌리지 않는다 — 사무실에서 회의가
+    // 끝났는데 카메라만 아레나로 날아가는 경우가 이것이었다.
+    if (inArenaZone(c.x, c.z) && !this.arena) { this.setFloor(this.floor); return; }
     cam.lookAt(c.x, c.y, c.z);
     cam.goalDist = c.d;
     cam.el = c.el;
@@ -846,12 +853,17 @@ class View {
      스테이지가 넘어가면 무대도 같이 바뀐다. 순수 연출이다 — 규칙은
      game/project.js 안에서만 돈다. */
   enterArena(project) {
+    const already = this.arena;
     this.arena = true;
     if (this.fp && this.fp.on) this.fp.exit();
-    this._camBefore = {
-      dist: cam.goalDist, el: cam.el, az: cam.az, cut: this.wallCut,
-      gx: cam.gx, gy: cam.gy, gz: cam.gz, floor: this.floor,
-    };
+    // 이미 세트장 안이면 '들어오기 전의 카메라' 를 다시 잡지 않는다. 다시
+    // 잡으면 그 값이 세트장 좌표가 되고, 나갈 때 거기로 되돌아간다.
+    if (!already && !inArenaZone(cam.gx, cam.gz)) {
+      this._camBefore = {
+        dist: cam.goalDist, el: cam.el, az: cam.az, cut: this.wallCut,
+        gx: cam.gx, gy: cam.gy, gz: cam.gz, floor: this.floor,
+      };
+    }
     const def = project ? monsterForStage(project) : null;
     const set = this.useArenaSet(def ? def.id : 'cat');
     this.ensureBoss(project);
@@ -891,11 +903,15 @@ class View {
     // 아레나 좌표에 남겨 두면 보스 태그가 지평선 너머를 가리킨다.
     this.clearBoss();
     const b = this._camBefore;
-    if (b) {
+    // 세트장 좌표가 저장돼 있으면 버린다. 그리로 되돌리면 사무실은 화면
+    // 밖이고 세트장은 이미 지워진, 아무것도 없는 화면이 남는다. setFloor 가
+    // 이미 층 기본 시점으로 맞춰 놓았으므로 그대로 두는 편이 옳다.
+    if (b && !inArenaZone(b.gx, b.gz)) {
       cam.goalDist = b.dist; cam.el = b.el; cam.az = b.az; this.wallCut = b.cut;
       cam.lookAt(b.gx, b.gy, b.gz);
     }
     this._camBefore = null;
+    this.camSaved = null;   // 회의가 붙들고 있던 '돌아갈 자리' 도 같이 버린다
     cam.snap();
   }
 
