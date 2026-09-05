@@ -73,7 +73,12 @@ for (let week = 0; week < 8 * 48; week++) {
     if (g.project.pendingCards) { g.pickCard(g.project.pendingCards.options[0].id); continue; }
     if (!g.devTurn().ok) break;
   }
+  // 선택지가 있는 주간 이벤트는 답할 때까지 달력을 멈춘다. 막장 플레이어도
+  // 아무거나 누르기는 한다 — 안 그러면 이 시뮬레이션이 첫 이벤트에서 얼어붙고,
+  // 표에 8년 내내 같은 줄이 찍힌다.
+  if (g.pendingEvent) g.answerEvent(0);
   g.nextWeek();
+  if (g.pendingEvent) g.answerEvent(0);
   minMoney = Math.min(minMoney, c.money);
   rescues = c.rescues;
   if (week % 48 === 47) {

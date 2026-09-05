@@ -36,7 +36,12 @@
   /* 카메라 조이스틱이 차지하는 오른쪽 아래 폭. 조이스틱이 꺼져 있으면 0 이
      되고, 배틀 바·배치 툴바·토스트가 그만큼 다시 넓어진다. */
   --cam-w:0px;
+  /* 오른쪽 레일이 실제로 차지하는 폭. 카드가 하나도 없으면 0 이 되어
+     튜토리얼 줄과 배틀 바가 그만큼 다시 넓어진다. */
+  --rail-w2:193px;
+  --rail-cur:0px;
 }
+body.has-rail{ --rail-cur:var(--rail-w2) }
 
 *{box-sizing:border-box}
 html,body{
@@ -427,10 +432,12 @@ body.in-battle #hint,body.placing #hint{display:none}
   position:fixed;
   left:calc(var(--sal) + var(--panel-cur) + var(--gap)*2);
   top:calc(var(--sat) + var(--hud-h) + var(--gap)*2);
-  right:calc(var(--sar) + var(--rail-w) + var(--gap));
+  /* 오른쪽 레일(진행·판매 카드)이 서 있으면 그만큼 비켜선다. 예전에는
+     레일 위에 겹쳐서 판매 카드의 머리말을 통째로 덮었다. */
+  right:calc(var(--sar) + var(--rail-w) + var(--gap) + var(--rail-cur));
   margin:0 auto;max-width:430px;z-index:12;padding:10px 13px;
   display:none;
-  transition:left .26s cubic-bezier(.2,.85,.25,1);
+  transition:left .26s cubic-bezier(.2,.85,.25,1),right .26s cubic-bezier(.2,.85,.25,1);
 }
 #tut.show{display:block}
 #tut .tt{font-size:12.5px;font-weight:800;color:var(--gold);margin-bottom:3px}
@@ -935,16 +942,36 @@ body.arena .bosstag{display:none !important}
   100%{opacity:0}
 }
 
-/* 팀 전원 탈진 — 아레나를 나가지 않고 해결하는 자리 */
-#aRest{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
-  pointer-events:auto;background:rgba(8,9,12,.62);
-  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+/* ══ 팀 전원 탈진 ══
+   이 화면이 파티 카드 **뒤에** 깔려 있었다. 형제 순서상 .afoot 이 나중에
+   그려지므로, 반투명한 배경 너머로 글자는 보이는데 버튼은 카드가 먹었다 —
+   "투명하게 뜨는데 터치가 안 된다" 의 정체가 이것이다. 쌓임 순서를 명시하고
+   배경을 진하게 깔아서, 이 화면이 뜬 동안에는 여기 말고는 누를 데가 없게
+   한다. */
+#arena .ahead{z-index:2}
+#arena .afoot{z-index:2}
+#aLog{z-index:1}
+#aRest{position:absolute;inset:0;z-index:9;display:none;align-items:center;justify-content:center;
+  padding:10px;pointer-events:auto;background:rgba(8,9,12,.88);
+  -webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px)}
 body.arena.rest #aRest{display:flex}
-#aRest .arc{max-width:340px;padding:14px 16px;text-align:center}
+/* 탈진 화면이 떠 있는 동안 아래 밴드는 입력을 받지 않는다. 겹쳐 보이는
+   것도, 눌리는 것도 곤란하다. */
+body.arena.rest #arena .afoot{pointer-events:none;opacity:.25}
+#aRest .arc{max-width:360px;width:100%;padding:14px 16px;text-align:center;
+  background:var(--pan2);border:1px solid rgba(224,169,74,.34);
+  box-shadow:0 18px 46px rgba(0,0,0,.6)}
 #aRest .art{font-size:15px;font-weight:900;color:var(--warn);margin-bottom:5px}
-#aRest .arp{font-size:11.5px;line-height:1.6;color:var(--dim);margin-bottom:9px}
+#aRest .arp{font-size:11.5px;line-height:1.6;color:var(--dim);margin-bottom:7px}
+/* 자동 마감까지 남은 시간. 줄어드는 막대가 "지금 밥을 먹이면 된다" 를
+   말없이 알려 준다. */
+#aRest .arbar{height:5px;border-radius:99px;overflow:hidden;background:rgba(255,255,255,.09);margin-bottom:4px}
+#aRest .arbarf{height:100%;width:100%;border-radius:99px;
+  background:linear-gradient(90deg,#e0a94a,#ff8a5a);transition:width .12s linear}
+#aRest .arcount{font-size:10.5px;font-weight:800;color:var(--warn);margin-bottom:8px}
 #aRestTray{display:flex;gap:5px;justify-content:center;flex-wrap:wrap;margin-bottom:9px}
-#aRest .arow{display:flex;gap:6px;justify-content:center}
+#aRest .arow{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+#aRest .btn{min-height:34px}
 
 /* ── 하단: 파티 ── */
 #arena .afoot{
@@ -953,6 +980,23 @@ body.arena.rest #aRest{display:flex}
   background:linear-gradient(0deg,rgba(10,12,16,.92) 42%,rgba(10,12,16,0));
 }
 #aParty{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-bottom:5px}
+/* ── 사람이 많아지면 카드가 작아진다 ──
+   직원이 일곱쯤 되면 118px 짜리 카드 일곱 장이 두 줄이 되고, 그 두 줄이
+   화면 아래 절반을 먹어 보스가 안 보였다. 인원수에 따라 카드를 줄인다:
+   다섯까지는 그대로, 여섯부터는 이름과 체력 막대만 남는다. 👥 버튼으로
+   통째로 접을 수도 있다 — 보스를 보고 싶은 순간이 반드시 온다. */
+#aParty[data-n="6"],#aParty[data-n="7"]{gap:4px}
+#aParty[data-n="6"] .apc,#aParty[data-n="7"] .apc{width:92px;padding:4px 5px 5px}
+#aParty[data-n="6"] .apc .apx,#aParty[data-n="7"] .apc .apx{display:none}
+#aParty[data-n="6"] .apc .apn i,#aParty[data-n="7"] .apc .apn i{display:none}
+#aParty.many{gap:3px}
+#aParty.many .apc{width:74px;padding:3px 4px 4px;border-radius:8px}
+#aParty.many .apc .apn{font-size:9px}
+#aParty.many .apc .apn i{display:none}
+#aParty.many .apc .apx{display:none}
+#aParty.many .apc .aph{height:5px}
+body.arena.party-fold #aParty{display:none}
+body.arena.party-fold #arena .afoot{background:linear-gradient(0deg,rgba(10,12,16,.82) 30%,rgba(10,12,16,0))}
 .apc{
   width:118px;padding:5px 7px 6px;border-radius:10px;
   background:rgba(22,25,32,.88);border:1px solid rgba(255,255,255,.09);
@@ -997,12 +1041,31 @@ body.arena.rest #aRest{display:flex}
 /* ── 판매 현황 패널 ──
    출시한 게임이 식어가는 모양을 옆에 띄워 둔다. 개발 중에는 진행 패널이
    같은 자리를 쓰므로 그때는 비켜선다. */
-#sales{
-  position:fixed;z-index:10;display:none;
+/* ══ 오른쪽 세로 레일 ══
+   개발 점수판·실시간 판매·판매 현황이 한 흐름으로 쌓인다. 예전에는 셋이
+   같은 좌표에 fixed 로 앉아 서로를 덮었다 — 게임을 만들면서 파는 상태가
+   생기자마자 그 겹침이 바로 드러났다. 레일 자체는 입력을 받지 않고
+   카드만 받는다: 빈 자리로 3D 를 계속 돌릴 수 있어야 한다. */
+#rrail{
+  position:fixed;z-index:10;
   top:calc(var(--sat) + var(--hud-h) + var(--gap) + 4px);
   right:calc(var(--sar) + var(--rail-w) + var(--gap));
-  width:172px;padding:8px 9px;font-size:10.5px;line-height:1.4;
-  max-height:calc(var(--vh) - var(--sat) - var(--hud-h) - 120px);
+  width:186px;display:flex;flex-direction:column;gap:7px;
+  /* 아래쪽은 조이스틱과 배틀 바의 자리다. 거기까지 내려오면 카드가 잘리는
+     게 아니라 **눌리지 않는다** — 조이스틱이 위에 있기 때문이다. */
+  max-height:calc(var(--vh) - var(--sat) - var(--sab) - var(--hud-h) - 132px);
+  overflow-y:auto;overflow-x:hidden;pointer-events:none;
+  touch-action:pan-y;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+}
+#rrail::-webkit-scrollbar{width:4px}
+#rrail::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:2px}
+#rrail > *{pointer-events:auto;flex:none}
+body.arena #rrail,body.fp #rrail,body.meeting #rrail{display:none !important}
+
+#sales{
+  position:static;z-index:auto;display:none;width:100%;
+  padding:8px 9px;font-size:10.5px;line-height:1.4;
+  max-height:38vh;
   overflow-y:auto;overflow-x:hidden;
   touch-action:pan-y;overscroll-behavior:contain;
   -webkit-overflow-scrolling:touch;
@@ -1025,7 +1088,23 @@ body.fp #sales,body.placing #sales{display:none !important}
 .spark{display:flex;align-items:flex-end;gap:1px;height:26px;margin-top:3px}
 .spark i{flex:1;min-width:2px;border-radius:1px 1px 0 0;background:rgba(232,176,85,.55)}
 .spark i.now{background:var(--gold)}
+.spark i.up{background:#7fd4ff}
+.spark i.dn{background:#e0705a}
 .sgend{font-size:8.5px;color:var(--dim);margin-top:2px}
+
+/* ── 직원 강화 목록 ──
+   한 사람 안에서 아홉 줄이 흐르므로, 줄마다 값과 단계가 한눈에 들어와야
+   한다: 아이콘 · 이름과 현재 단계 · 효과 · 가격 버튼. */
+.upg{display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
+.upr{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:8px;
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06)}
+.upr.max{opacity:.5}
+.upr .e{font-size:14px;flex:none;width:18px;text-align:center}
+.upr .m{flex:1;min-width:0}
+.upr .m .t{display:block;font-size:10.5px;font-weight:800}
+.upr .m .t i{font-style:normal;color:var(--gold);font-size:9.5px}
+.upr .m .d{display:block;font-size:9px;color:var(--dim)}
+.upr .btn{flex:none;font-size:9.5px;padding:4px 7px}
 
 /* 소재 뽑기: 가진 것과 못 가진 것을 한 화면에 */
 .gchips{display:flex;flex-wrap:wrap;gap:3px;margin-top:7px}
@@ -1046,15 +1125,13 @@ body.fp #sales,body.placing #sales{display:none !important}
    개발 중에만 뜬다. 층 버튼 왼쪽, HUD 아래. 폭을 고정하는 이유는 숫자가
    커질 때 패널이 들썩이면 눈이 따라가지 못하기 때문이다. */
 #prog{
-  position:fixed;z-index:10;display:none;
-  top:calc(var(--sat) + var(--hud-h) + var(--gap) + 4px);
-  right:calc(var(--sar) + var(--rail-w) + var(--gap));
-  width:158px;padding:8px 9px;
+  position:static;z-index:auto;display:none;width:100%;
+  padding:8px 9px;
   font-size:10.5px;line-height:1.4;
-  /* 배틀 바 위에서 끝나야 한다. 둘이 겹치면 점수판과 조작이 서로를 가린다.
-     잘라내지 말고 스크롤시킨다 — overflow:hidden 이었을 때는 팀 체력이
-     화면 밖으로 밀려나 아예 볼 방법이 없었다. */
-  max-height:calc(var(--vh) - var(--sat) - var(--hud-h) - 200px);
+  /* 잘라내지 말고 스크롤시킨다 — overflow:hidden 이었을 때는 팀 체력이
+     화면 밖으로 밀려나 아예 볼 방법이 없었다. 레일 안에서는 이 카드가
+     혼자 다 먹지 않도록 몫을 정해 둔다. */
+  max-height:44vh;
   overflow-y:auto;overflow-x:hidden;
   touch-action:pan-y;overscroll-behavior:contain;pointer-events:auto;
   -webkit-overflow-scrolling:touch;
@@ -1082,6 +1159,7 @@ body.meeting #prog{display:none}
 .pgs .d{width:22px;text-align:right;font-size:9px;color:var(--good);font-weight:800;flex:none}
 .pgrow{display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:2px}
 .pgrow b{color:var(--txt);font-variant-numeric:tabular-nums}
+.pgrow.warn b{color:var(--warn)}
 .pgt{margin-top:6px;border-top:1px solid var(--edge);padding-top:5px}
 .pgm{display:flex;align-items:center;gap:4px;margin:3px 0;font-size:9.5px}
 .pgm .n{width:44px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none}
@@ -1174,48 +1252,74 @@ body.meeting #prog{display:none}
 
 
 /* ══ 실시간 판매 ══
-   출시 직후 15초. 화면 한복판 아래에 서고, 그동안 다른 조작은 막힌다 —
-   막대가 서는 것을 보는 것이 이 15초의 전부다. */
+   출시 직후 15초 동안 주차가 흐른다. 예전에는 화면 전체를 덮는 모달이라
+   그 15초 동안 아무것도 못 했다 — 연출이 아니라 대기시간이었다. 이제
+   오른쪽 레일의 카드 하나로 돌고, 그동안 기획서를 뽑든 직원을 키우든
+   상관없다. */
 #salerun{
-  position:fixed;left:0;right:0;bottom:0;top:0;z-index:60;display:none;
-  align-items:center;justify-content:center;
-  background:rgba(8,9,12,.55);backdrop-filter:blur(2px);
-  padding:calc(var(--sat) + 10px) 12px calc(var(--sab) + 10px);
+  position:static;z-index:auto;display:none;width:100%;
 }
-body.selling #salerun{display:flex}
+body.selling #salerun{display:block}
+body.arena #salerun,body.fp #salerun,body.meeting #salerun{display:none !important}
 .src{
-  width:min(420px,92vw);padding:13px 15px 14px;border-radius:15px;
+  width:100%;padding:9px 10px 10px;border-radius:12px;
   background:var(--pan2);border:1px solid rgba(232,176,85,.30);
-  box-shadow:0 18px 48px rgba(0,0,0,.55);
+  box-shadow:0 10px 26px rgba(0,0,0,.45);
 }
-.srh{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.srh{display:flex;flex-direction:column;align-items:flex-start;gap:2px;margin-bottom:4px}
 .srtag{
-  font-size:9px;font-weight:800;padding:2px 7px;border-radius:99px;flex:none;
+  font-size:8.5px;font-weight:800;padding:2px 6px;border-radius:99px;flex:none;
   background:rgba(208,100,76,.20);color:#ff9a80;border:1px solid rgba(208,100,76,.4);
 }
 body.selling.settled .srtag{background:rgba(113,192,122,.18);color:var(--good);border-color:rgba(113,192,122,.4)}
-.srh b{font-size:12.5px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.srbig{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
-.srbig span{font-size:27px;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums;line-height:1}
-.srbig i{font-size:10.5px;color:var(--dim);font-style:normal}
-.srchart{position:relative;height:96px;border-radius:9px;padding:7px 8px 6px;
+.srh b{font-size:11px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.srbig{display:flex;flex-direction:column;align-items:flex-start;gap:1px;margin-bottom:5px}
+.srbig span{font-size:19px;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums;line-height:1.05}
+.srbig i{font-size:9px;color:var(--dim);font-style:normal}
+
+/* 판매 중에 터진 사건. "연예인 광고 +42%" 한 줄이 그 주 막대가 왜 튀었는지를
+   설명한다 — 이유 없이 튀는 그래프는 그냥 잡음이다. */
+.srev{display:flex;flex-direction:column;gap:3px;margin-bottom:5px}
+.srev:empty{display:none}
+.srev .se{
+  display:flex;align-items:center;gap:5px;font-size:9px;font-weight:700;
+  padding:3px 6px;border-radius:7px;
+  background:rgba(232,176,85,.12);border:1px solid rgba(232,176,85,.28);color:#ffd98f;
+}
+.srev .se.bad{background:rgba(208,100,76,.14);border-color:rgba(208,100,76,.34);color:#ff9a80}
+.srev .se .p{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:900}
+.srev .se.fresh{animation:sepop .5s cubic-bezier(.2,.9,.3,1)}
+@keyframes sepop{0%{transform:scale(.86);opacity:0}60%{transform:scale(1.04)}100%{transform:none;opacity:1}}
+
+.srchart{position:relative;height:66px;border-radius:8px;padding:6px 6px 5px;
   background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)}
-.srbars{position:absolute;inset:7px 8px 6px;display:flex;align-items:flex-end;gap:3px}
+.srbars{position:absolute;inset:6px 6px 5px;display:flex;align-items:flex-end;gap:2px}
 .srbars i{
-  flex:1;min-width:3px;border-radius:2px 2px 0 0;background:rgba(232,176,85,.38);
+  flex:1;min-width:2px;border-radius:2px 2px 0 0;background:rgba(232,176,85,.38);
   transition:height .28s cubic-bezier(.2,.9,.3,1);
 }
 .srbars i.now{background:var(--gold);box-shadow:0 0 10px rgba(232,176,85,.6)}
-.srline{position:absolute;inset:7px 8px 6px;width:calc(100% - 16px);height:calc(100% - 13px);overflow:visible}
-.srrow{display:flex;gap:6px;margin:8px 0 9px}
+/* 사건이 붙은 주는 색으로 표시한다. 좋은 쪽은 하늘색, 나쁜 쪽은 붉은색. */
+.srbars i.up{background:#7fd4ff}
+.srbars i.dn{background:#e0705a}
+.srline{position:absolute;inset:6px 6px 5px;width:calc(100% - 12px);height:calc(100% - 11px);overflow:visible}
+.srrow{display:flex;gap:4px;margin:6px 0 7px}
 .srrow div{
-  flex:1;text-align:center;padding:5px 3px;border-radius:8px;
+  flex:1;text-align:center;padding:4px 2px;border-radius:7px;
   background:rgba(255,255,255,.05);
 }
-.srrow .k{display:block;font-size:8.5px;color:var(--dim)}
-.srrow .v{display:block;font-size:12px;font-weight:800;font-variant-numeric:tabular-nums}
-#srOk{display:none}
+.srrow .k{display:block;font-size:8px;color:var(--dim)}
+.srrow .v{display:block;font-size:10.5px;font-weight:800;font-variant-numeric:tabular-nums}
+#srOk{display:none;padding:6px 8px;font-size:10.5px}
 body.selling.settled #srOk{display:block}
+
+/* 컨텍스트가 날아갔을 때의 짧은 안내. 흰 화면에 아무 말도 없는 것보다는
+   "다시 불러옵니다" 한 줄이 훨씬 낫다. */
+#glLost{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+  background:rgba(8,9,12,.72);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+#glLost .glc{padding:14px 18px;text-align:center;border-radius:14px}
+#glLost .glc b{display:block;font-size:13px;font-weight:900;margin-bottom:4px}
+#glLost .glc span{font-size:11px;color:var(--dim)}
 
 /* ══ 룰렛 ══
    결과는 이미 서버(=시뮬레이션) 쪽에서 정해졌다. 여기는 그 한 칸에서

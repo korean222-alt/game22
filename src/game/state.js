@@ -14,6 +14,7 @@ import {
   STARTUP_GRANT, rescueAmount, rescueMorale,
   SHOP, shopItem, shopFor, GEAR_SLOTS, OVERTIME, DEX_SECTIONS, HP, bossFor, RAID,
   CONTENT_BY_ID, CONTENT_BASE, CONTENT_GACHA_COST, CONTENT_GACHA_DUP,
+  EXHAUST,
 } from './data.js';
 import {
   FURNITURE_BY_ID, RESELL, comfortScore, comfortLevel, footprint, overlaps,
@@ -24,11 +25,13 @@ import {
   reincarnate, canReincarnate, addMotivation, abilities, power, role, seedIds, itemCost,
   trainStamina, gainExp, expToNext, syncHp, healHp, hpRatio, drainHp,
   equipGear, unequipGear, canEquip, gearOf, isTired, isSpent, basePower,
+  canUpgrade, applyUpgrade, upgradeList,
 } from './staff.js';
 import {
   generateProposal, startProject, battleTurn, battleTick, chooseCard, finishProject, debug,
   turnCost, seedProjectIds, previewQuality, previewBugs, funScore,
   ensureStages, currentStage, raidProgress, teamDown, advanceStage, stageName,
+  forfeitStage, completion,
 } from './project.js';
 import { TASKS, rollEvent, grantReward, rewardText } from './events.js';
 import {
@@ -52,10 +55,12 @@ const LEGACY_KEYS = ['socialdev3d.save.v1'];
 const CONTENT_ALIAS = { sports2: 'soccer' };
 const aliasContent = (id) => CONTENT_ALIAS[id] || id;
 
-/* 출시 직후의 실시간 판매. 15초에 열 주치.
-   길게 잡으면 게임이 멈춰 있는 시간이 되고, 짧게 잡으면 그래프가 그려지기
-   전에 끝난다. 주당 1.5초면 막대가 서는 것이 눈에 보인다. */
-const SALES = { secs: 15, weeks: 10 };
+/* 출시 직후의 실시간 판매. 18초에 열두 주치.
+   화면을 막지 않게 된 뒤로 길이의 제약이 하나 풀렸다 — 예전에는 이 시간이
+   곧 '아무것도 못 하는 시간' 이라 짧아야 했다. 이제는 봉우리가 보일 만큼
+   길어야 한다: 정점이 보통 3주차에 서므로, 열두 주면 오르고 꺾이고 식는
+   모양이 한 화면에 다 들어온다. 주당 1.5초면 막대가 서는 것이 눈에 보인다. */
+const SALES = { secs: 18, weeks: 12 };
 
 export class Game {
   constructor(seed = Date.now() & 0x7fffffff) {
@@ -123,7 +128,7 @@ export class Game {
     this.project = null;         // the project currently in development
     this.finished = null;        // finished, awaiting release
     this.releases = [];
-    /* 출시 직후 15초 동안 도는 실시간 판매. 저장하지 않는다 — 탭을 닫았다
+    /* 출시 직후 화면 오른쪽에서 도는 실시간 판매. 저장하지 않는다 — 탭을 닫았다
        열면 그 판매는 이미 끝난 것으로 친다. */
     this.sales = null;
     this.candidates = [];
@@ -544,10 +549,9 @@ export class Game {
   beginDevelopment({ proposalId, platformId, monetizeId, teamIds, seriesOfId }) {
     if (this.project) return { ok: false, why: '이미 개발 중' };
     if (this.finished) return { ok: false, why: '완성작을 먼저 출시하세요' };
-    // 출시 직후의 판매·정산이 끝나기 전에는 다음 게임을 못 만든다. 회사가
-    // 방금 낸 게임이 얼마나 팔렸는지도 모르는 채로 다음 판을 벌이는 것은
-    // 경영이 아니다 — 그 15초는 그것을 보라고 있는 시간이다.
-    if (this.sales) return { ok: false, why: '판매 정산 중입니다. 끝난 뒤에 착수하세요' };
+    // 실시간 판매는 더 이상 화면을 막지 않는다. 오른쪽 카드에서 혼자 돌고,
+    // 그 사이에도 기획서를 뽑고 다음 게임에 착수할 수 있다 — 15초 동안
+    // 아무것도 못 하게 만드는 것은 연출이 아니라 대기시간이었다.
     const pr = this.proposals.find((p) => p.id === proposalId);
     if (!pr) return { ok: false, why: '없는 기획서' };
     const team = teamIds.map((id) => this.staff.find((s) => s.id === id)).filter(Boolean);
@@ -589,16 +593,27 @@ export class Game {
 
     const staff = this.staffById();
     if (teamDown(p, staff)) {
-      // 팀 전원이 쓰러졌다. 이번 주에는 더 못 싸운다 — 밥을 먹이거나
-      // 다음 주로 넘기면 다시 일어선다.
+      /* 팀 전원이 쓰러졌다. 이 단계는 여기서 끝난다.
+
+         예전에는 "다음 주로 넘기기" 로 체력을 공짜로 채워 같은 보스를 계속
+         팰 수 있었다. 시간이 무한하면 밥은 아무도 사지 않는 물건이 된다.
+         이제 EXHAUST.grace 초 안에 밥을 먹여 일으키지 못하면 남은 체력만큼
+         **못 만든 채로** 마감하고 다음 보스로 넘어간다. */
       if (!p.exhausted) {
         p.exhausted = true;
-        this.note('팀이 모두 지쳐 쓰러졌다. 밥을 먹이거나 다음 주로 넘기세요.', 'bad');
-        this.emit('battle', { project: p, events: [{ kind: 'exhausted' }] });
+        p.exhaustT = 0;
+        this.note('팀이 모두 쓰러졌다. 밥을 먹이지 않으면 이 단계는 이대로 마감된다.', 'bad');
+        this.emit('battle', { project: p, events: [{ kind: 'exhausted', grace: EXHAUST.grace }] });
       }
-      return { ok: true, idle: true, blocked: 'exhausted' };
+      p.exhaustT = (p.exhaustT || 0) + Math.min(0.25, Math.max(0, dt));
+      if (p.exhaustT >= EXHAUST.grace) return this.wrapUpStage();
+      return {
+        ok: true, idle: true, blocked: 'exhausted',
+        left: Math.max(0, EXHAUST.grace - p.exhaustT),
+      };
     }
     p.exhausted = false;
+    p.exhaustT = 0;
 
     const r = battleTick(p, staff, this.rnd, this.ctx(), dt * speed);
     if (!r.events.length) return { ok: true, idle: r.idle };
@@ -613,10 +628,33 @@ export class Game {
     ensureStages(p);
     if (p.pendingCards) return { ok: false, why: '아이디어를 먼저 고르세요' };
     const staff = this.staffById();
-    if (teamDown(p, staff)) return { ok: false, why: '팀이 지쳐서 더 못 싸운다. 다음 주로 넘기세요.' };
+    // 여기서는 마감을 걸지 않는다. 한 라운드 버튼(과 스페이스바)이 팀을
+    // 말없이 접어 버리면, 실수로 누른 키 하나가 게임의 완성도를 깎는다.
+    // 마감은 전투 화면의 유예 시간이 끝나거나, 주를 넘길 때 걸린다.
+    if (teamDown(p, staff)) {
+      return { ok: false, exhausted: true, why: '팀이 전부 쓰러졌다. 밥을 먹이거나 전투 화면에서 마감하세요.' };
+    }
     const r = battleTurn(p, staff, this.rnd, this.ctx());
     this._battleEvents(p, r.events);
     return { ok: true, ...r };
+  }
+
+  /* ---------- 탈진 마감 ----------
+     지금 상대하던 보스를 남은 체력째로 접고 다음으로 넘어간다. 자동으로도
+     걸리고(유예 시간이 지나면), 플레이어가 "이대로 마감" 을 눌러도 걸린다. */
+  wrapUpStage() {
+    const p = this.project;
+    if (!p || p.done || p.pendingCards) return { ok: false, why: '지금은 마감할 수 없다' };
+    ensureStages(p);
+    const st = currentStage(p);
+    const left = Math.round((p.hp / Math.max(1, p.hpMax)) * 100);
+    const events = forfeitStage(p, this.rnd, this.ctx());
+    if (!events.length) return { ok: false, why: '지금은 마감할 수 없다' };
+    p.exhausted = false;
+    p.exhaustT = 0;
+    this.note(`${st.name || st.ko} 을(를) ${left}% 남긴 채 마감했다. 완성도 ${Math.round(completion(p) * 100)}%.`, 'bad');
+    this._battleEvents(p, events);
+    return { ok: true, forfeited: true, events };
   }
 
   /* 배틀 이벤트를 로그와 3D 로 흘려보낸다. 스테이지가 넘어가는 자리도
@@ -631,6 +669,8 @@ export class Game {
         this.note(`${ev.name} 격파! (${ev.stage + 1}/${p.stages.length})`, 'good');
       } else if (ev.kind === 'stageStart') {
         this.note(`${ev.name} 등장!`, 'bad');
+      } else if (ev.kind === 'forfeit') {
+        this.note(`${ev.name} — 체력 ${ev.left}% 를 남긴 채 마감. 그만큼 게임이 덜 만들어졌다.`, 'bad');
       } else if (ev.kind === 'complete') {
         complete = true;
       } else if (ev.kind === 'down') {
@@ -806,6 +846,9 @@ export class Game {
      이 15초 동안에는 새 게임을 만들 수 없고 주도 넘길 수 없다. 정산을
      확인하고 나서야 다음 판이 시작된다. */
   _startSalesRun(rel, fansGained) {
+    // 앞의 판매가 아직 돌고 있으면 접는다. 카드는 하나뿐이고, 두 판이
+    // 같은 자리에서 겹치면 어느 게임의 그래프인지 알 수가 없다.
+    if (this.sales) this.closeSalesRun();
     this.sales = {
       id: rel.id,
       title: rel.title,
@@ -816,8 +859,10 @@ export class Game {
       total: 0,           // 이번 판매로 들어온 돈
       peak: 0,            // 가장 많이 판 주 (그래프의 위쪽 눈금)
       points: [],         // [{ w, income, users }]
-      users: rel.users,
+      users: rel.launchUsers || rel.users,
       fans: fansGained || 0,
+      event: null,        // 방금 터진 사건 (배지로 뜬다)
+      events: [],
       ended: false,
     };
     this.emit('sales', this.sales);
@@ -836,12 +881,18 @@ export class Game {
     const want = Math.min(s.weeks, Math.floor(s.t / per));
     let changed = false;
     while (s.done < want) {
-      const income = tickRelease(rel, this.rnd);
+      const { income, event } = tickRelease(rel, this.rnd);
       this.earn(income);
       s.done += 1;
       s.total += income;
       s.peak = Math.max(s.peak, income);
-      s.points.push({ w: rel.weeks, income, users: rel.users });
+      s.points.push({ w: rel.weeks, income, users: rel.users, event });
+      if (event) {
+        s.event = { ...event, at: s.done };
+        s.events = [...(s.events || []), s.event].slice(-4);
+        this.note(`${event.emoji} 「${s.title}」 ${event.ko} — 이번 주 매출 ${event.pct > 0 ? '+' : ''}${event.pct}%`,
+          event.cls === 'bad' ? 'bad' : 'good');
+      }
       changed = true;
       if (!rel.managing) { s.done = s.weeks; break; }   // 유저가 다 빠졌다
     }
@@ -1039,6 +1090,35 @@ export class Game {
      "다음 주로 넘기는 것 말고는 스태미나를 채울 방법이 없다" 를 없애는 두
      번째 길. 돈과 직원의 체력·의욕을 스태미나로 바꾼다. 주 1회 — 이것이
      기본 루프를 대체해 버리면 주간 클록이 의미를 잃는다. */
+  /* ---------- 직원 강화 ----------
+     돈으로 사는 영구 강화. 레벨(아이템)과 장비 위에 얹는 **방향**이다:
+     체력을 올려 보스전에서 오래 버티게 할지, 공격력을 올려 세게 치게 할지,
+     미술을 올려 임팩트를 밀게 할지. 스태미나는 들지 않는다 — 아이템 지급이
+     이미 스태미나를 먹으므로, 여기까지 먹으면 한 주에 할 수 있는 일이
+     "누구 하나 키우기" 하나로 줄어든다. */
+  upgradesOf(staffId) {
+    const s = this.staff.find((x) => x.id === staffId);
+    return s ? upgradeList(s) : [];
+  }
+
+  upgradeStaff(staffId, upId) {
+    const s = this.staff.find((x) => x.id === staffId);
+    if (!s) return { ok: false, why: '없는 직원' };
+    const chk = canUpgrade(s, upId);
+    if (!chk.ok) return chk;
+    if (this.company.money < chk.cost) {
+      return { ok: false, why: `자금 부족 (₩${chk.cost.toLocaleString()})` };
+    }
+    if (!this.spend(chk.cost)) return { ok: false, why: '자금 부족' };
+    const r = applyUpgrade(s, upId);
+    if (!r.ok) return r;
+    syncHp(s);
+    this.note(`${s.name} ${r.up.ko} ${r.level}단계 — ${r.up.unit}`, 'good');
+    this.emit('staff', s);
+    this.checkTasks();
+    return { ok: true, level: r.level, cost: chk.cost };
+  }
+
   overtimeCost() { return Math.round(OVERTIME.payPerHead * this.staff.length * (1 + this.company.rank * 0.12)); }
 
   canOvertime() {
@@ -1284,9 +1364,23 @@ export class Game {
     // An unanswered event blocks the week: the whole point of a choice is that
     // the world waits for it.
     if (this.pendingEvent) { this.emit('event', this.pendingEvent); return { blocked: true }; }
-    if (this.sales) return { ok: false, why: '판매 정산 중입니다' };
+
+    /* 팀이 전부 쓰러진 채로 주를 넘기면, 그 단계는 거기서 마감된다.
+
+       이것이 없으면 "다음 주로 넘기기" 가 체력을 공짜로 채워 주는 버튼이
+       되고, 시간이 무한해지므로 상점의 음식은 아무도 사지 않는 물건이
+       된다. 쉬는 것은 자유지만, 쉬는 동안 게임은 그만큼 덜 만들어진다. */
+    if (this.project && !this.project.pendingCards && teamDown(this.project, this.staffById())) {
+      this.wrapUpStage();
+    }
+
     let income = 0;
-    for (const r of this.releases) income += tickRelease(r, this.rnd);
+    for (const r of this.releases) {
+      // 실시간 판매가 도는 게임은 그 팝업이 자기 주차를 흘리고 있다. 여기서
+      // 또 한 주를 태우면 같은 주가 두 번 팔린다.
+      if (this.sales && this.sales.id === r.id && !this.sales.ended) continue;
+      income += tickRelease(r, this.rnd).income;
+    }
     const costs = weeklyCosts(c, this.staff);
     this.earn(income);
     c.money -= costs;
@@ -1432,6 +1526,19 @@ export class Game {
       }
       c.bag = c.bag || {};
       c.dex = c.dex || {};
+      // 강화·완성도가 없던 시절의 세이브. 없는 칸만 채운다.
+      for (const st of g.staff) if (!st.up || typeof st.up !== 'object') st.up = {};
+      for (const pj of [g.project, g.finished]) {
+        if (!pj) continue;
+        pj.unfinished = pj.unfinished || 0;
+        pj.forfeits = pj.forfeits || 0;
+        pj.rushBugs = pj.rushBugs || 0;
+      }
+      // 봉우리 곡선이 없던 시절의 출시작. 지금 유저 수를 정점으로 친다.
+      for (const r of g.releases) {
+        if (r.peakWeek === undefined) { r.peakWeek = 0; r.growth = 1; }
+        if (r.launchUsers === undefined) r.launchUsers = r.peakUsers || r.users;
+      }
       for (const k of ['genres', 'contents', 'bosses', 'items', 'jobs']) c.dex[k] = c.dex[k] || {};
 
       /* 이름이 바뀐 소재를 옮긴다. 세 군데에 박혀 있다: 진행 중/완성된

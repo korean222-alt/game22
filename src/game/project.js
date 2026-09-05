@@ -15,12 +15,12 @@ import {
   GENRES, CONTENTS, METHODS, PLATFORMS, MONETIZE, STATS,
   comboScore, TITLE_WORDS_A, TITLE_WORDS_B, researchEffect, TRAITS,
   bossFor, BOSS_MOVES, BOSS_STAGES, WEAK_TURNS, WEAK_MULT, HP, RAID,
-  devStamina,
+  devStamina, EXHAUST,
 } from './data.js';
 import { JOBS, JOB_ABILITY } from './data.js';
 import {
   power, basePower, ability, motivationMult, traitMult, traitAdd, hasTrait, traitsOf,
-  gearAxis, drainHp, hpRatio, syncHp,
+  gearAxis, drainHp, hpRatio, syncHp, upSpeedMult, upCritAdd,
 } from './staff.js';
 
 let _pid = 1;
@@ -89,10 +89,25 @@ export function strikeCount(project) {
   return Math.max(1, (project.turn || 1) * Math.max(1, project.team.length));
 }
 
+/* ---------- 완성도 ----------
+   팀이 전원 쓰러진 채로 마감한 단계는 **못 만든 부분**을 남긴다. `unfinished`
+   는 전체 체력 중 끝내 못 깎은 비율이고, 그 비율만큼 다섯 축이 통째로 깎인다.
+
+   왜 축의 평균이 아니라 결과값에 곱하는가: 품질은 '한 타격당 평균'이라
+   일찍 끝낸다고 평균이 떨어지지 않는다. 즉 페널티가 없으면 탈진 마감이
+   **지름길**이 된다 — 밥을 사줄 이유가 사라지는 정확히 그 자리다. */
+export function completion(project) {
+  const un = Math.max(0, Math.min(1, project ? (project.unfinished || 0) : 0));
+  return Math.max(EXHAUST.minQuality, 1 - un * EXHAUST.qualityLoss);
+}
+
 export function projectQuality(project) {
   const n = strikeCount(project);
+  const comp = completion(project);
   const out = {};
-  for (const st of STATS) out[st] = qualityCurve(project.raw[st] / n);
+  for (const st of STATS) {
+    out[st] = Math.max(1, Math.round(qualityCurve(project.raw[st] / n) * comp));
+  }
   return out;
 }
 
@@ -199,9 +214,21 @@ export function projectScale({ genreId, platformId, grade, seriesN = 1, rank = 1
 }
 
 /* 개발 착수에 드는 스태미나. 배틀은 공짜다 — 스태미나는 여기서만 나간다. */
-export function devStaminaCost({ platformId, grade, seriesN = 1 }) {
+export function devStaminaCost({ platformId, grade, seriesN = 1, monetizeId = null }) {
   const platform = PLATFORMS.find((p) => p.id === platformId);
-  return devStamina(platform, grade || 1, seriesN);
+  const money = monetizeId ? MONETIZE.find((m) => m.id === monetizeId) : null;
+  return devStamina(platform, grade || 1, seriesN, money);
+}
+
+/* 개발비. 플랫폼 값에 야심(등급·시리즈)과 수익 모델의 배율이 곱해진다.
+   설정 화면의 미리보기와 착수가 같은 함수를 봐야 숫자가 어긋나지 않는다. */
+export function devCostOf({ platformId, grade, seriesN = 1, monetizeId = null }) {
+  const platform = PLATFORMS.find((p) => p.id === platformId);
+  if (!platform) return 0;
+  const money = monetizeId ? MONETIZE.find((m) => m.id === monetizeId) : null;
+  const seriesMult = 1 + (seriesN - 1) * 0.55;
+  const gradeMult = 0.75 + (grade || 1) * 0.25;
+  return Math.round(platform.cost * gradeMult * seriesMult * (money ? money.cost || 1 : 1));
 }
 
 export function startProject({ proposal, platformId, monetizeId, team, rank, seriesOf }) {
@@ -262,8 +289,12 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
     crits: 0,
     log: [],
     done: false,
-    devCost: Math.round(platform.cost * gradeMult * seriesMult),
-    devStamina: devStaminaCost({ platformId, grade: proposal.grade, seriesN }),
+    devCost: devCostOf({ platformId, grade: proposal.grade, seriesN, monetizeId }),
+    devStamina: devStaminaCost({ platformId, grade: proposal.grade, seriesN, monetizeId }),
+    // 탈진으로 못 만들고 넘긴 비율. 완성도가 이 값을 본다.
+    unfinished: 0,
+    forfeits: 0,
+    rushBugs: 0,
     startedRank: rank,
   };
 }
@@ -284,6 +315,36 @@ export function ensureStages(project) {
   project.strikes = Math.max(1, (project.turn || 1) * Math.max(1, project.team.length));
   project.atb = {}; project.down = {}; project.bossAtb = 0; project.elapsed = 0;
   return project;
+}
+
+/* ---------- 탈진 마감 ----------
+   팀이 전원 쓰러지면 이 단계는 여기서 끝난다. 남은 체력은 못 만든 것으로
+   기록되고(그만큼 완성도가 깎이고 버그가 붙는다), 다음 보스가 선다.
+
+   예전에는 "다음 주로 넘기기" 로 체력을 공짜로 채워 같은 보스를 계속 팰 수
+   있었다. 시간이 무한하면 밥은 살 이유가 없는 물건이 된다 — 이 함수가 그
+   무한을 끊는다. */
+export function forfeitStage(project, rnd, ctx = {}) {
+  ensureStages(project);
+  if (project.done || project.pendingCards) return [];
+  const st = currentStage(project);
+  const left = Math.max(0, Math.min(1, project.hp / Math.max(1, project.hpMax)));
+  const share = (st.hpMax || 0) / Math.max(1, project.totalHp || project.hpMax || 1);
+  project.unfinished = Math.min(1, (project.unfinished || 0) + left * share);
+  project.forfeits = (project.forfeits || 0) + 1;
+  st.forfeited = true;
+  // 급하게 덮은 자리는 버그로 남는다. 반격이 남기는 bugExtra 와 따로 세는
+  // 이유는 그쪽에 상한(HP.bugCap)이 걸려 있기 때문이다 — 같은 칸에 넣으면
+  // 다음 반격 한 번에 탈진 마감의 대가가 도로 지워진다.
+  project.rushBugs = (project.rushBugs || 0) + Math.round(left * share * EXHAUST.bugs * 3);
+  project.hp = 0;
+  st.hp = 0;
+  const events = [{
+    kind: 'forfeit', stage: project.stage || 0,
+    name: st.name || st.ko, left: Math.round(left * 100),
+  }];
+  for (const ev of stageCleared(project, rnd, ctx)) events.push(ev);
+  return events;
 }
 
 export function currentStage(project) {
@@ -324,7 +385,7 @@ export function teamDown(project, staffById) {
 export function strikePeriod(s) {
   const r = hpRatio(s);
   const slow = 1 + (RAID.slowest - 1) * (1 - Math.min(1, r / HP.tired));
-  const speed = 1 + (traitAdd(s, 'speed') || 0);
+  const speed = (1 + (traitAdd(s, 'speed') || 0)) * upSpeedMult(s);
   return RAID.strikeSec * Math.max(1, slow) / Math.max(0.5, speed);
 }
 
@@ -350,7 +411,7 @@ export function staffStrike(project, s, rnd, ctx = {}) {
   const teamMood = ctx.teamMood || 0;
 
   const critChance = 0.06 + Math.min(0.30, (s.motivation + teamMood * 2) * 0.006)
-    + traitAdd(s, 'crit') + (project.critBonus || 0);
+    + traitAdd(s, 'crit') + upCritAdd(s) + (project.critBonus || 0);
   const crit = rnd() < critChance;
   const roll = 1 - variance + rnd() * variance * 2;
   const fan = hasTrait(s, 'genreFan') && s.favGenre === project.genreId
@@ -607,12 +668,9 @@ export function bossAttack(project, staffById, rnd, move) {
    보고 있던 수치와 결과가 다르면 그 패널은 장식이 되고, 같으면 "이번 턴에
    무엇이 올랐나"가 실제 판단 재료가 된다. */
 export function previewQuality(project) {
-  const n = strikeCount(project);
-  const q = {};
-  for (const st of STATS) {
-    q[st] = Math.max(0, Math.min(999, qualityCurve(project.raw[st] / n)));
-  }
-  return q;
+  // 결과 화면과 **같은 함수**를 쓴다. 따로 계산하던 시절에는 탈진 마감의
+  // 완성도 페널티가 개발 중 패널에만 안 보였다.
+  return projectQuality(project);
 }
 
 /* 완성 시 붙을 버그 수의 추정. 완성 계산과 같은 식을 쓰되 주사위만 뺀다. */
@@ -658,7 +716,7 @@ function bugCount(project, quality, staffById, ctx = {}) {
     }
     bugs *= Math.max(0.35, Math.min(2.2, tm));
   }
-  return bugs + (project.bugExtra || 0);
+  return bugs + (project.bugExtra || 0) + (project.rushBugs || 0);
 }
 
 /* 뽑아서 가진 소재만 카드로 나온다. `owned` 가 없으면 (헤드리스 밸런스
@@ -793,6 +851,7 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
 
   project.done = true;
   project.quality = quality;
+  project.completion = completion(project);
   project.bugs = bugs;
   project.bugsAtBuild = bugs;
   project.combo = combo;

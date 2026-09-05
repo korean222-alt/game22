@@ -1161,13 +1161,45 @@ async function boot() {
     else ui.onFounded = () => wireInstallGuide($('a2hs'));
   }
 
+  /* ---------- 그래픽이 죽었을 때 ----------
+     화면이 통째로 흰색(정확히는 body 의 #c8cbcf)이 되고 UI 만 살아 있는
+     증상의 원인은 둘 중 하나다: 프레임 루프가 예외로 끊겼거나, 브라우저가
+     WebGL 컨텍스트를 회수했거나. 둘 다 rAF 가 다시 걸리지 않으므로 그
+     상태가 **영구히** 남는다 — 게임을 다 만들어도 흰 화면인 이유가 이것이다.
+
+     그래서 루프는 무슨 일이 있어도 다음 프레임을 예약하고, 컨텍스트가
+     날아가면 저장하고 다시 불러온다. 흰 화면으로 남겨 두는 것보다 2초짜리
+     재시작이 언제나 낫다. */
+  let lostShown = false;
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    if (lostShown) return;
+    lostShown = true;
+    try { game.save(); } catch (err) { /* 저장이 안 돼도 재시작은 해야 한다 */ }
+    const box = document.createElement('div');
+    box.id = 'glLost';
+    box.innerHTML = '<div class="glc card"><b>그래픽을 다시 불러옵니다…</b>'
+      + '<span>진행 상황은 저장됐습니다.</span></div>';
+    document.body.appendChild(box);
+    setTimeout(() => location.reload(), 1200);
+  }, false);
+
   let last = performance.now();
+  let loopErr = 0;
   function frame(now) {
     // A 10fps floor rather than 20: below that the clamp turns a slow device
     // into visible slow motion, and walks that should take seconds take a minute.
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
-    tick(dt);
+    try {
+      tick(dt);
+      loopErr = 0;
+    } catch (e) {
+      // 한 프레임의 예외로 게임 전체가 멈추면 안 된다. 처음 몇 번만 찍고
+      // 넘어간다 — 콘솔을 초당 60줄로 채우는 것은 진단이 아니라 소음이다.
+      if (loopErr < 3) console.error('frame failed', e);
+      loopErr += 1;
+    }
     view.frames++;
     requestAnimationFrame(frame);
   }

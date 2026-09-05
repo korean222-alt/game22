@@ -8,6 +8,7 @@
 import {
   PLATFORMS, MONETIZE, STATS, rankInfo, RANK_UP_FANS, MARKETING,
   researchEffect, TREND_BONUS, TREND_PENALTY, FLOOR_UPKEEP, floorCost,
+  SALE_EVENTS,
 } from './data.js';
 import { traitMult } from './staff.js';
 
@@ -61,6 +62,20 @@ export function releaseGame(project, company, rnd, ctx = {}) {
   // Retention decides how slowly users leave; usability softens the bug drag.
   const decay = Math.min(0.990, money.decay + Math.min(0.050, q.retention / 2000) + res.decay);
 
+  /* ---------- 판매 곡선의 모양 ----------
+     예전에는 출시 주가 최고점이었고 그 뒤로는 내려가기만 했다. 실제로 팔리는
+     물건은 그렇게 움직이지 않는다 — 처음에는 아는 사람만 사고, 입소문이
+     돌면서 몇 주에 걸쳐 올라가고, 정점을 찍은 다음에 식는다. 그래프가
+     그 모양이어야 "지금이 정점인가" 가 볼 만한 질문이 된다.
+
+     그래서 출시 유저는 **정점이 아니라 출발점**이다. launch 는 그 출발점,
+     peakWeek 는 정점이 서는 주차(화제성이 높을수록 빨리 뜨고, 지속성이
+     높을수록 천천히 뜬다), growth 는 상승기의 주당 배율이다. 총 매출이
+     예전과 비슷하게 남도록 출발점을 낮춰서 시작한다. */
+  const peakWeek = Math.max(2, Math.min(7, Math.round(2.4 + q.retention / 260 - q.craze / 520)));
+  const growth = 1.34 + Math.min(0.5, q.craze / 900) + Math.min(0.25, q.social / 1200);
+  const startUsers = Math.max(200, Math.round(users * 0.42));
+
   const arpu = money.arpu * (1 + q.social / 260) * platform.share * (0.9 + rnd() * 0.2);
 
   const rel = {
@@ -77,8 +92,11 @@ export function releaseGame(project, company, rnd, ctx = {}) {
     seriesN: project.seriesN,
     seriesRoot: project.seriesRoot || project.id,
     bugs: project.bugs,
-    users,
-    peakUsers: users,
+    users: startUsers,
+    launchUsers: users,       // 홍보가 끌어온 첫 주의 유저
+    peakUsers: startUsers,
+    peakWeek,
+    growth,
     decay,
     arpu,
     weeks: 0,
@@ -121,20 +139,71 @@ export function releaseGame(project, company, rnd, ctx = {}) {
   return { release: rel, fansGained };
 }
 
-/* One week of a managed title. Called by the sim tick. */
+/* 이번 주의 유저 배율. 정점 전에는 입소문으로 올라가고, 지나면 식는다.
+   상승기의 배율은 정점에 가까워질수록 1 로 수렴하므로 곡선이 뾰족하지 않고
+   봉우리 모양이 된다. */
+export function weekMult(rel) {
+  const peak = rel.peakWeek || 0;
+  if (rel.weeks < peak) {
+    const t = rel.weeks / Math.max(1, peak);          // 0 → 1
+    return 1 + ((rel.growth || 1.4) - 1) * (1 - t * t);
+  }
+  /* 정점을 지나면 식는 속도가 **점점 빨라진다**. 잔존율만 곱하면 지속성이
+     높은 게임은 6개월이 지나도 같은 자리에 붙어 있어서, 그래프에 끝이
+     없다 — 서비스 종료를 고를 이유도, 다음 게임을 낼 이유도 사라진다. */
+  const past = rel.weeks - peak;
+  return Math.max(0.62, rel.decay - Math.min(0.16, past * 0.007));
+}
+
+/* 이번 주에 사건이 붙는가. 정점을 지나기 전에는 좋은 쪽이, 지난 뒤에는
+   나쁜 쪽이 조금 더 잘 걸린다 — 게임이 식어가는 이유가 하나쯤은 보여야 한다.
+   맨 첫 주에는 걸지 않는다. 출시하자마자 "경쟁작 출시" 가 뜨면 홍보를 고른
+   선택이 무엇을 샀는지 읽을 수가 없다. */
+export function rollSaleEvent(rel, rnd) {
+  if (rel.weeks <= 1) return null;
+  const past = rel.weeks > (rel.peakWeek || 0);
+  for (const ev of SALE_EVENTS) {
+    const good = ev.cls !== 'bad';
+    const p = ev.p * (past ? (good ? 0.7 : 1.25) : (good ? 1.2 : 0.7));
+    if (rnd() < p) {
+      const [lo, hi] = ev.mult;
+      const amount = lo + rnd() * (hi - lo);
+      return {
+        id: ev.id, ko: ev.ko, emoji: ev.emoji, cls: ev.cls,
+        pct: Math.round(amount * 100),
+        mult: 1 + amount,
+        users: 1 + amount * (ev.users || 0),
+      };
+    }
+  }
+  return null;
+}
+
+/* One week of a managed title. Called by the sim tick.
+
+   돌려주는 것은 숫자 하나가 아니라 이번 주의 기록이다 — 판매 팝업이 사건을
+   띄우려면 무엇이 일어났는지를 알아야 하고, 매출만 돌려주면 알 길이 없다.
+   `+income` 으로 쓰던 옛 호출부를 위해 valueOf 를 달아 두지 않고, 호출부
+   두 곳을 모두 고쳤다. */
 export function tickRelease(rel, rnd) {
-  if (!rel.managing) return 0;
+  if (!rel.managing) return { income: 0, event: null, users: rel.users };
   rel.weeks += 1;
-  const income = Math.round(rel.users * rel.arpu * 0.7);
+  const ev = rollSaleEvent(rel, rnd);
+  const income = Math.max(0, Math.round(rel.users * rel.arpu * 0.7 * (ev ? ev.mult : 1)));
   rel.earned += income;
   rel.lastIncome = income;
+  rel.lastEvent = ev;
   if (!rel.history) rel.history = [];
-  rel.history.push({ w: rel.weeks, income, users: rel.users });
+  rel.history.push({ w: rel.weeks, income, users: rel.users, event: ev });
   if (rel.history.length > 26) rel.history.shift();
-  // Churn, with a little noise so the curve is not a clean exponential.
-  rel.users = Math.max(0, Math.round(rel.users * rel.decay * (0.97 + rnd() * 0.06)));
-  if (rel.users < 60) rel.managing = false;   // the title has run its course
-  return income;
+  // 다음 주의 유저. 봉우리 곡선에 사건의 흔적과 약간의 잡음을 얹는다.
+  const mult = weekMult(rel) * (ev ? ev.users : 1);
+  rel.users = Math.max(0, Math.round(rel.users * mult * (0.97 + rnd() * 0.06)));
+  rel.peakUsers = Math.max(rel.peakUsers || 0, rel.users);
+  // 정점을 지나고, 유저가 거의 남지 않았을 때만 접는다. 상승기에 60명을
+  // 밑돈다고 접으면 작은 게임은 첫 주에 서비스가 끝난다.
+  if (rel.users < 60 && rel.weeks > (rel.peakWeek || 0)) rel.managing = false;
+  return { income, event: ev, users: rel.users };
 }
 
 /* Research earned by finishing a project. Bigger, better-reviewed games teach

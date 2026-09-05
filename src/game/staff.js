@@ -8,6 +8,7 @@
 import {
   JOBS, JOB_ABILITY, JOB_ROLE, ITEMS, SURNAMES, GIVEN, rankInfo, TRAITS, TRAIT_IDS, GENRES,
   hireDiscount, HP, hpMult, shopItem, GEAR_SLOTS,
+  UPGRADES, UPGRADE_BY_ID, upgradeCost,
 } from './data.js';
 import { SKINS, HAIRS, SHIRTS, PANTS, P } from '../world/palette.js';
 
@@ -102,6 +103,8 @@ export function makeStaff(rnd, jobId, opts = {}) {
     gamesShipped: 0,
     // 장착한 장비 id. 상점에서 사서 가방을 거쳐 여기로 온다.
     gear: [],
+    // 강화 단계. { hp: 3, atk: 1, ... } — 돈으로 사는 영구 강화다.
+    up: {},
   };
   s.salary = Math.round(s.salary * traitMult(s, 'salary'));
   s.hpMax = hpMaxOf(s);
@@ -114,7 +117,57 @@ export function makeStaff(rnd, jobId, opts = {}) {
 export function ability(s, key) {
   const job = JOBS[s.job];
   const growth = 1 + (s.level - 1) * 0.085;
-  return Math.round(job.base[key] * growth * s.talent + (s.bonus[key] || 0) + gearAbility(s, key));
+  return Math.round(job.base[key] * growth * s.talent + (s.bonus[key] || 0)
+    + gearAbility(s, key) + upLevel(s, key) * 5);
+}
+
+/* ---------- 직원 강화 ----------
+   레벨과 장비 위에 얹는 **방향**이다. 체력을 올리면 보스전에서 오래 버티고,
+   공격력을 올리면 세게 치고, 미술을 올리면 그래픽 능력이 오른다. 저장 파일이
+   강화를 모르던 시절 것이면 `up` 이 없으므로 여기서 한 번 감싼다. */
+export function upMap(s) {
+  if (!s.up || typeof s.up !== 'object') s.up = {};
+  return s.up;
+}
+
+export function upLevel(s, id) {
+  const v = upMap(s)[id];
+  return typeof v === 'number' && isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
+}
+
+export function nextUpgradeCost(s, id) {
+  const up = UPGRADE_BY_ID[id];
+  if (!up) return 0;
+  return upgradeCost(up, upLevel(s, id), s.talent || 1);
+}
+
+export function canUpgrade(s, id) {
+  const up = UPGRADE_BY_ID[id];
+  if (!up) return { ok: false, why: '없는 강화' };
+  if (upLevel(s, id) >= up.max) return { ok: false, why: '이미 최대 단계' };
+  return { ok: true, cost: nextUpgradeCost(s, id) };
+}
+
+/* 값은 이미 치렀다고 보고 한 단계 올린다. 돈을 빼는 것은 state 의 몫이다. */
+export function applyUpgrade(s, id) {
+  const c = canUpgrade(s, id);
+  if (!c.ok) return c;
+  const m = upMap(s);
+  m[id] = upLevel(s, id) + 1;
+  if (id === 'hp') syncHp(s);
+  return { ok: true, level: m[id], up: UPGRADE_BY_ID[id] };
+}
+
+/* 강화가 실제로 손에 잡히는 자리들. 전투가 이 셋을 읽는다. */
+export function upDamageMult(s) { return 1 + upLevel(s, 'atk') * 0.07; }
+export function upSpeedMult(s) { return 1 + upLevel(s, 'speed') * 0.05; }
+export function upCritAdd(s) { return upLevel(s, 'crit') * 0.02; }
+
+export function upgradeList(s) {
+  return UPGRADES.map((u) => ({
+    ...u, level: upLevel(s, u.id), cost: nextUpgradeCost(s, u.id),
+    maxed: upLevel(s, u.id) >= u.max,
+  }));
 }
 
 /* ---------- 장비 ----------
@@ -166,7 +219,7 @@ export function unequipGear(s, itemId) {
    않는다는 것이 이 게임의 하한선이다. */
 export function hpMaxOf(s) {
   return Math.round(HP.base + s.level * HP.perLevel + (s.talent || 1) * HP.talent
-    + (s.reincarnations || 0) * HP.perReborn);
+    + (s.reincarnations || 0) * HP.perReborn + upLevel(s, 'hp') * 10);
 }
 
 /* Saves written before staff had health, and any staffer whose level moved,
@@ -218,12 +271,12 @@ export function abilities(s) {
 /* The number every battle damage roll multiplies by: the job's driving ability
    scaled by motivation at the original's +0.5% per point. */
 export function power(s) {
-  return ability(s, JOB_ABILITY[s.job]) * motivationMult(s) * staminaMult(s);
+  return ability(s, JOB_ABILITY[s.job]) * motivationMult(s) * staminaMult(s) * upDamageMult(s);
 }
 
 /* Power ignoring fatigue — what the roster screen shows as the person's ceiling. */
 export function basePower(s) {
-  return ability(s, JOB_ABILITY[s.job]) * motivationMult(s);
+  return ability(s, JOB_ABILITY[s.job]) * motivationMult(s) * upDamageMult(s);
 }
 
 export function motivationMult(s) { return 1 + s.motivation * 0.005; }

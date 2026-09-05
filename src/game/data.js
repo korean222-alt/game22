@@ -265,22 +265,30 @@ export const PLATFORMS = [
   { id: 'own', ko: '자체 플랫폼', rank: 20, fans: 2.10, hp: 7.50, cost: 800000, share: 2.00 },
 ];
 
-/* ---------- monetisation ---------- */
+/* ---------- monetisation ----------
+   `cost`/`stam` 은 개발비와 착수 스태미나의 배율이다. 부분유료는 상점·과금
+   서버·운영 도구를 같이 만들어야 하고, 장기운영은 거기에 몇 년치 콘텐츠
+   계획까지 얹힌다 — 매출 상한이 높은 만큼 만드는 값도 비싸야, 어느 모델로
+   낼지가 실제로 고민이 된다. 예전에는 셋이 같은 값이라 부분유료가 언제나
+   정답이었다. */
 export const MONETIZE = [
   {
     id: 'paid', ko: '유료', rank: 0,
     desc: '출시 직후 수익이 크다. 유저 수는 적다.',
     users: 0.55, arpu: 4.2, decay: 0.880,
+    cost: 1.00, stam: 0,
   },
   {
     id: 'f2p', ko: '부분유료', rank: 4,
-    desc: '유저가 많이 모이고 매출 상한이 높다.',
-    users: 1.60, arpu: 1.0, decay: 0.935,
+    desc: '유저가 많이 모이고 매출 상한이 높다. 개발비가 더 든다.',
+    users: 1.60, arpu: 1.30, decay: 0.940,
+    cost: 1.70, stam: 2,
   },
   {
     id: 'f2p_long', ko: '부분유료 (장기운영)', rank: 12,
-    desc: '초반은 느리지만 오래 간다. 랭크 12부터.',
-    users: 1.30, arpu: 1.35, decay: 0.972,
+    desc: '초반은 느리지만 오래 간다. 개발비가 가장 비싸다. 랭크 12부터.',
+    users: 1.30, arpu: 1.95, decay: 0.976,
+    cost: 2.60, stam: 4,
   },
 ];
 
@@ -593,10 +601,72 @@ export const RAID = {
 
 /* 개발 착수에 드는 스태미나. 야심이 클수록 비싸다 — 이것이 "게임을 만들 때
    쓰는 스태미나" 의 본체이고, 배틀 중에는 한 점도 들지 않는다. */
-export function devStamina(platform, grade, seriesN = 1) {
+export function devStamina(platform, grade, seriesN = 1, monetize = null) {
   const p = platform ? platform.rank : 0;
-  return Math.max(2, Math.round(2 + p * 0.22 + (grade - 1) * 0.7 + (seriesN - 1) * 0.5));
+  const m = monetize ? (monetize.stam || 0) : 0;
+  return Math.max(2, Math.round(2 + p * 0.22 + (grade - 1) * 0.7 + (seriesN - 1) * 0.5 + m));
 }
+
+/* ---------- 탈진 ----------
+   팀이 전원 쓰러지면 그 단계는 거기서 끝난다. 예전에는 "다음 주로 넘기기" 로
+   체력을 공짜로 채워 계속 팰 수 있었고, 그러면 상점의 음식을 살 이유가
+   사라졌다 — 시간은 무한하고 밥은 돈이 드니까. 이제 쓰러지면 남은 체력만큼
+   그 단계를 **못 만든 채로** 마감하고 다음 보스로 넘어간다. 밥은 그 손해를
+   막는 값이 된다.
+
+   `grace` 는 마감이 자동으로 걸리기까지의 시간이다. 그 사이에 가방에서 밥을
+   먹이면 팀이 일어서고 마감은 취소된다. */
+export const EXHAUST = {
+  grace: 8,          // 자동 마감까지의 시간(초)
+  qualityLoss: 0.62, // 못 만든 비율 × 이 값만큼 완성도가 깎인다
+  minQuality: 0.34,  // 완성도의 하한 — 전부 뻗어도 게임은 나온다
+  bugs: 9,           // 못 만든 비율 × 이 개수만큼 버그가 더 붙는다
+};
+
+/* ---------- 직원 강화 ----------
+   레벨은 아이템(돈+스태미나)으로 오르고, 경험치는 게임을 내면 오른다. 그
+   둘은 "이 사람이 전체적으로 얼마나 크는가" 만 정한다. 강화는 그 위에 얹는
+   **방향**이다: 같은 프로그래머라도 체력을 올려 오래 버티게 할지, 공격력을
+   올려 세게 치게 할지, 미술을 올려 임팩트를 밀게 할지가 갈린다.
+
+   비용은 단계마다 가파르게 오른다(grow). 돈이 남아도는 후반에도 한 사람을
+   전부 만렙으로 채우는 것이 아니라 누구를 어느 방향으로 키울지 고르게 하려면
+   이 지수가 계수보다 중요하다. */
+export const UPGRADES = [
+  { id: 'hp', ko: '체력 단련', emoji: '💪', unit: '최대 체력 +10', max: 12, base: 6800, grow: 1.42 },
+  { id: 'atk', ko: '공격력 훈련', emoji: '⚔️', unit: '데미지 +7%', max: 12, base: 9600, grow: 1.46 },
+  { id: 'speed', ko: '속도 훈련', emoji: '⚡', unit: '공격 속도 +5%', max: 8, base: 12000, grow: 1.52 },
+  { id: 'crit', ko: '번뜩임 훈련', emoji: '✨', unit: '번뜩임 확률 +2%p', max: 8, base: 14000, grow: 1.52 },
+  { id: 'plan', ko: '기획 강의', emoji: '📐', unit: '기획 +5', max: 10, base: 7200, grow: 1.40, ability: 'plan' },
+  { id: 'prog', ko: '개발 강의', emoji: '⌨️', unit: '개발 +5', max: 10, base: 7200, grow: 1.40, ability: 'prog' },
+  { id: 'graph', ko: '미술 강의', emoji: '🎨', unit: '그래픽 +5', max: 10, base: 7200, grow: 1.40, ability: 'graph' },
+  { id: 'sound', ko: '사운드 강의', emoji: '🎧', unit: '사운드 +5', max: 10, base: 7200, grow: 1.40, ability: 'sound' },
+  { id: 'social', ko: '소셜 강의', emoji: '📡', unit: '소셜 +5', max: 10, base: 7200, grow: 1.40, ability: 'social' },
+];
+export const UPGRADE_BY_ID = Object.fromEntries(UPGRADES.map((u) => [u.id, u]));
+
+/* 다음 한 단계의 값. 재능이 높은 사람은 조금 더 비싸다 — 될 사람에게
+   몰아주는 선택에도 값이 붙어야 선택이 된다. */
+export function upgradeCost(up, level, talent = 1) {
+  return Math.round(up.base * Math.pow(up.grow, level) * (0.85 + (talent || 1) * 0.15));
+}
+
+/* ---------- 판매 중 사건 ----------
+   출시한 게임의 매출이 매주 같은 비율로 식기만 하면 그래프를 볼 이유가 없다.
+   주마다 낮은 확률로 사건이 하나 붙어서, 유저가 튀거나 빠진다 — 연예인이
+   방송에서 언급하면 그 주에 40% 가 더 팔리고, 경쟁작이 나오면 그만큼 빠진다.
+   `users` 는 그 사건이 유저 수 자체에 남기는 흔적이다(일시적 매출 배율과
+   달리 다음 주에도 이어진다). */
+export const SALE_EVENTS = [
+  { id: 'celeb', ko: '연예인 광고', emoji: '📺', p: 0.045, mult: [0.30, 0.75], users: 0.5, cls: 'great' },
+  { id: 'stream', ko: '인기 스트리머 방송', emoji: '🎥', p: 0.045, mult: [0.20, 0.50], users: 0.45, cls: 'good' },
+  { id: 'sns', ko: 'SNS 입소문', emoji: '💬', p: 0.050, mult: [0.12, 0.35], users: 0.55, cls: 'good' },
+  { id: 'store', ko: '앱마켓 추천', emoji: '🏅', p: 0.035, mult: [0.25, 0.60], users: 0.6, cls: 'great' },
+  { id: 'update', ko: '대형 업데이트', emoji: '🧩', p: 0.040, mult: [0.15, 0.32], users: 0.4, cls: 'good' },
+  { id: 'server', ko: '서버 점검', emoji: '🛠️', p: 0.030, mult: [-0.32, -0.12], users: 0.3, cls: 'bad' },
+  { id: 'rival', ko: '경쟁작 출시', emoji: '⚔️', p: 0.035, mult: [-0.38, -0.15], users: 0.7, cls: 'bad' },
+  { id: 'review', ko: '악평 확산', emoji: '💢', p: 0.025, mult: [-0.30, -0.10], users: 0.6, cls: 'bad' },
+];
 
 /* ---------- 상점 ----------
    가방에 넣어두고 필요할 때 쓴다. 음식은 체력, 음료는 회사 스태미나,

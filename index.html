@@ -116,14 +116,18 @@
   <div id="aLog"></div>
   <div id="aFlash"></div>
 
-  <!-- 팀 전원이 쓰러졌을 때. 아레나를 나가지 않고 여기서 해결한다. -->
+  <!-- 팀 전원이 쓰러졌을 때. 여기서 밥을 먹여 일으키지 못하면 이 단계는
+       남은 체력째로 마감되고 다음 보스로 넘어간다. -->
   <div id="aRest">
     <div class="arc card">
       <div class="art">팀 전원 탈진</div>
-      <p class="arp">아무도 더는 못 칩니다. 밥을 먹이거나, 한 주를 넘겨 쉬게 하세요.</p>
+      <p class="arp" id="aRestMsg">아무도 더는 못 칩니다. 밥을 먹이지 않으면 이 단계는 이대로 마감됩니다.</p>
+      <div class="arbar"><div class="arbarf" id="aRestBar"></div></div>
+      <div class="arcount" id="aRestCount">—</div>
       <div id="aRestTray"></div>
       <div class="arow">
-        <button class="btn primary" id="aWeek">다음 주로 넘기기</button>
+        <button class="btn primary" id="aWrap">이대로 마감</button>
+        <button class="btn" id="aRestBag">🎒 가방</button>
         <button class="btn" id="aRestOut">사무실로</button>
       </div>
     </div>
@@ -134,6 +138,7 @@
     <div id="aTray"></div>
     <div class="arow">
       <button class="btn sm" id="aSpeed">⏩ 1배속</button>
+      <button class="btn sm" id="aFold">👥 팀 접기</button>
       <button class="btn sm" id="aBag">🎒 가방</button>
       <button class="btn sm" id="aOut">🏢 사무실로</button>
     </div>
@@ -162,6 +167,11 @@
   <div id="tray"></div>
 </div>
 
+<!-- ══ 오른쪽 세로 레일 ══
+     개발 점수판·실시간 판매·판매 현황이 같은 자리를 두고 다퉜다. 하나의
+     세로 흐름에 넣으면 셋이 동시에 떠도 서로를 가리지 않는다. -->
+<div id="rrail">
+
 <!-- ══ 개발 진행 상황 — 화면 오른쪽에 붙는 실시간 점수판 ══ -->
 <div id="prog" class="card">
   <div class="pgh"><b id="pgTitle">—</b><span id="pgTurn"></span></div>
@@ -169,6 +179,9 @@
   <div id="pgStats"></div>
   <div class="pgrow"><span>🐞 예상 버그</span><b id="pgBugs">0</b></div>
   <div class="pgrow"><span>✨ 번뜩임</span><b id="pgCrit">0</b></div>
+  <!-- 탈진으로 마감한 단계가 있을 때만 뜬다. 완성도가 깎인 사실을
+       결과창에서 처음 알게 되면 그건 통보지 판단 재료가 아니다. -->
+  <div class="pgrow warn" id="pgComp" hidden><span>😵 완성도</span><b>100%</b></div>
   <div class="pgt" id="pgTeam"></div>
 </div>
 
@@ -181,12 +194,14 @@
 </div>
 
 <!-- ══ 실시간 판매 ══
-     출시하면 15초 동안 여기서 판다. 막대가 한 주씩 서고 자금이 눈앞에서
-     오른다. 다 팔면 정산으로 바뀌고, 확인을 눌러야 다음 게임을 만들 수 있다. -->
+     출시하면 화면 오른쪽 카드에서 15초 동안 판다. 막대가 한 주씩 서고
+     자금이 눈앞에서 오른다. 화면을 막지 않으므로 그동안 기획서를 뽑든
+     직원을 키우든 상관없다 — 다 팔리면 정산 버튼이 나온다. -->
 <div id="salerun">
   <div class="src card">
     <div class="srh"><span class="srtag" id="srTag">🔴 실시간 판매</span><b id="srTitle">—</b></div>
     <div class="srbig"><span id="srTotal">₩0</span><i id="srWeek">출시</i></div>
+    <div class="srev" id="srEv"></div>
     <div class="srchart">
       <div class="srbars" id="srBars"></div>
       <svg class="srline" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -198,6 +213,8 @@
     <button class="btn primary wide" id="srOk">정산 확인</button>
   </div>
 </div>
+
+</div><!-- /#rrail -->
 
 <!-- ══ 룰렛 ══
      기획서와 소재를 뽑을 때 돌아간다. 결과는 이미 정해져 있고, 이건 그

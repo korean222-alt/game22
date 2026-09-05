@@ -240,7 +240,15 @@ await step('출시하면 판매 패널이 뜬다', async () => {
   if (!r.ok) throw new Error(r.why);
   await page.evaluate(() => { window.__ui.exitArena(); });
   await page.waitForTimeout(200);
-  await page.evaluate(() => { window.__game.nextWeek(); window.__ui.renderAll(); });
+  // 실시간 판매가 도는 동안 그 게임은 판매 현황 목록에서 빠져 있다 — 같은
+  // 숫자가 레일에 두 번 서지 않게. 정산을 확인한 뒤부터 목록에 올라온다.
+  await page.evaluate(() => {
+    const g = window.__game;
+    if (g.sales) g.closeSalesRun();
+    g.nextWeek();
+    window.__ui.closeModal();
+    window.__ui.renderAll();
+  });
   await page.waitForTimeout(300);
   const s = await state();
   if (!s.salesVisible) throw new Error('판매 패널이 안 뜸');

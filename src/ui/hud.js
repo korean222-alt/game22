@@ -15,17 +15,18 @@ import {
   comboScore, comboLabel, rankInfo, RANK_UP_FANS, researchEffect,
   STARTUP_GRANT, hireDiscount,
   SHOP, SHOP_KINDS, GEAR_SLOTS, BOSSES, bossFor, BOSS_STAGES, BOSS_PHASES, RAID, OVERTIME,
+  EXHAUST,
 } from '../game/data.js';
 import {
   FURNITURE, FURNITURE_BY_ID, FURNITURE_CATS, RESELL, comfortLabel,
 } from '../game/furniture.js';
 import {
   abilities, power, role, itemCost, trainStamina, traitsOf, expToNext,
-  hpRatio, isTired, isSpent, gearOf, canEquip,
+  hpRatio, isTired, isSpent, gearOf, canEquip, upgradeList,
 } from '../game/staff.js';
 import {
   turnCost, projectQuality, projectedQuality, ideaHp, raidRounds, devStaminaCost,
-  currentStage, raidProgress, ensureStages, strikePeriod,
+  currentStage, raidProgress, ensureStages, strikePeriod, devCostOf, completion,
 } from '../game/project.js';
 import { monsterFor, monsterForStage } from '../game/monsters.js';
 import { rewardText } from '../game/events.js';
@@ -139,16 +140,22 @@ export class UI {
     // ── 아레나 ──
     go('aOut', () => this.exitArena());
     go('aRestOut', () => this.exitArena());
-    go('aWeek', () => {
-      // 아레나 안에서 한 주를 넘긴다. 주간 회복이 팀을 일으키므로 여기가
-      // 탈진에서 빠져나오는 가장 짧은 길이다.
-      if (this.g.pendingEvent) { this.exitArena(); this._eventFlow(); return; }
-      const r = this.g.nextWeek();
-      if (r && r.ok === false) { this.toast(r.why || '지금은 넘길 수 없습니다', 'bad'); return; }
+    /* 탈진 화면의 "이대로 마감". 예전 자리에는 "다음 주로 넘기기" 가 있었고,
+       그것이 체력을 공짜로 채워 줬다 — 시간이 무한하면 밥은 아무도 안 산다.
+       이제 남은 체력째로 이 단계를 접고 다음 보스로 넘어간다. */
+    go('aWrap', () => {
+      const r = this.g.wrapUpStage();
+      if (!r.ok) { this.toast(r.why || '지금은 마감할 수 없습니다', 'bad'); return; }
       this.g.save();
       this.renderArena(true);
     });
     go('aBag', () => { this.exitArena(); this.openTab('bag'); });
+    go('aRestBag', () => { this.exitArena(); this.openTab('bag'); });
+    // 사람이 많으면 파티 카드가 보스를 가린다. 접을 수 있어야 한다.
+    go('aFold', () => {
+      const on = document.body.classList.toggle('party-fold');
+      $('aFold').textContent = on ? '👥 팀 펴기' : '👥 팀 접기';
+    });
     go('aSpeed', () => {
       const i = RAID.speeds.indexOf(this.speed);
       this.speed = RAID.speeds[(i + 1) % RAID.speeds.length];
@@ -169,6 +176,7 @@ export class UI {
     document.body.classList.add('arena');
     this.speed = this.speed || 1;
     $('aSpeed').textContent = `⏩ ${this.speed}배속`;
+    $('aFold').textContent = document.body.classList.contains('party-fold') ? '👥 팀 펴기' : '👥 팀 접기';
     this._logs = [];
     $('aLog').innerHTML = '';
     this.view.enterArena(g.project);
@@ -180,6 +188,9 @@ export class UI {
     if (!document.body.classList.contains('arena')) return;
     document.body.classList.remove('arena');
     document.body.classList.remove('rest');
+    // 사무실로 나가면 탈진 유예도 멈춘다. 보이지 않는 곳에서 마감이 걸리면
+    // 돌아왔을 때 무슨 일이 있었는지 알 방법이 없다.
+    if (this.g.project) this.g.project.exhaustT = 0;
     // 사무실로 돌아가면 전투는 멈춘다. 보이지 않는 곳에서 체력이 녹으면
     // 돌아왔을 때 무슨 일이 있었는지 알 방법이 없다.
     this.g.pauseBattle(true);
@@ -204,7 +215,26 @@ export class UI {
     // 프레임을 잡아먹고, 정작 3D 가 끊긴다.
     this._acc = (this._acc || 0) + dt;
     if (this._acc >= 0.05) { this._acc = 0; this.renderArena(); }
-    document.body.classList.toggle('rest', r && r.blocked === 'exhausted');
+    const resting = !!(r && r.blocked === 'exhausted');
+    document.body.classList.toggle('rest', resting);
+    if (resting) this.renderRest(r.left);
+  }
+
+  /* 탈진 화면의 카운트다운. 남은 시간 안에 밥을 먹여 한 명이라도 일으키면
+     마감은 취소되고 전투가 이어진다. */
+  renderRest(left) {
+    const t = Math.max(0, left === undefined ? EXHAUST.grace : left);
+    const bar = $('aRestBar'), cnt = $('aRestCount');
+    if (bar) bar.style.width = ((t / EXHAUST.grace) * 100).toFixed(1) + '%';
+    if (cnt) cnt.textContent = `${t.toFixed(1)}초 후 이 단계를 이대로 마감합니다`;
+    const p = this.g.project;
+    const msg = $('aRestMsg');
+    if (msg && p) {
+      const leftHp = Math.round((p.hp / Math.max(1, p.hpMax)) * 100);
+      msg.innerHTML = `아무도 더는 못 칩니다. 지금 밥을 먹이지 않으면
+        <b>남은 체력 ${leftHp}%</b> 를 못 만든 채로 마감하고 다음 보스로 넘어갑니다.`;
+    }
+    this.renderTray($('aRestTray'));
   }
 
   _arenaEvent(ev) {
@@ -224,7 +254,11 @@ export class UI {
     } else if (ev.kind === 'revive') {
       this.arenaLog(`${ev.name} 복귀`, 'good');
     } else if (ev.kind === 'exhausted') {
-      this.arenaLog('팀 전원 탈진 — 다음 주로 넘기거나 밥을 먹이세요', 'bad');
+      this.arenaLog('팀 전원 탈진 — 밥을 먹이지 않으면 이대로 마감됩니다', 'bad');
+      this.renderRest(ev.grace);
+    } else if (ev.kind === 'forfeit') {
+      this.arenaLog(`${ev.name} — ${ev.left}% 를 남긴 채 마감`, 'bad');
+      this._flash();
     }
   }
 
@@ -282,6 +316,10 @@ export class UI {
     const box = $('aParty');
     if (!this._aParty || this._aParty !== p.team.join(',')) {
       this._aParty = p.team.join(',');
+      // 카드 크기는 인원수가 정한다. 여덟 명 이상이면 이름과 체력만 남긴다 —
+      // 그 아래는 보스가 서 있어야 하는 자리다.
+      box.dataset.n = String(p.team.length);
+      box.classList.toggle('many', p.team.length >= 8);
       box.innerHTML = '';
       this._aCards = new Map();
       for (const id of p.team) {
@@ -348,7 +386,7 @@ export class UI {
      누르기 전까지는 새 게임을 만들 수 없다. */
   renderSaleRun(s) {
     const body = document.body;
-    if (!s) { body.classList.remove('selling', 'settled'); return; }
+    if (!s) { body.classList.remove('selling', 'settled'); this._srEv = null; return; }
     body.classList.add('selling');
     body.classList.toggle('settled', !!s.ended);
 
@@ -359,6 +397,20 @@ export class UI {
     $('srWeek').textContent = s.ended
       ? `${s.done}주 누적 매출`
       : `${s.done} / ${s.weeks}주차${last ? ` · 이번 주 ${won(last.income)}` : ''}`;
+
+    /* 판매 중에 터진 사건. 최근 두 개만 남긴다 — 카드가 좁고, 지난주 일보다
+       이번 주에 무슨 일이 있었는지가 중요하다. */
+    const evBox = $('srEv');
+    const shown = (s.events || []).slice(-2);
+    const sig = shown.map((e) => `${e.at}:${e.id}`).join('|');
+    if (evBox && this._srEv !== sig) {
+      const fresh = this._srEv !== null && this._srEv !== undefined;
+      this._srEv = sig;
+      evBox.innerHTML = shown.map((e, i) =>
+        `<div class="se ${e.cls === 'bad' ? 'bad' : ''}${fresh && i === shown.length - 1 ? ' fresh' : ''}">
+           <span>${e.emoji}</span><span>${e.ko}</span>
+           <span class="p">${e.pct > 0 ? '+' : ''}${e.pct}%</span></div>`).join('');
+    }
 
     const bars = $('srBars');
     if (bars.children.length !== s.weeks) {
@@ -372,7 +424,10 @@ export class UI {
       const h = pt ? Math.max(3, (pt.income / peak) * 100) : 0;
       const bar2 = bars.children[i];
       bar2.style.height = h + '%';
-      bar2.className = pt && i === s.points.length - 1 && !s.ended ? 'now' : '';
+      // 사건이 붙은 주는 색이 다르다. 튄 막대에 이유가 붙어 있어야 한다.
+      const evCls = pt && pt.event ? (pt.event.cls === 'bad' ? 'dn' : 'up') : '';
+      const now = pt && i === s.points.length - 1 && !s.ended ? 'now' : '';
+      bar2.className = [evCls, now].filter(Boolean).join(' ');
       if (pt) pts.push(`${((i + 0.5) / s.weeks) * 100},${100 - h}`);
     }
     $('srPoly').setAttribute('points', pts.join(' '));
@@ -382,7 +437,7 @@ export class UI {
     stat.innerHTML =
       `<div><span class="k">현재 유저</span><span class="v">${num(users)}</span></div>
        <div><span class="k">초기 유저</span><span class="v">${num(s.users)}</span></div>
-       <div><span class="k">팬 획득</span><span class="v">+${num(s.fans)}</span></div>`;
+       <div><span class="k">팬</span><span class="v">+${num(s.fans)}</span></div>`;
   }
 
   /* ---------- 룰렛 ----------
@@ -498,11 +553,14 @@ export class UI {
     // 테스트 도구가 랭크를 한 번에 여러 단 올릴 때는 축하 팝업을 접는다.
     // 네 장을 연달아 닫게 만드는 것은 확인이 아니라 벌칙이다.
     if (type === 'rank' && !this._quietRank) this.showRankUp(payload);
-    // 판매는 15초 동안 열 번 온다. 그때마다 사이드 패널을 통째로 다시 지으면
-    // 그 비용이 그대로 프레임에서 나간다 — 화면에 필요한 것은 판매 카드뿐이다.
+    // 판매는 십몇 초 동안 열두 번 온다. 그때마다 사이드 패널을 통째로 다시
+    // 지으면 그 비용이 그대로 프레임에서 나간다 — 화면에 필요한 것은 판매 카드뿐이다.
     if (type === 'sales') {
       this.renderSaleRun(payload);
       this.renderHUD();
+      // 판매가 시작·종료되는 순간에만 옆의 목록을 다시 짓는다. 주차마다
+      // 다시 지으면 한 번의 판매에 사이드 패널을 열두 번 새로 세우게 된다.
+      if (!payload || payload.done === 0 || payload.ended) this.renderSales();
       if (!payload) this.renderAll();
       return;
     }
@@ -696,10 +754,18 @@ export class UI {
 
   _finishedFlow(p) {
     if (!p) return;
+    /* 결과 → 홍보 → 출시는 게임 하나에 **한 번만** 흐른다.
+
+       디버그도 'finished' 를 다시 쏘기 때문에, 예전에는 버그를 한 번 잡을
+       때마다 완성 팝업이 다시 뜨고 그 확인이 다시 홍보 선택으로 이어졌다.
+       홍보에서 "조금 더 다듬기" 를 고르고 디버그하면 또 홍보가 뜨는
+       무한 반복이 정확히 이것이다. 이미 흘린 게임이면 패널만 새로 그린다. */
+    if (this._finFlowed === p.id) { this.renderPanel(); return; }
     // 회의 연출이 돌고 있으면 결과창을 **버리지 말고 미룬다**. 예전에는 그냥
     // return 이라서, 마지막 카드 회의와 완성이 같은 순간에 겹치면 완성 화면이
     // 통째로 사라지고 게임이 아무 말 없이 멈춘 것처럼 보였다.
     if (this.busy) { clearTimeout(this._finT); this._finT = setTimeout(() => this._finishedFlow(p), 400); return; }
+    this._finFlowed = p.id;
     this.view.celebrate(p.team);
     // 마지막 보스를 잡았으면 세트장에 남아 있을 이유가 없다. 결과 → 홍보 →
     // 출시가 여기서 한 줄로 이어진다.
@@ -717,6 +783,9 @@ export class UI {
     if (!g.project) return;
     const r = g.devTurn();
     if (!r.ok) this.toast(r.why, 'bad');
+    // 전원이 쓰러졌으면 결정할 것이 있다. 전투 화면에서 밥을 먹이거나
+    // 이대로 마감하거나 — 사무실에 선 채로 정할 일이 아니다.
+    if (r.exhausted && !this.inArena()) this.enterArena();
     g.save();
   }
 
@@ -734,14 +803,17 @@ export class UI {
   renderSales() {
     const g = this.g, box = $('sgList');
     if (!box) return;
-    const live = g.managed();
+    // 실시간 판매 카드가 돌고 있는 게임은 여기서 빼놓는다. 같은 게임의
+    // 같은 숫자가 레일에 두 번 서면 어느 쪽이 지금인지 알 수가 없다.
+    const running = g.sales && !g.sales.ended ? g.sales.id : null;
+    const live = g.managed().filter((r) => r.id !== running);
     document.body.classList.toggle('has-sales', live.length > 0);
     if (!live.length) { box.innerHTML = ''; this._salesSig = null; return; }
 
     const week = live.reduce((a, r) => a + (r.lastIncome || 0), 0);
     $('sgWeek').textContent = `이번 주 ${won(week)}`;
 
-    const sig = live.map((r) => `${r.id}:${r.weeks}:${r.users}:${r.lastIncome || 0}`).join('|');
+    const sig = live.map((r) => `${r.id}:${r.weeks}:${r.users}:${r.lastIncome || 0}:${r.lastEvent ? r.lastEvent.id : ''}`).join('|');
     if (this._salesSig === sig) return;
     this._salesSig = sig;
 
@@ -749,26 +821,47 @@ export class UI {
     for (const r of live) {
       const hist = r.history || [];
       const peak = Math.max(1, ...hist.map((h) => h.income));
-      const bars = hist.slice(-14).map((h, i, arr) =>
-        `<i class="${i === arr.length - 1 ? 'now' : ''}" style="height:${Math.max(6, h.income / peak * 100)}%"></i>`).join('');
-      // 이 속도로 식으면 몇 주 더 팔리는가. decay 는 주당 잔존율이다.
+      const bars = hist.slice(-14).map((h, i, arr) => {
+        const cls = [h.event ? (h.event.cls === 'bad' ? 'dn' : 'up') : '', i === arr.length - 1 ? 'now' : '']
+          .filter(Boolean).join(' ');
+        return `<i class="${cls}" style="height:${Math.max(6, h.income / peak * 100)}%"></i>`;
+      }).join('');
+      // 이 속도로 식으면 몇 주 더 팔리는가. 정점 전이면 아직 오르는 중이라
+      // 남은 주를 세는 것 자체가 뜻이 없다 — 그때는 '상승 중' 이라고 쓴다.
+      const rising = (r.peakWeek || 0) > r.weeks;
       const left = r.decay > 0 && r.decay < 1
         ? Math.max(0, Math.ceil(Math.log(60 / Math.max(1, r.users)) / Math.log(r.decay)))
         : 99;
       const drop = hist.length >= 2
         ? Math.round((1 - hist[hist.length - 1].income / Math.max(1, hist[hist.length - 2].income)) * 100)
         : 0;
+      const ev = r.lastEvent;
+      const tail = rising ? '📈 상승 중'
+        : left < 90 ? `약 ${left}주 남음` : '판매 시작';
       const c = el('div', 'sgc',
         `<div class="sgt">「${r.title}」</div>
          <div class="sgv">${won(r.lastIncome || 0)}</div>
          <div class="sgn"><span>${r.weeks}주차</span><span>유저 ${num(r.users)}</span></div>
          ${bars ? `<div class="spark">${bars}</div>` : ''}
-         <div class="sgend">${drop > 0 ? `지난주 대비 −${drop}% · ` : ''}${left < 90 ? `약 ${left}주 남음` : '판매 시작'}</div>`);
+         ${ev ? `<div class="sgd">${ev.emoji} ${ev.ko} ${ev.pct > 0 ? '+' : ''}${ev.pct}%</div>` : ''}
+         <div class="sgend">${drop > 0 ? `지난주 대비 −${drop}% · ` : ''}${tail}</div>`);
       box.appendChild(c);
     }
   }
 
+  /* 오른쪽 레일에 카드가 한 장이라도 서 있는가. 튜토리얼 줄이 그만큼
+     비켜서야 판매 카드의 머리말이 덮이지 않는다. */
+  renderRail() {
+    const g = this.g;
+    const running = g.sales && !g.sales.ended ? g.sales.id : null;
+    // 상태에서 바로 읽는다. body 클래스를 보면 renderHUD 가 먼저 도는
+    // 프레임에서 한 박자 늦게 반영된다.
+    const on = !!g.project || !!g.sales || g.managed().some((r) => r.id !== running);
+    document.body.classList.toggle('has-rail', on && !this.inArena());
+  }
+
   renderHUD() {
+    this.renderRail();
     const c = this.g.company;
     const set = (id, v) => {
       const e = $(id);
@@ -921,6 +1014,15 @@ export class UI {
 
     $('pgBugs').textContent = pg.bugs + '개';
     $('pgCrit').textContent = pg.crits + '회';
+    // 탈진으로 마감한 단계가 있으면 그 손해를 개발 중에도 계속 보여준다.
+    // 결과창에서 처음 알게 되면 그건 통보지 판단 재료가 아니다.
+    const cpRow = $('pgComp');
+    if (cpRow) {
+      const on = (p.forfeits || 0) > 0;
+      cpRow.hidden = !on;
+      if (on) cpRow.querySelector('b').textContent =
+        `${Math.round(completion(p) * 100)}% · 마감 ${p.forfeits}회`;
+    }
 
     const team = $('pgTeam');
     team.innerHTML = '';
@@ -1325,6 +1427,30 @@ export class UI {
       d.appendChild(b);
     }
 
+    /* ---------- 직원 강화 ----------
+       레벨은 "전체적으로 얼마나 크는가" 만 정한다. 강화는 그 위에 얹는
+       **방향**이다 — 같은 프로그래머라도 체력을 올려 오래 버티게 할지,
+       공격력을 올려 세게 치게 할지, 미술을 올려 임팩트를 밀게 할지. */
+    d.appendChild(el('h4', 'sec', '강화 (돈으로 사는 영구 강화)'));
+    const ups = el('div', 'upg');
+    for (const u of upgradeList(s)) {
+      const row = el('div', 'upr' + (u.maxed ? ' max' : ''));
+      row.innerHTML = `<span class="e">${u.emoji}</span>
+        <span class="m"><span class="t">${u.ko} <i>${u.level}/${u.max}</i></span>
+        <span class="d">${u.unit}</span></span>`;
+      const b = el('button', 'btn sm', u.maxed ? 'MAX' : won(u.cost));
+      b.disabled = u.maxed || g.company.money < u.cost;
+      b.onclick = (ev) => {
+        ev.stopPropagation();
+        const r = g.upgradeStaff(s.id, u.id);
+        if (!r.ok) this.toast(r.why, 'bad');
+        g.save();
+      };
+      row.appendChild(b);
+      ups.appendChild(row);
+    }
+    d.appendChild(ups);
+
     d.appendChild(el('h4', 'sec', `아이템 지급 (스태미나 -${trainStamina(s)})`));
     for (const item of ITEMS) {
       const price = itemCost(s, item);
@@ -1449,7 +1575,12 @@ export class UI {
     box.appendChild(el('h4', 'sec', '수익 모델'));
     for (const m of g.availableMonetize()) {
       const it = el('div', 'item click' + (d.monetizeId === m.id ? ' on' : ''));
-      it.innerHTML = `<div class="n">${m.ko}</div><div class="d">${m.desc}</div>`;
+      // 매출 상한이 높은 모델은 만드는 값도 비싸다. 그 값을 고르는 자리에서
+      // 바로 보여주지 않으면, 착수 버튼 위의 개발비가 왜 뛰었는지 알 수 없다.
+      const extra = m.cost && m.cost > 1
+        ? `<span class="j">개발비 ×${m.cost.toFixed(2)}${m.stam ? ` · 스태미나 +${m.stam}` : ''}</span>` : '';
+      it.innerHTML = `<div class="t"><span class="n">${m.ko}</span>${extra}</div>
+        <div class="d">${m.desc}</div>`;
       it.onclick = () => { d.monetizeId = m.id; this.renderPanel(); };
       box.appendChild(it);
     }
@@ -1490,13 +1621,16 @@ export class UI {
       box.appendChild(it);
     }
 
-    const plat = PLATFORMS.find((p) => p.id === d.platformId);
-    const gradeMult = 0.75 + pr.grade * 0.25;
     const seriesOf = d.seriesOfId ? g.releases.find((r) => r.id === d.seriesOfId) : null;
-    const seriesMult = 1 + (seriesOf ? seriesOf.seriesN : 0) * 0.55;
     const seriesN = seriesOf ? seriesOf.seriesN + 1 : 1;
-    const cost = Math.round(plat.cost * gradeMult * seriesMult);
-    const stam = devStaminaCost({ platformId: d.platformId, grade: pr.grade, seriesN });
+    // 미리보기와 착수가 **같은 함수**를 본다. 각자 계산하면 수익 모델의
+    // 배율이 한쪽에만 붙어 숫자가 어긋난다.
+    const cost = devCostOf({
+      platformId: d.platformId, grade: pr.grade, seriesN, monetizeId: d.monetizeId,
+    });
+    const stam = devStaminaCost({
+      platformId: d.platformId, grade: pr.grade, seriesN, monetizeId: d.monetizeId,
+    });
     box.appendChild(el('div', 'row', `<span>개발비</span><b>${won(cost)}</b>`));
     // 스태미나는 여기서만 나간다. 전투는 직원들의 체력으로 한다.
     box.appendChild(el('div', 'row',
@@ -1618,7 +1752,8 @@ export class UI {
     const hungry = g.staff.filter((s) => p.team.includes(s.id) && isTired(s));
     if (hungry.length) {
       box.appendChild(el('div', 'item',
-        `<div class="d" style="color:var(--warn)">지친 팀원 ${hungry.length}명 — 체력이 낮으면 데미지와 품질이 같이 떨어집니다. 상점의 음식으로 회복하세요.</div>`));
+        `<div class="d" style="color:var(--warn)">지친 팀원 ${hungry.length}명 — 체력이 낮으면 데미지와 품질이 같이 떨어집니다.
+         <b>전원이 쓰러지면 그 단계는 남은 체력째로 마감</b>되고 완성도가 그만큼 깎입니다. 상점의 음식으로 회복하세요.</div>`));
       const go = el('button', 'btn wide sm', '가방 열기');
       go.onclick = () => this.openTab('bag');
       box.appendChild(go);
@@ -1636,6 +1771,10 @@ export class UI {
     }
     box.appendChild(el('div', 'row', `<span>평론가</span><b>${p.critics.join(' · ')} = ${p.criticTotal} / 40</b>`));
     box.appendChild(el('div', 'row', `<span>버그</span><b>${p.bugs}개</b>`));
+    if (p.forfeits) {
+      box.appendChild(el('div', 'row',
+        `<span>완성도</span><b class="warn">${Math.round((p.completion || 1) * 100)}% · 탈진 마감 ${p.forfeits}회</b>`));
+    }
     if (p.hallOfFame) box.appendChild(el('div', 'row', '<span>명예의 전당</span><b class="stars">등재</b>'));
 
     // Buggy builds review worse; the panel says how many points are on the
@@ -1671,8 +1810,8 @@ export class UI {
     const rl = el('button', 'btn primary wide', '출시하기');
     rl.onclick = () => {
       const r = g.release();
-      // 출시 결과는 15초 판매가 끝나고 정산을 확인할 때 뜬다. 여기서 바로
-      // 띄우면 판매 화면 뒤에 깔린 채로 읽히지 않는다.
+      // 출시 결과는 실시간 판매가 끝나고 정산을 확인할 때 뜬다. 여기서 바로
+      // 띄우면 아직 팔리고 있는 게임의 결산을 먼저 읽게 된다.
       if (!r.ok) this.toast(r.why, 'bad');
       g.save();
     };
@@ -2337,6 +2476,8 @@ export class UI {
        <div class="row"><span>궁합</span><b>×${p.combo.toFixed(2)}</b></div>
        <div class="row"><span>버그</span><b>${p.bugs}개</b></div>
        <div class="row"><span>번뜩임</span><b>${p.crits}회</b></div>
+       ${p.forfeits ? `<div class="row"><span>탈진 마감</span><b class="warn">${p.forfeits}회 · 완성도 ${Math.round((p.completion || 1) * 100)}%</b></div>
+       <div class="verd bad">팀이 쓰러진 채로 마감한 단계가 있다. 그만큼 덜 만들어졌다.</div>` : ''}
        <p style="color:var(--dim);font-size:11px;margin-top:9px">다음은 홍보입니다. 확인을 누르면 바로 고릅니다.</p>`,
       null, () => this.showMarketing());
   }
@@ -2383,7 +2524,8 @@ export class UI {
       `<div class="row"><span>홍보</span><b>${mk.ko}</b></div>
        <div class="row"><span>홍보비</span><b>${price ? won(price) : '무료'}</b></div>
        <p style="color:var(--dim);font-size:11px;margin-top:8px">
-         출시하면 <b>15초간 실시간 판매</b>가 시작되고, 그동안에는 새 게임을 만들 수 없습니다.</p>`,
+         출시하면 화면 오른쪽에서 <b>실시간 판매</b>가 시작됩니다. 화면을 막지 않으므로
+         그동안에도 기획서를 뽑거나 직원을 키울 수 있습니다.</p>`,
       [
         {
           name: '출시하기',
