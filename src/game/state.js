@@ -14,7 +14,7 @@ import {
   STARTUP_GRANT, rescueAmount, rescueMorale,
   SHOP, shopItem, shopFor, GEAR_SLOTS, OVERTIME, DEX_SECTIONS, HP, bossFor, RAID,
   CONTENT_BY_ID, CONTENT_BASE, CONTENT_GACHA_COST, CONTENT_GACHA_DUP,
-  EXHAUST,
+  EXHAUST, ABILITY_KO, starText, starOf,
 } from './data.js';
 import {
   FURNITURE_BY_ID, RESELL, comfortScore, comfortLevel, footprint, overlaps,
@@ -25,7 +25,7 @@ import {
   reincarnate, canReincarnate, addMotivation, abilities, power, role, seedIds, itemCost,
   trainStamina, gainExp, expToNext, syncHp, healHp, hpRatio, drainHp,
   equipGear, unequipGear, canEquip, gearOf, isTired, isSpent, basePower,
-  canUpgrade, applyUpgrade, upgradeList,
+  canUpgrade, applyUpgrade, upgradeList, giveGift,
 } from './staff.js';
 import {
   generateProposal, startProject, battleTurn, battleTick, chooseCard, finishProject, debug,
@@ -686,12 +686,27 @@ export class Game {
         complete = true;
       } else if (ev.kind === 'down') {
         this.note(`${ev.name} 이(가) 쓰러졌다.`, 'bad');
+      } else if (ev.kind === 'loot') {
+        this._takeLoot(ev);
       }
     }
     this.emit('battle', { project: p, events });
     if (complete) this._completeProject();
     else this.emit('project', p);
     return { cleared, complete };
+  }
+
+  /* 보물상자 하나를 가방에 넣는다. 로그는 별을 그대로 찍는다 — ★5 가
+     떴다는 사실이 흘러가는 한 줄로 묻히면 상자를 열 이유가 없어진다. */
+  _takeLoot(ev) {
+    const item = shopItem(ev.itemId);
+    if (!item) return;
+    this.company.bag[item.id] = this.bagCount(item.id) + 1;
+    this.dexSee('items', item.id);
+    this.note(`🎁 보물상자! ${starText(ev.star)} ${item.emoji} ${item.ko} — 가방에 넣었다.`,
+      ev.star >= 4 ? 'good' : 'info');
+    this.emit('bag', { id: item.id, n: 1, loot: true });
+    this.checkTasks();
   }
 
   pickCard(optionId) {
@@ -1048,6 +1063,18 @@ export class Game {
       p.critBonus = (p.critBonus || 0) + item.crit;
       msg = `${item.emoji} ${item.ko} — 번뜩임 확률 +${Math.round(item.crit * 100)}%p`;
       this.emit('project', p);
+    } else if (item.kind === 'gift') {
+      /* 선물. 경험치와 능력치가 같이 오른다 — 레벨은 다섯 축을 고루
+         올리고, 물건이 가리키는 한 축만 추가로 더 오른다. */
+      const st = this.staff.find((x) => x.id === staffId);
+      if (!st) return { ok: false, why: '누구에게 줄지 고르세요' };
+      const r = giveGift(st, item, c.rank);
+      if (!r.ok) return r;
+      const lvl = r.levels ? ` · Lv.${r.level} (+${r.levels})` : '';
+      const ab = r.ability && r.gain ? ` · ${ABILITY_KO[r.ability]} +${r.gain}` : '';
+      const waste = r.wasted ? ' (최대 레벨, 경험치는 버려졌다)' : '';
+      msg = `${item.emoji} ${st.name} — ${item.ko} · EXP +${r.exp}${lvl}${ab}${waste}`;
+      this.emit('staff', null);
     } else if (item.all) {
       // 전 직원 대상: 피자 한 판, 다트 보드.
       let touched = 0;
@@ -1618,6 +1645,8 @@ export class Game {
         pj.bugExtra = pj.bugExtra || 0;
         pj.critBonus = pj.critBonus || 0;
         pj.attacks = pj.attacks || 0;
+        pj.lootThisStage = pj.lootThisStage || 0;
+        pj.lootTotal = pj.lootTotal || 0;
       }
       // Ids must not collide with anything the save already used.
       seedIds(Math.max(0, ...g.staff.map((s) => s.id), ...g.candidates.map((s) => s.id)) + 1);

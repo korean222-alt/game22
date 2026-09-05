@@ -262,13 +262,41 @@ export const UNKNOWN_COMBO = { ko: '미지의 조합', cls: 'ok' };
    같은 방향을 가리킨다. `share` 는 그 시장의 구매력(ARPU 배율)이다.
    어느 플랫폼으로 낼지가 고민이 되려면 넓이와 구매력이 따로 보여야 한다. */
 export const PLATFORMS = [
-  { id: 'feature', ko: '피처폰', rank: 0, fans: 0.55, hp: 0.62, cost: 20000, share: 0.55, market: 4_200_000, note: '누구나 가지고 있지만 지갑은 얇다.' },
-  { id: 'smart', ko: '스마트폰', rank: 2, fans: 1.00, hp: 1.60, cost: 55000, share: 1.00, market: 21_000_000, note: '표준. 넓이도 구매력도 무난하다.' },
-  { id: 'sns', ko: 'SNS 플랫폼', rank: 5, fans: 1.35, hp: 2.60, cost: 120000, share: 1.25, market: 34_000_000, note: '입소문이 가장 빠르게 퍼진다.' },
-  { id: 'tablet', ko: '태블릿', rank: 9, fans: 1.20, hp: 3.20, cost: 190000, share: 1.10, market: 27_000_000, note: '오래 붙잡고 하는 게임에 맞는다.' },
-  { id: 'console', ko: '콘솔 크로스', rank: 14, fans: 1.60, hp: 5.00, cost: 380000, share: 1.45, market: 52_000_000, note: '한 명이 쓰는 돈이 크다. 개발비도 크다.' },
-  { id: 'own', ko: '자체 플랫폼', rank: 20, fans: 2.10, hp: 7.50, cost: 800000, share: 2.00, market: 96_000_000, note: '수수료가 없다. 회사가 곧 시장이다.' },
+  { id: 'feature', ko: '피처폰', rank: 0, fans: 0.80, hp: 0.62, cost: 9000, share: 0.55, market: 6_100_000, note: '누구나 가지고 있지만 지갑은 얇다.' },
+  { id: 'smart', ko: '스마트폰', rank: 2, fans: 1.00, hp: 1.60, cost: 42000, share: 1.00, market: 21_000_000, note: '표준. 넓이도 구매력도 무난하다.' },
+  { id: 'sns', ko: 'SNS 플랫폼', rank: 5, fans: 1.35, hp: 2.60, cost: 95000, share: 1.25, market: 34_000_000, note: '입소문이 가장 빠르게 퍼진다.' },
+  { id: 'tablet', ko: '태블릿', rank: 9, fans: 1.20, hp: 3.20, cost: 160000, share: 1.10, market: 27_000_000, note: '오래 붙잡고 하는 게임에 맞는다.' },
+  { id: 'console', ko: '콘솔 크로스', rank: 14, fans: 1.60, hp: 5.00, cost: 340000, share: 1.45, market: 52_000_000, note: '한 명이 쓰는 돈이 크다. 개발비도 크다.' },
+  { id: 'own', ko: '자체 플랫폼', rank: 20, fans: 2.10, hp: 7.50, cost: 720000, share: 2.00, market: 96_000_000, note: '수수료가 없다. 회사가 곧 시장이다.' },
 ];
+
+/* ---------- 시장 도달 ----------
+   출시한 게임이 몇 명에게 가 닿는가. 이 세 숫자가 이 게임의 수지타산을
+   통째로 정한다.
+
+   예전에는 도달이 품질에 **정비례**했고, 그 위에 팬 배율(최대 9배)과
+   ARPU 의 소셜 보정(최대 2.5배)이 다시 품질을 따라 곱해졌다. 결과적으로
+   매출이 품질의 세제곱처럼 움직여서, 데뷔작은 개발비의 13% 를 벌고
+   3년차는 개발비의 100배를 벌었다. 개발비가 고정인데 매출만 그렇게
+   벌어지면 초반은 아무리 잘해도 적자고 후반은 아무렇게나 해도 흑자다 —
+   어느 쪽도 선택이 되지 않는다.
+
+     base  아무리 못 만들어도 이만큼은 팔린다. 데뷔작이 개발비를 넘길 수
+           있게 하는 바닥이고, 후반에는 무시할 만한 크기가 된다.
+     k·p   품질이 끌어오는 몫. p 가 1보다 작아서 품질이 두 배면 도달은
+           1.5배쯤 는다 — 잘 만들수록 이득이지만 자릿수가 바뀌지는 않는다.
+
+   품질 10 → 5,000명 / 120 → 11,000명 / 560 → 23,000명. 다섯 배 폭이다.
+   나머지 차이는 플랫폼·수익모델·팬이 만든다. */
+export const REACH = { base: 3400, k: 190, p: 0.62 };
+
+/* 팬이 끌어오는 배율. 팬은 출시할 때마다 늘기만 하므로 상한이 없으면
+   스스로를 먹고 자란다 — 유저가 팬을 낳고 팬이 유저를 낳는다. */
+export const FAN_PULL = { cap: 4.0, per: 0.34, scale: 5000 };
+
+/* ARPU 의 소셜 보정. 소셜이 높으면 한 사람이 더 쓴다. 예전 값(260)은
+   후반에 2.5배까지 붙어서 품질의 제곱 효과를 만들던 두 번째 자리였다. */
+export const ARPU_SOCIAL = 700;
 
 /* ---------- monetisation ----------
    `cost`/`stam` 은 개발비와 착수 스태미나의 배율이다. 부분유료는 상점·과금
@@ -280,7 +308,7 @@ export const MONETIZE = [
   {
     id: 'paid', ko: '유료', rank: 0,
     desc: '출시 직후 수익이 크다. 유저 수는 적다.',
-    users: 0.55, arpu: 4.2, decay: 0.880,
+    users: 0.72, arpu: 4.2, decay: 0.892,
     cost: 1.00, stam: 0,
   },
   {
@@ -448,10 +476,14 @@ export function researchCost(id, level) {
    you can win users with quality, or with money, and the trade should be legible. */
 export const MARKETING = [
   { id: 'none', ko: '홍보 없음', cost: 0, users: 1.0, fans: 1.0, desc: '입소문에 맡긴다' },
-  { id: 'sns', ko: 'SNS 바이럴', cost: 0.35, users: 1.30, fans: 1.15, desc: '가성비가 좋다' },
-  { id: 'influencer', ko: '인플루언서', cost: 0.9, users: 1.65, fans: 1.35, desc: '화제성이 크게 오른다' },
-  { id: 'tv', ko: 'TV / 옥외 광고', cost: 2.2, users: 2.20, fans: 1.70, desc: '비싸지만 확실하다' },
+  { id: 'sns', ko: 'SNS 바이럴', cost: 0.55, users: 1.26, fans: 1.15, desc: '가성비가 좋다' },
+  { id: 'influencer', ko: '인플루언서', cost: 1.4, users: 1.52, fans: 1.35, desc: '화제성이 크게 오른다' },
+  { id: 'tv', ko: 'TV / 옥외 광고', cost: 3.0, users: 1.90, fans: 1.70, desc: '비싸지만 확실하다' },
 ];
+/* 값이 세다. 홍보는 **잘 팔릴 게임에 거는 내기**여야 한다 — 개발비의
+   몇 배가 나가므로, 매출이 개발비의 다섯 배쯤 나오는 게임에 걸면 남고
+   두 배밖에 못 내는 게임에 걸면 손해다. 예전에는 어느 게임에 걸어도
+   무조건 이득이라 고민할 자리가 아니었다. */
 /* Cost is a multiple of the project's development cost, so promotion always
    scales with the size of what you are promoting. */
 export function marketingCost(mk, devCost) {
@@ -707,53 +739,147 @@ export const SALE_EVENTS = [
   { id: 'review', ko: '악평 확산', emoji: '💢', p: 0.025, mult: [-0.30, -0.10], users: 0.6, cls: 'bad' },
 ];
 
+/* ---------- 성급 ----------
+   상점의 모든 물건에 ★1~★5 가 붙는다. 별은 두 가지를 한꺼번에 말한다:
+   얼마나 비싼가, 그리고 **보물상자에서 얼마나 안 나오는가**. 같은 🍰 라도
+   ★3 이면 흔하고 ★5 짜리 장비는 평생 몇 번 못 본다.
+
+   별이 왜 필요한가: 물건이 상점에만 있으면 가격표가 곧 가치라서 고를 것이
+   없다. 상자에서 나오기 시작하면 "무엇이 나왔는가" 가 그 자체로 사건이
+   되고, 그러려면 등급이 눈에 보여야 한다. */
+export const STAR_MAX = 5;
+export const starText = (n) => '★'.repeat(Math.max(0, Math.min(STAR_MAX, n || 1)));
+
+/* 능력치의 한국어 이름. 선물이 무엇을 올리는지 화면에 적을 때 쓴다. */
+export const ABILITY_KO = {
+  plan: '기획', prog: '개발', graph: '그래픽', sound: '사운드', social: '소셜',
+};
+
+/* ---------- 선물 ----------
+   직원에게 주면 **경험치와 능력치**가 오르는 음식·물건. 원작의 육성
+   아이템을 그대로 옮긴 자리다.
+
+   레벨은 다섯 능력치를 고루 올리고, 선물은 그 위에 **한 쪽만** 더 밀어
+   준다. 그래픽 담당에게 화집을 주면 그래픽이, 사운드 담당에게 LP 를 주면
+   사운드가 오른다 — 같은 직업 두 명이 다르게 자라는 자리가 여기다.
+
+   별이 값과 효과를 같이 정한다. 표에는 이름·이모지·별·올릴 능력치만 적고
+   숫자는 GIFT_TIER 가 준다: 물건 하나를 추가할 때 밸런스를 다시 계산할
+   필요가 없어야 표가 늘어난다. */
+export const GIFT_TIER = {
+  1: { price: 1600, exp: 70, gain: 1.2, mot: 0, rank: 1 },
+  2: { price: 5200, exp: 210, gain: 2.4, mot: 1, rank: 1 },
+  3: { price: 15000, exp: 620, gain: 4.5, mot: 1, rank: 2 },
+  4: { price: 44000, exp: 1700, gain: 8, mot: 2, rank: 5 },
+  5: { price: 120000, exp: 4400, gain: 13, mot: 3, rank: 9 },
+};
+
+const GIFT_BASE = [
+  ['comic', '만화책', '📚', 1, 'plan'],
+  ['gagdvd', '개그 DVD', '📀', 2, 'plan'],
+  ['novel', '설정집 원서', '📖', 3, 'plan'],
+  ['artfilm', '거장 감독 전집', '🎞️', 4, 'plan'],
+  ['museum', '해외 미술관 초대권', '🎫', 5, 'plan'],
+
+  ['snackbar', '초코바', '🍫', 1, 'prog'],
+  ['techmag', '기술 잡지', '📰', 2, 'prog'],
+  ['algobook', '알고리즘 명저', '📗', 3, 'prog'],
+  ['devcon', '개발자 컨퍼런스 티켓', '🎟️', 4, 'prog'],
+  ['retropc', '전설의 8비트 PC', '🖲️', 5, 'prog'],
+
+  ['sketchpad', '스케치북', '✏️', 1, 'graph'],
+  ['artbook', '화집', '🖼️', 2, 'graph'],
+  ['pigment', '고급 물감 세트', '🎨', 3, 'graph'],
+  ['figurine', '한정판 원형 피규어', '🗿', 4, 'graph'],
+  ['origart', '거장의 원화', '🏞️', 5, 'graph'],
+
+  ['earbuds', '이어폰', '🎧', 1, 'sound'],
+  ['lp', '희귀 LP', '💿', 2, 'sound'],
+  ['harmonica', '수제 하모니카', '🪗', 3, 'sound'],
+  ['concert', '오케스트라 초대권', '🎼', 4, 'sound'],
+  ['maestro', '명장의 바이올린', '🎻', 5, 'sound'],
+
+  ['sticker', '스티커 팩', '🏷️', 1, 'social'],
+  ['phonecase', '한정 폰케이스', '📱', 2, 'social'],
+  ['drone', '촬영용 드론', '🛸', 3, 'social'],
+  ['fanmeet', '팬미팅 초대권', '💌', 4, 'social'],
+  ['satellite', '개인 위성 회선', '🛰️', 5, 'social'],
+
+  /* 능력치를 가리지 않는 것들. 누구에게 줘도 손해가 없어서 상자에서
+     나왔을 때 "쓸 데가 없다" 가 되지 않는다. */
+  ['teaset', '따뜻한 차 세트', '🍵', 1, null],
+  ['lunchbox', '엄마표 도시락', '🍲', 2, null],
+  ['massage', '마사지 이용권', '💆', 3, null],
+  ['resort', '리조트 숙박권', '🏝️', 4, null],
+  ['worldtrip', '세계일주 항공권', '✈️', 5, null],
+];
+
+/* 표를 실제 상점 항목으로 편다. 능력치가 없는 선물은 경험치가 조금 더 많다 —
+   방향이 없는 대신 총량으로 갚는다. */
+const GIFTS = GIFT_BASE.map(([id, ko, emoji, star, ability]) => {
+  const t = GIFT_TIER[star];
+  const exp = Math.round(t.exp * (ability ? 1 : 1.45));
+  return {
+    id: 'g_' + id, ko, kind: 'gift', emoji, star,
+    price: Math.round(t.price * (ability ? 1 : 1.2)),
+    rank: t.rank, exp, gain: ability ? t.gain : 0, ability, mot: t.mot,
+    desc: (ability ? `${ABILITY_KO[ability]} UP · ` : '전 능력 성장 · ')
+      + `EXP +${exp}${t.mot ? ` · 의욕 +${t.mot}` : ''}`,
+  };
+});
+
 /* ---------- 상점 ----------
    가방에 넣어두고 필요할 때 쓴다. 음식은 체력, 음료는 회사 스태미나,
-   장난감은 의욕, 장비는 직원의 능력을 영구히 올린다.
+   장난감은 의욕, 선물은 직원의 경험치와 능력치, 장비는 직원에게 장착하는
+   영구 강화다.
 
-   장비가 이 시스템의 핵심이다. 사운드 담당에게 피아노를 사주면 사운드
-   능력치가 오르고, 그 사람이 개발 배틀에서 밀어 올리는 품질 축(화제성·
-   임팩트)의 상승폭까지 같이 오른다 — 직원마다 특색이 생긴다. */
+   장비와 선물이 이 시스템의 핵심이다. 사운드 담당에게 피아노를 사주면
+   사운드 능력치가 오르고, 그 사람이 개발 배틀에서 밀어 올리는 품질 축
+   (화제성·임팩트)의 상승폭까지 같이 오른다 — 직원마다 특색이 생긴다. */
 export const SHOP = [
   /* 음식 — 체력 회복 */
-  { id: 'onigiri', ko: '삼각김밥', kind: 'food', emoji: '🍙', price: 1400, rank: 1, hp: 30, desc: '체력 30 회복' },
-  { id: 'banana', ko: '바나나', kind: 'food', emoji: '🍌', price: 2000, rank: 1, hp: 42, desc: '체력 42 회복' },
-  { id: 'ramen', ko: '컵라면', kind: 'food', emoji: '🍜', price: 3200, rank: 1, hp: 60, desc: '체력 60 회복' },
-  { id: 'bento', ko: '도시락', kind: 'food', emoji: '🍱', price: 6400, rank: 2, hp: 100, desc: '체력 100 회복' },
-  { id: 'cake', ko: '조각 케이크', kind: 'food', emoji: '🍰', price: 9000, rank: 3, hp: 130, mot: 1, desc: '체력 130 회복 · 의욕 +1' },
-  { id: 'pizza', ko: '피자 한 판', kind: 'food', emoji: '🍕', price: 22000, rank: 4, hp: 9999, all: true, desc: '전 직원 체력 완전 회복' },
+  { id: 'onigiri', ko: '삼각김밥', kind: 'food', emoji: '🍙', star: 1, price: 1400, rank: 1, hp: 30, desc: '체력 30 회복' },
+  { id: 'banana', ko: '바나나', kind: 'food', emoji: '🍌', star: 1, price: 2000, rank: 1, hp: 42, desc: '체력 42 회복' },
+  { id: 'ramen', ko: '컵라면', kind: 'food', emoji: '🍜', star: 2, price: 3200, rank: 1, hp: 60, desc: '체력 60 회복' },
+  { id: 'bento', ko: '도시락', kind: 'food', emoji: '🍱', star: 2, price: 6400, rank: 2, hp: 100, desc: '체력 100 회복' },
+  { id: 'cake', ko: '조각 케이크', kind: 'food', emoji: '🍰', star: 3, price: 9000, rank: 3, hp: 130, mot: 1, desc: '체력 130 회복 · 의욕 +1' },
+  { id: 'pizza', ko: '피자 한 판', kind: 'food', emoji: '🍕', star: 4, price: 22000, rank: 4, hp: 9999, all: true, desc: '전 직원 체력 완전 회복' },
 
   /* 음료 — 스태미나 회복 (다음 주까지 기다리지 않는 길) */
-  { id: 'cancoffee', ko: '캔커피', kind: 'drink', emoji: '☕', price: 4200, rank: 1, stam: 2, desc: '스태미나 +2' },
-  { id: 'energy', ko: '에너지 드링크', kind: 'drink', emoji: '🧃', price: 11000, rank: 2, stam: 5, desc: '스태미나 +5' },
-  { id: 'beans', ko: '스페셜티 원두', kind: 'drink', emoji: '🫖', price: 30000, rank: 5, stam: 12, desc: '스태미나 +12' },
+  { id: 'cancoffee', ko: '캔커피', kind: 'drink', emoji: '☕', star: 1, price: 4200, rank: 1, stam: 2, desc: '스태미나 +2' },
+  { id: 'energy', ko: '에너지 드링크', kind: 'drink', emoji: '🧃', star: 2, price: 11000, rank: 2, stam: 5, desc: '스태미나 +5' },
+  { id: 'beans', ko: '스페셜티 원두', kind: 'drink', emoji: '🫖', star: 4, price: 30000, rank: 5, stam: 12, desc: '스태미나 +12' },
 
   /* 장난감 — 의욕 */
-  { id: 'figure', ko: '피규어', kind: 'toy', emoji: '🧸', price: 14000, rank: 1, mot: 3, desc: '의욕 +3' },
-  { id: 'handheld', ko: '휴대용 게임기', kind: 'toy', emoji: '🎮', price: 30000, rank: 2, mot: 6, desc: '의욕 +6' },
-  { id: 'darts', ko: '다트 보드', kind: 'toy', emoji: '🎯', price: 46000, rank: 3, mot: 2, all: true, desc: '전 직원 의욕 +2' },
+  { id: 'figure', ko: '피규어', kind: 'toy', emoji: '🧸', star: 2, price: 14000, rank: 1, mot: 3, desc: '의욕 +3' },
+  { id: 'handheld', ko: '휴대용 게임기', kind: 'toy', emoji: '🎮', star: 3, price: 30000, rank: 2, mot: 6, desc: '의욕 +6' },
+  { id: 'darts', ko: '다트 보드', kind: 'toy', emoji: '🎯', star: 3, price: 46000, rank: 3, mot: 2, all: true, desc: '전 직원 의욕 +2' },
+
+  /* 선물 — 경험치와 능력치 (표에서 펴진다) */
+  ...GIFTS,
 
   /* 도구 — 그 자리에서 쓰는 소모품 */
-  { id: 'debugkit', ko: '디버그 킷', kind: 'tool', emoji: '🧰', price: 18000, rank: 2, bugs: 7, desc: '완성작 버그 7개 즉시 수정' },
-  { id: 'clover', ko: '네잎클로버', kind: 'tool', emoji: '🍀', price: 26000, rank: 3, crit: 0.12, desc: '개발 중인 팀의 번뜩임 확률 +12%p (그 게임 동안)' },
+  { id: 'debugkit', ko: '디버그 킷', kind: 'tool', emoji: '🧰', star: 3, price: 18000, rank: 2, bugs: 7, desc: '완성작 버그 7개 즉시 수정' },
+  { id: 'clover', ko: '네잎클로버', kind: 'tool', emoji: '🍀', star: 3, price: 26000, rank: 3, crit: 0.12, desc: '개발 중인 팀의 번뜩임 확률 +12%p (그 게임 동안)' },
 
   /* 장비 — 직원에게 장착하는 영구 강화 (한 사람당 3칸) */
-  { id: 'notebook', ko: '아이디어 노트', kind: 'gear', emoji: '📓', price: 42000, rank: 1, ability: 'plan', gain: 6, axis: { impact: 0.08 }, desc: '기획 +6 · 임팩트 +8%' },
-  { id: 'strategyboard', ko: '전략 보드', kind: 'gear', emoji: '🗂️', price: 120000, rank: 4, ability: 'plan', gain: 12, axis: { impact: 0.13, craze: 0.06 }, desc: '기획 +12 · 임팩트 +13% · 화제성 +6%' },
-  { id: 'keyboard', ko: '기계식 키보드', kind: 'gear', emoji: '⌨️', price: 48000, rank: 1, ability: 'prog', gain: 7, axis: { usability: 0.12 }, desc: '개발 +7 · 조작성 +12%' },
-  { id: 'workstation', ko: '듀얼 워크스테이션', kind: 'gear', emoji: '🖥️', price: 150000, rank: 4, ability: 'prog', gain: 13, axis: { usability: 0.17, craze: 0.05 }, desc: '개발 +13 · 조작성 +17%' },
-  { id: 'tablet', ko: '액정 타블렛', kind: 'gear', emoji: '🖊️', price: 52000, rank: 1, ability: 'graph', gain: 8, axis: { impact: 0.14 }, desc: '그래픽 +8 · 임팩트 +14%' },
-  { id: 'colormon', ko: '컬러 캘리브레이션 모니터', kind: 'gear', emoji: '🖼️', price: 160000, rank: 5, ability: 'graph', gain: 14, axis: { impact: 0.19 }, desc: '그래픽 +14 · 임팩트 +19%' },
-  { id: 'mic', ko: '콘덴서 마이크', kind: 'gear', emoji: '🎤', price: 45000, rank: 1, ability: 'sound', gain: 6, axis: { craze: 0.09 }, desc: '사운드 +6 · 화제성 +9%' },
-  { id: 'piano', ko: '업라이트 피아노', kind: 'gear', emoji: '🎹', price: 128000, rank: 3, ability: 'sound', gain: 10, axis: { craze: 0.13, impact: 0.11 }, desc: '사운드 +10 · 화제성 +13% · 임팩트 +11%' },
-  { id: 'synth', ko: '아날로그 신디사이저', kind: 'gear', emoji: '🎛️', price: 220000, rank: 6, ability: 'sound', gain: 15, axis: { craze: 0.18, impact: 0.13 }, desc: '사운드 +15 · 화제성 +18% · 임팩트 +13%' },
-  { id: 'camera', ko: '방송용 카메라', kind: 'gear', emoji: '📷', price: 56000, rank: 2, ability: 'social', gain: 8, axis: { social: 0.12 }, desc: '소셜 +8 · 소셜 +12%' },
-  { id: 'rack', ko: '전용 서버 랙', kind: 'gear', emoji: '🗄️', price: 210000, rank: 6, ability: 'social', gain: 14, axis: { social: 0.15, retention: 0.16 }, desc: '소셜 +14 · 소셜 +15% · 지속성 +16%' },
+  { id: 'notebook', ko: '아이디어 노트', kind: 'gear', emoji: '📓', star: 2, price: 42000, rank: 1, ability: 'plan', gain: 6, axis: { impact: 0.08 }, desc: '기획 +6 · 임팩트 +8%' },
+  { id: 'strategyboard', ko: '전략 보드', kind: 'gear', emoji: '🗂️', star: 4, price: 120000, rank: 4, ability: 'plan', gain: 12, axis: { impact: 0.13, craze: 0.06 }, desc: '기획 +12 · 임팩트 +13% · 화제성 +6%' },
+  { id: 'keyboard', ko: '기계식 키보드', kind: 'gear', emoji: '⌨️', star: 2, price: 48000, rank: 1, ability: 'prog', gain: 7, axis: { usability: 0.12 }, desc: '개발 +7 · 조작성 +12%' },
+  { id: 'workstation', ko: '듀얼 워크스테이션', kind: 'gear', emoji: '🖥️', star: 4, price: 150000, rank: 4, ability: 'prog', gain: 13, axis: { usability: 0.17, craze: 0.05 }, desc: '개발 +13 · 조작성 +17%' },
+  { id: 'tablet', ko: '액정 타블렛', kind: 'gear', emoji: '🖊️', star: 2, price: 52000, rank: 1, ability: 'graph', gain: 8, axis: { impact: 0.14 }, desc: '그래픽 +8 · 임팩트 +14%' },
+  { id: 'colormon', ko: '컬러 캘리브레이션 모니터', kind: 'gear', emoji: '🖼️', star: 5, price: 160000, rank: 5, ability: 'graph', gain: 14, axis: { impact: 0.19 }, desc: '그래픽 +14 · 임팩트 +19%' },
+  { id: 'mic', ko: '콘덴서 마이크', kind: 'gear', emoji: '🎤', star: 2, price: 45000, rank: 1, ability: 'sound', gain: 6, axis: { craze: 0.09 }, desc: '사운드 +6 · 화제성 +9%' },
+  { id: 'piano', ko: '업라이트 피아노', kind: 'gear', emoji: '🎹', star: 4, price: 128000, rank: 3, ability: 'sound', gain: 10, axis: { craze: 0.13, impact: 0.11 }, desc: '사운드 +10 · 화제성 +13% · 임팩트 +11%' },
+  { id: 'synth', ko: '아날로그 신디사이저', kind: 'gear', emoji: '🎛️', star: 5, price: 220000, rank: 6, ability: 'sound', gain: 15, axis: { craze: 0.18, impact: 0.13 }, desc: '사운드 +15 · 화제성 +18% · 임팩트 +13%' },
+  { id: 'camera', ko: '방송용 카메라', kind: 'gear', emoji: '📷', star: 3, price: 56000, rank: 2, ability: 'social', gain: 8, axis: { social: 0.12 }, desc: '소셜 +8 · 소셜 +12%' },
+  { id: 'rack', ko: '전용 서버 랙', kind: 'gear', emoji: '🗄️', star: 5, price: 210000, rank: 6, ability: 'social', gain: 14, axis: { social: 0.15, retention: 0.16 }, desc: '소셜 +14 · 소셜 +15% · 지속성 +16%' },
 ];
 
 export const GEAR_SLOTS = 3;
 export const SHOP_KINDS = [
   { id: 'food', ko: '음식', hint: '직원 체력을 회복한다' },
+  { id: 'gift', ko: '선물', hint: '직원에게 주면 경험치와 능력치가 오른다' },
   { id: 'drink', ko: '음료', hint: '스태미나를 그 자리에서 채운다' },
   { id: 'toy', ko: '장난감', hint: '의욕을 올린다' },
   { id: 'tool', ko: '도구', hint: '개발과 디버그를 돕는다' },
@@ -762,6 +888,44 @@ export const SHOP_KINDS = [
 
 export function shopItem(id) { return SHOP.find((i) => i.id === id) || null; }
 export function shopFor(rank) { return SHOP.filter((i) => rank >= (i.rank || 1)); }
+export function starOf(item) { return Math.max(1, Math.min(STAR_MAX, (item && item.star) || 1)); }
+
+/* ---------- 보물상자 ----------
+   보스를 때리는 동안 상자가 떨어진다. 이것이 개발 배틀을 **보는** 이유다:
+   예전에는 자동 전투를 켜 놓고 다른 탭을 봐도 결과가 같았고, 그러면 화면
+   한가운데의 싸움이 로딩 바와 다를 게 없었다.
+
+     perStrike   한 번 칠 때 상자가 떨어질 확률
+     onClear     보스 한 마리를 잡으면 확정으로 주는 개수
+     perStage    한 스테이지에서 나올 수 있는 상한 (긴 싸움이 곧 이득이
+                 되면 일부러 약한 팀으로 오래 끄는 쪽이 최적이 된다)
+     weights     ★1..★5 의 기본 분포
+     luck        야심(strain)이 별 분포를 오른쪽으로 미는 세기. ★5 대작을
+                 만들면 상자에서도 큰 것이 나온다. */
+export const TREASURE = {
+  perStrike: 0.010,
+  onClear: 1,
+  perStage: 3,
+  weights: [54, 27, 12, 5, 2],
+  luck: 0.7,
+};
+
+/* 별 하나를 뽑는다. `push` 는 0..1 — 클수록 높은 별이 잘 나온다. */
+export function rollStar(rnd, push = 0) {
+  const w = TREASURE.weights.map((v, i) => v * Math.pow(1 + Math.max(0, push) * TREASURE.luck, i));
+  const total = w.reduce((a, b) => a + b, 0);
+  let r = rnd() * total;
+  for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) return i + 1; }
+  return 1;
+}
+
+/* 그 별에서 나올 수 있는 물건들. 랭크 제한은 상자에 걸지 않는다 — 상자는
+   "지금 살 수 없는 것이 나오는" 자리여야 열어 볼 맛이 난다. */
+export function lootPool(star) {
+  const s = Math.max(1, Math.min(STAR_MAX, star));
+  const pool = SHOP.filter((i) => starOf(i) === s);
+  return pool.length ? pool : SHOP.filter((i) => starOf(i) <= s);
+}
 
 /* ---------- 야근 ----------
    스태미나를 기다리지 않고 사는 길. 돈과 직원 체력·의욕을 지불한다.

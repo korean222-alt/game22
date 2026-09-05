@@ -171,6 +171,10 @@ await step('출시 결과에 한 줄 평이 붙는다', async () => {
   const notes = await page.evaluate(() => {
     const g = window.__game;
     g.release();
+    // 실시간 판매를 한 번에 흘려 보낸다. 안 그러면 판매가 안 끝나서
+    // 다음 게임에 착수할 수 없다 (브라우저에서는 플레이어가 정산을 누른다).
+    for (let i = 0; i < 40 && g.sales && !g.sales.ended; i++) g.salesTick(2);
+    if (g.sales) g.closeSalesRun();
     const r = g.releases[0];
     window.__ui.showRelease(r);
     return (r.notes || []).map((n) => n.cls + ':' + n.ko);

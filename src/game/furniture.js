@@ -63,16 +63,24 @@ export const FURNITURE = [
     id: 'kitDesk', ko: '원목 책상 세트', cat: 'work', price: 15000, seats: true, comfort: 3,
     w: 5.4, d: 4.6, kit: true, desc: '모니터·키보드·의자까지 한 세트. 기본 책상보다 앉은 사람이 편하다.',
   },
+  /* ---------- L자 코너 책상 ----------
+     예전에는 7.0 × 7.0 이었다. 배치 구역 중 가장 얕은 곳이 6.5 깊이라
+     **어느 벽에도 들어가지 않는** 가구였다 — 상점에서 살 수는 있는데 놓을
+     자리가 없었다는 뜻이다. 모델을 0.82 배로 줄이고(placed.js) 발자국을
+     기본 책상보다 한 뼘 큰 정도로 맞췄다. */
   {
     id: 'kitDeskCorner', ko: 'L자 코너 책상', cat: 'work', price: 38000, seats: true, comfort: 6,
-    w: 7.0, d: 7.0, kit: true, desc: '모니터 두 대가 올라가는 코너 자리. 넓은 만큼 자리를 많이 먹는다.',
+    w: 5.8, d: 5.8, seatAway: 1.9, kit: true,
+    desc: '모니터 두 대가 올라가는 코너 자리. 기본 책상보다 조금 넓다.',
   },
   { id: 'kitBookcase', ko: '오픈 책장', cat: 'store', price: 8000, comfort: 3, w: 3.2, d: 2.0, kit: true, desc: '책이 꽂힌 채로 온다.' },
   { id: 'kitCabinet', ko: '문 달린 책장', cat: 'store', price: 9500, comfort: 3, w: 3.2, d: 2.0, kit: true, desc: '안이 안 보여서 정돈돼 보인다.' },
   { id: 'kitSideTable', ko: '사이드 테이블', cat: 'store', price: 5000, comfort: 3, w: 3.8, d: 2.0, kit: true, desc: '작은 화분 셋이 올라가 있다.' },
 
   { id: 'kitSofa', ko: '라운지 소파', cat: 'rest', price: 16000, comfort: 7, w: 6.8, d: 3.2, kit: true, desc: '쿠션까지. 소파보다 쾌적도가 높다.' },
-  { id: 'kitSofaCorner', ko: '코너 소파', cat: 'rest', price: 30000, comfort: 10, w: 7.0, d: 7.0, kit: true, desc: '구석을 통째로 휴게 공간으로 만든다.' },
+  /* 발자국 7.0 은 모델(6.28)보다 크기만 하고, 가장 얕은 배치 구역에는
+     들어가지 못했다. 모델 크기에 맞춰 줄인다. */
+  { id: 'kitSofaCorner', ko: '코너 소파', cat: 'rest', price: 30000, comfort: 10, w: 6.3, d: 6.3, kit: true, desc: '구석을 통째로 휴게 공간으로 만든다.' },
   { id: 'kitRelax', ko: '안락의자', cat: 'rest', price: 12000, comfort: 5, w: 3.6, d: 4.6, kit: true, desc: '한 명이 제대로 쉰다.' },
   { id: 'kitCoffeeTable', ko: '유리 티테이블', cat: 'rest', price: 6000, comfort: 3, w: 4.6, d: 3.0, kit: true, desc: '소파 앞에 놓는다.' },
   { id: 'kitFridge', ko: '냉장고', cat: 'rest', price: 20000, comfort: 5, w: 3.2, d: 2.4, kit: true, desc: '음료를 넣어 둔다.' },

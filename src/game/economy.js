@@ -8,7 +8,7 @@
 import {
   PLATFORMS, MONETIZE, STATS, rankInfo, RANK_UP_FANS, MARKETING,
   researchEffect, TREND_BONUS, TREND_PENALTY, FLOOR_UPKEEP, floorCost,
-  SALE_EVENTS,
+  SALE_EVENTS, REACH, FAN_PULL, ARPU_SOCIAL,
 } from './data.js';
 import { traitMult } from './staff.js';
 
@@ -21,11 +21,17 @@ export function releaseGame(project, company, rnd, ctx = {}) {
 
   // Launch users: craze and social pull people in, the platform's reach
   // multiplies it, and the company's existing fanbase is the floor.
+  //
+  // 도달은 품질에 **체감**한다 (REACH.p < 1). 바닥(REACH.base)이 있어서
+  // 데뷔작도 개발비는 넘길 만큼 팔리고, 잘 만든 게임이 자릿수를 바꾸지는
+  // 않는다 — 자릿수를 바꾸는 것은 플랫폼과 팬이다.
   const pull = q.craze * 1.3 + q.social * 1.1 + q.impact * 0.8;
+  const reach = REACH.base + REACH.k * Math.pow(Math.max(0, pull), REACH.p);
   const bugPenalty = Math.max(0.35, 1 - project.bugs * 0.014);
   // Capped: an unbounded fanbase multiplier feeds itself — more users means
   // more fans means more users — and the curve leaves the chart by year two.
-  const fanBoost = Math.min(9, 1 + Math.log2(1 + company.fans / 3000) * 0.55);
+  const fanBoost = Math.min(FAN_PULL.cap,
+    1 + Math.log2(1 + company.fans / FAN_PULL.scale) * FAN_PULL.per);
   const sequelBoost = 1 + (project.seriesN - 1) * 0.28;
   const hofBoost = project.hallOfFame ? 1.35 : 1;
 
@@ -54,7 +60,7 @@ export function releaseGame(project, company, rnd, ctx = {}) {
   const rehashMult = repeats >= 2 ? 0.55 : repeats === 1 ? 0.76 : 1;
 
   const users = Math.max(400, Math.round(
-    pull * 26 * platform.fans * money.users * bugPenalty * fanBoost * sequelBoost * hofBoost
+    reach * platform.fans * money.users * bugPenalty * fanBoost * sequelBoost * hofBoost
     * res.users * mk.users * trendMult * starMult * rehashMult
     * (0.85 + rnd() * 0.3)
   ));
@@ -76,7 +82,7 @@ export function releaseGame(project, company, rnd, ctx = {}) {
   const growth = 1.34 + Math.min(0.5, q.craze / 900) + Math.min(0.25, q.social / 1200);
   const startUsers = Math.max(200, Math.round(users * 0.42));
 
-  const arpu = money.arpu * (1 + q.social / 260) * platform.share * (0.9 + rnd() * 0.2);
+  const arpu = money.arpu * (1 + q.social / ARPU_SOCIAL) * platform.share * (0.9 + rnd() * 0.2);
 
   const rel = {
     id: project.id,

@@ -15,7 +15,7 @@ import {
   comboScore, comboLabel, rankInfo, RANK_UP_FANS, researchEffect,
   STARTUP_GRANT, hireDiscount,
   SHOP, SHOP_KINDS, GEAR_SLOTS, BOSSES, bossFor, BOSS_STAGES, BOSS_PHASES, RAID, OVERTIME,
-  EXHAUST,
+  EXHAUST, ABILITY_KO, starText, starOf,
 } from '../game/data.js';
 import {
   FURNITURE, FURNITURE_BY_ID, FURNITURE_CATS, RESELL, comfortLabel,
@@ -29,6 +29,7 @@ import {
   currentStage, raidProgress, ensureStages, strikePeriod, devCostOf, completion,
   previewQuality, funScore,
 } from '../game/project.js';
+import { TUTORIAL } from '../game/tutorial.js';
 import { monsterFor, monsterForStage } from '../game/monsters.js';
 import { rewardText } from '../game/events.js';
 import { FLOOR_PLANS } from '../world/office.js';
@@ -271,6 +272,10 @@ export class UI {
     } else if (ev.kind === 'forfeit') {
       this.arenaLog(`${ev.name} — ${ev.left}% 를 남긴 채 마감`, 'bad');
       this._flash();
+    } else if (ev.kind === 'loot') {
+      this.arenaLog(`🎁 ${starText(ev.star)} ${ev.emoji} ${ev.ko}`,
+        ev.star >= 4 ? 'big' : 'good');
+      if (ev.star >= 4) this._flash();
     }
   }
 
@@ -371,11 +376,14 @@ export class UI {
      보스를 때리는 동안 무엇이 쌓이고 있는가. 사무실의 진행 패널은 아레나에서
      비켜서므로, 그 숫자를 여기에 한 줄로 다시 세운다.
 
-     다섯 축은 **비중**(%)으로 쓴다. 절대 점수를 999 위의 퍼센트로 환산하면
-     데뷔작이 전부 0~2% 로 뜨는데, 그건 사실이긴 해도 화면에서는 고장으로
-     읽힌다. "이 게임은 지금 임팩트 32% · 화제성 25%" 는 어느 시점에나
-     읽히고, 다음 카드를 무엇으로 고를지에 그대로 쓰인다. 절대치가 필요한
-     한 줄 — 재미 — 은 진행 패널과 같은 숫자를 그대로 쓴다. */
+     다섯 축은 **점수**로 쓴다. 한동안 비중(%)으로 찍었는데, 그러면 세 가지가
+     안 보인다: 지금 이 게임이 절대적으로 얼마나 잘 나오고 있는지, 이번 카드로
+     무엇이 얼마나 올랐는지, 그리고 완성 화면에 뜰 숫자가 무엇인지. 비중은
+     합이 100 이라 전부 올라도 아무것도 안 움직이는 것처럼 보인다.
+
+     막대만 포화 곡선(999 위의 위치를 감마로 편 것)이다. 데뷔작의 20점을
+     선형으로 그리면 2% 라 빈 칸으로 보이는데, 숫자는 정확하니 막대는
+     "얼마나 왔는가" 를 눈으로 읽히게 하는 쪽이 낫다. */
   renderQual(p) {
     const box = $('aQual');
     if (!box) return;
@@ -383,16 +391,16 @@ export class UI {
     // 여기는 초당 스무 번 돈다. 버그 추정까지 딸려오는 devProgress() 대신
     // 필요한 것만 뽑는다 — 같은 함수를 쓰므로 값은 그대로다.
     const q = previewQuality(p);
-    const total = STATS.reduce((a, st) => a + (q[st] || 0), 0) || 1;
-    const shares = STATS.map((st) => Math.round((q[st] || 0) / total * 100));
-    const top = Math.max(1, ...shares);
+    // 여섯 줄이 **같은 자로** 그려져야 한다. 재미만 다른 곡선을 쓰던 동안은
+    // 재미 11 의 막대가 화제성 9 의 막대보다 짧게 나왔다.
     const rows = [
-      // 재미의 막대만 포화 곡선이다. 999 위의 위치를 그대로 폭으로 쓰면
-      // 데뷔작이 3% 라 빈 막대로 보인다 — 숫자는 정확하니 막대는 '얼마나
-      // 왔는가' 를 눈으로 읽히게 하는 쪽이 낫다.
-      { ko: '재미', txt: num(funScore(q)), w: Math.round(100 * (1 - Math.exp(-funScore(q) / 300))), fun: true },
-      ...STATS.map((st, i) => ({
-        ko: STAT_KO[st], txt: shares[i] + '%', w: Math.round(shares[i] / top * 100), fun: false,
+      {
+        ko: '재미', txt: num(funScore(q)),
+        w: barPct(funScore(q), QUALITY_MAX, QUALITY_GAMMA), fun: true,
+      },
+      ...STATS.map((st) => ({
+        ko: STAT_KO[st], txt: num(q[st] || 0),
+        w: barPct(q[st] || 0, QUALITY_MAX, QUALITY_GAMMA), fun: false,
       })),
     ];
     const sig = rows.map((r) => r.txt).join(',');
@@ -720,7 +728,10 @@ export class UI {
     const step = this.g.tutorialStep();
     if (!step || !this.g.company.founded) { box.classList.remove('show'); return; }
     box.classList.add('show');
-    box.innerHTML = `<div class="tt">${step.title}</div><div class="tb">${step.body}</div>`;
+    // 몇 단계 중 몇 번째인지. 끝이 안 보이는 안내는 읽다 말게 된다.
+    const i = TUTORIAL.indexOf(step) + 1;
+    box.innerHTML = `<div class="tt">${step.title}<span class="tn">${i} / ${TUTORIAL.length}</span></div>`
+      + `<div class="tb">${step.body}</div>`;
     const go = el('button', 'btn sm primary', '이동');
     go.onclick = () => this.openTab(step.tab);
     const skip = el('button', 'btn sm', '건너뛰기');
@@ -1050,7 +1061,10 @@ export class UI {
     box = box || $('tray');
     if (!box) return;
     const g = this.g;
-    const items = g.bagList().filter((b) => b.item.kind !== 'gear').slice(0, 8);
+    // 선물과 장비는 트레이에 두지 않는다. 둘 다 "누구에게" 를 고르는
+    // 물건이라, 싸우는 중에 손가락 하나로 눌러야 하는 자리와 맞지 않는다.
+    const items = g.bagList()
+      .filter((b) => b.item.kind !== 'gear' && b.item.kind !== 'gift').slice(0, 8);
     // 아레나는 초당 20번 다시 그린다. 내용이 그대로면 DOM 을 건드리지 않는다 —
     // 안 그러면 손가락이 아이콘에 닿는 순간 그 아이콘이 이미 다른 노드다.
     const sig = items.map((b) => b.item.id + 'x' + b.n).join('|');
@@ -1477,14 +1491,21 @@ export class UI {
       d.appendChild(el('div', 'd', `<b style="color:var(--gold)">${t.ko}${extra}</b> — ${t.desc}`));
     }
 
-    /* 가방에서 바로 먹이기 */
-    const food = g.bagList().filter((b) => b.item.kind === 'food' || b.item.kind === 'toy');
+    /* 가방에서 바로 먹이기. 선물은 여기서 주는 것이 가장 자연스럽다 —
+       그 사람의 능력치를 보면서 무엇을 줄지 고르는 화면이기 때문이다. */
+    const food = g.bagList().filter((b) => ['food', 'toy', 'gift'].includes(b.item.kind))
+      .sort((a, b) => starOf(a.item) - starOf(b.item));
     d.appendChild(el('h4', 'sec', `가방에서 주기 (체력 ${s.hp}/${s.hpMax})`));
     if (!food.length) {
-      d.appendChild(el('div', 'd', '<span style="color:var(--dim);font-size:10px">가방이 비었습니다. 상점 탭에서 음식을 사두세요.</span>'));
+      d.appendChild(el('div', 'd', '<span style="color:var(--dim);font-size:10px">가방이 비었습니다. 상점 탭에서 음식과 선물을 사두거나, 개발 배틀에서 보물상자를 주우세요.</span>'));
     }
     for (const { item, n } of food) {
-      const b = el('button', 'btn sm', `${item.emoji} ${item.ko} ×${n} — ${item.desc}`);
+      // 선물은 이 사람에게 줬을 때 무엇이 얼마나 오르는지를 버튼에 적는다.
+      const gainTxt = item.kind === 'gift'
+        ? `EXP +${num(item.exp)}${item.ability ? ` · ${ABILITY_KO[item.ability]} ${abilities(s)[item.ability]} → ${Math.round(abilities(s)[item.ability] + item.gain)}` : ''}`
+        : item.desc;
+      const b = el('button', 'btn sm',
+        `${item.emoji} ${item.ko} <span class="st s${starOf(item)}">${starText(starOf(item))}</span> ×${n} — ${gainTxt}`);
       b.style.cssText = 'display:block;width:100%;margin-bottom:4px;text-align:left';
       b.onclick = (ev) => {
         ev.stopPropagation();
@@ -1987,11 +2008,14 @@ export class UI {
     for (const { item, n } of bag) {
       const line = el('div', 'bagline');
       line.innerHTML = `<span class="e">${item.emoji}</span>
-        <span class="t">${item.ko}<br><span style="color:var(--dim);font-size:9.5px">${item.desc || ''}</span></span>
+        <span class="t">${item.ko} <span class="st s${starOf(item)}">${starText(starOf(item))}</span>
+        <br><span style="color:var(--dim);font-size:9.5px">${item.desc || ''}</span></span>
         <span class="q">×${n}</span>`;
       if (item.kind !== 'gear') {
-        const use = el('button', 'btn sm', item.kind === 'food' ? '먹이기' : '사용');
+        const use = el('button', 'btn sm',
+          item.kind === 'food' ? '먹이기' : item.kind === 'gift' ? '주기' : '사용');
         use.onclick = () => {
+          if (item.kind === 'gift') { this.giftFlow(item); return; }
           if (item.kind === 'food' && !item.all) {
             // 대상 고르기. 체력이 가장 낮은 사람이 맨 위에 온다.
             const list = g.staff.slice().sort((a, b) => hpRatio(a) - hpRatio(b));
@@ -2026,6 +2050,39 @@ export class UI {
     }
   }
 
+  /* ---------- 선물 주기 ----------
+     누구에게 줄지 고르는 화면. 물건이 올려주는 능력치를 그 사람의 **현재
+     값**과 나란히 놓는다 — "그래픽 82 → 86" 이 보이지 않으면 어느 직원에게
+     줄지가 감으로만 남는다. 레벨업까지 남은 경험치도 같이 적는다. */
+  giftFlow(item) {
+    const g = this.g;
+    if (!g.staff.length) { this.toast('직원이 없습니다', 'bad'); return; }
+    const key = item.ability;
+    const list = g.staff.slice().sort((a, b) => {
+      if (!key) return a.level - b.level;
+      return abilities(b)[key] - abilities(a)[key];
+    });
+    this.openModal('선물', `${starText(starOf(item))} ${item.emoji} ${item.ko}`,
+      `EXP <b>+${num(item.exp)}</b>${key ? ` · <b>${ABILITY_KO[key]} +${item.gain}</b>` : ' · 능력치는 레벨로만 오른다'}
+       ${item.mot ? ` · 의욕 +${item.mot}` : ''}<br>
+       <span style="color:var(--dim);font-size:11px">누구에게 줄까요?</span>`,
+      list.map((st) => {
+        const now = key ? abilities(st)[key] : 0;
+        const after = key ? Math.round(now + item.gain) : 0;
+        return {
+          name: `${st.name} · Lv.${st.level}${st.level >= st.maxLevel ? ' (MAX)' : ''}`,
+          desc: `${JOBS[st.job].ko}`
+            + (key ? ` · ${ABILITY_KO[key]} ${now} → ${after}` : '')
+            + ` · 레벨업까지 ${num(Math.max(0, expToNext(st) - (st.exp || 0)))}`,
+          onPick: () => {
+            const r = g.useItem(item.id, st.id);
+            if (!r.ok) this.toast(r.why, 'bad');
+            g.save();
+          },
+        };
+      }));
+  }
+
   /* ══════════════════════════════ 상점 ══════════════════════════════
      산 물건은 가방에 들어가고, 쓸 때 효과가 난다. 원작의 상점을 그대로
      옮긴 자리이고, 이 게임에서 돈이 실제로 나가는 두 번째 구멍이다
@@ -2045,11 +2102,15 @@ export class UI {
     const kind = SHOP_KINDS.find((k) => k.id === this.shopKind) || SHOP_KINDS[0];
     box.appendChild(el('div', 'item', `<div class="d">${kind.hint}</div>`));
 
-    for (const item of SHOP.filter((i) => i.kind === this.shopKind)) {
+    // 별이 낮은 것부터. 상점의 한 분류가 곧 등급 사다리로 읽힌다.
+    const stock = SHOP.filter((i) => i.kind === this.shopKind)
+      .slice().sort((a, b) => starOf(a) - starOf(b) || a.price - b.price);
+    for (const item of stock) {
       const locked = c.rank < (item.rank || 1);
       const row = el('div', 'sitem' + (locked ? ' locked' : ''));
       row.innerHTML = `<span class="e">${item.emoji}</span>
-        <span class="m"><span class="t">${item.ko}</span>
+        <span class="m"><span class="t">${item.ko}
+          <span class="st s${starOf(item)}">${starText(starOf(item))}</span></span>
         <span class="d">${item.desc || ''}</span>
         <span class="p">${won(item.price)}${locked ? ` · 랭크 ${item.rank} 필요` : ''}</span></span>`;
       const b = el('button', 'btn sm', '구입');

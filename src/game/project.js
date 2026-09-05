@@ -15,7 +15,7 @@ import {
   GENRES, CONTENTS, METHODS, PLATFORMS, MONETIZE, STATS,
   comboScore, TITLE_WORDS_A, TITLE_WORDS_B, researchEffect, TRAITS,
   bossFor, BOSS_MOVES, BOSS_STAGES, WEAK_TURNS, WEAK_MULT, HP, RAID,
-  devStamina, EXHAUST, strainOf,
+  devStamina, EXHAUST, strainOf, TREASURE, rollStar, lootPool, starOf,
 } from './data.js';
 import { JOBS, JOB_ABILITY } from './data.js';
 import {
@@ -261,6 +261,8 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
     stage: 0,
     phase: 0,                    // = stage. 예전 UI/연출이 읽는 이름.
     weak: 0,                     // 스테이지가 넘어간 직후 약점이 드러난 타격 수
+    lootThisStage: 0,            // 이번 보스에서 떨어진 상자 수 (상한이 걸린다)
+    lootTotal: 0,
     bugExtra: 0,                 // 보스의 반격이 남긴 버그
     critBonus: 0,                // 네잎클로버 같은 도구가 얹는 번뜩임 확률
     lastGain: null,              // 직전 라운드에 오른 품질 (진행 패널의 +표시)
@@ -366,6 +368,33 @@ export function forfeitStage(project, rnd, ctx = {}) {
 export function currentStage(project) {
   ensureStages(project);
   return project.stages[Math.min(project.stage || 0, project.stages.length - 1)];
+}
+
+/* ---------- 보물상자 ----------
+   보스를 때리다 보면 상자가 떨어진다. 무엇이 나오는지는 별이 정하고, 별은
+   **이 프로젝트의 야심**(strain: 기획서 등급 × 플랫폼)이 민다 — ★5 콘솔
+   대작을 만드는 팀은 상자에서도 큰 것을 건진다.
+
+   한 스테이지에 나오는 개수에 상한이 있는 이유: 없으면 일부러 약한 팀으로
+   싸움을 길게 끄는 쪽이 최적이 된다. 상자는 싸움의 **덤**이지 목적이 아니다.
+
+   `force` 는 보스를 잡았을 때처럼 확정으로 하나 주는 자리에서 쓴다. */
+export function rollTreasure(project, rnd, force = false) {
+  if (!project) return null;
+  if ((project.lootThisStage || 0) >= TREASURE.perStage) return null;
+  if (!force && rnd() >= TREASURE.perStrike) return null;
+  const strain = projectStrain(project);
+  const push = Math.max(0, Math.min(1, (strain - 0.30) / 0.95));
+  const star = rollStar(rnd, push);
+  const pool = lootPool(star);
+  const item = pool[Math.floor(rnd() * pool.length)];
+  if (!item) return null;
+  project.lootThisStage = (project.lootThisStage || 0) + 1;
+  project.lootTotal = (project.lootTotal || 0) + 1;
+  return {
+    kind: 'loot', itemId: item.id, ko: item.ko, emoji: item.emoji,
+    star: starOf(item), itemKind: item.kind, desc: item.desc || '',
+  };
 }
 
 /* 전체 진행률 0..1 — 세 마리를 합쳐 하나의 막대로 볼 때 쓴다. */
@@ -487,6 +516,14 @@ export function stageCleared(project, rnd, ctx = {}) {
   }];
   project.clearedHp = (project.clearedHp || 0) + st.hpMax;
 
+  // 잡으면 상자가 하나 확정으로 떨어진다. 스테이지 상한은 여기서 풀린다 —
+  // 다음 보스는 새 상한으로 시작한다.
+  for (let i = 0; i < TREASURE.onClear; i++) {
+    const loot = rollTreasure(project, rnd, true);
+    if (loot) events.push(loot);
+  }
+  project.lootThisStage = 0;
+
   if (st.card === 'content' && !project.contentId) {
     project.pendingCards = { kind: 'content', options: rollContentCards(rnd, project.genreId, ctx.contents) };
     events.push({ kind: 'card', cardKind: 'content' });
@@ -515,6 +552,7 @@ export function advanceStage(project) {
   project.hp = st.hpMax;
   st.hp = st.hpMax;
   project.weak = WEAK_TURNS;   // 새 보스가 나온 직후에는 잠깐 빈틈이 있다
+  project.lootThisStage = 0;   // 상자 상한은 보스마다 새로 센다
   project.bossAtb = 0;
   return true;
 }
@@ -606,6 +644,9 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
     while ((project.atb[s.id] || 0) >= 1 && project.hp > 0) {
       project.atb[s.id] -= 1;
       out.events.push(staffStrike(project, s, rnd, c2));
+      // 때리다 보면 상자가 떨어진다. 배틀을 지켜볼 이유가 여기 있다.
+      const loot = rollTreasure(project, rnd);
+      if (loot) out.events.push(loot);
       // 한 사람이 한 번 칠 때마다 라운드 카운터도 조금씩 돈다.
       project.turn = Math.max(1, Math.round(project.strikes / Math.max(1, pool.length)));
       if (project.hp <= 0) break;
@@ -660,6 +701,8 @@ export function battleTurn(project, staffById, rnd, ctx = {}) {
     const ev = staffStrike(project, s, rnd, c2);
     total += ev.damage;
     events.push(ev);
+    const loot = rollTreasure(project, rnd);
+    if (loot) events.push(loot);
   }
   project.turn = Math.max(1, Math.round(project.strikes / Math.max(1, pool.length)));
   project.lastDamage = total;

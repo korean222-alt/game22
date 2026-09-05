@@ -94,14 +94,20 @@ const DRAW = {
     // 앉는다 — +PI 를 주면 책상을 등지고 앉는다.
     const ch = R(0, 2.4); kitPut(m, 'chairDesk', ch[0], ch[1], ry, chairSwap(i));
   },
+  /* 코너 책상은 팩 모델이 6.24 × 6.24 로, 가장 얕은 배치 구역(깊이 6.5)에
+     의자까지 얹으면 들어갈 자리가 없었다. CORNER 배율로 줄여서 발자국
+     5.8 × 5.8 안에 상판과 의자가 모두 들어오게 맞춘다 — 카탈로그의 w/d 와
+     화면에 그려지는 크기는 같아야 한다. */
   kitDeskCorner: (m, x, z, ry, i) => {
     const R = at(x, z, ry);
-    kitPut(m, 'deskCorner', x, z, ry + Math.PI);
-    const a = R(-1.3, -1.0), b = R(1.4, -1.0);
-    kitPut(m, 'computerScreen', a[0], a[1], ry + 0.2, SCREEN_ON_DESK);
-    kitPut(m, 'computerScreen', b[0], b[1], ry - 0.2, SCREEN_ON_DESK);
-    const kb = R(0, 0.4); kitPut(m, 'computerKeyboard', kb[0], kb[1], ry, { y: DESK_TOP, solid: false });
-    const ch = R(0.2, 2.2); kitPut(m, 'chairDesk', ch[0], ch[1], ry, chairSwap(i));
+    const s = CORNER;
+    kitPut(m, 'deskCorner', x, z, ry + Math.PI, { s });
+    const a = R(-1.1, -0.8), b = R(1.2, -0.8);
+    kitPut(m, 'computerScreen', a[0], a[1], ry + 0.2, { ...SCREEN_ON_DESK, s, y: DESK_TOP * s });
+    kitPut(m, 'computerScreen', b[0], b[1], ry - 0.2, { ...SCREEN_ON_DESK, s, y: DESK_TOP * s });
+    const kb = R(0, 0.35);
+    kitPut(m, 'computerKeyboard', kb[0], kb[1], ry, { y: DESK_TOP * s, solid: false, s });
+    const ch = R(0.2, 1.9); kitPut(m, 'chairDesk', ch[0], ch[1], ry, { ...chairSwap(i), s });
   },
   kitBookcase: (m, x, z, ry) => {
     kitPut(m, 'bookcaseOpen', x, z, ry);
@@ -167,6 +173,9 @@ const DRAW = {
 const SCREEN_SWAP = { '#4e6363': { c: P.screenDk, m: MAT.SCREEN } };
 const DESK_TOP = 2.45;
 const SCREEN_ON_DESK = { y: DESK_TOP, solid: false, swap: SCREEN_SWAP };
+/* L자 코너 책상의 배율. 팩 모델 6.24 를 발자국 5.8 안에 넣는 값이고,
+   의자가 앞으로 튀어나오는 만큼을 감안해 조금 더 줄였다. */
+const CORNER = 0.82;
 
 /* 팩의 의자는 전부 같은 빨강이다. 사무실에 여섯 개를 놓으면 그것만 보이므로,
    놓인 순서대로 사무실 의자 색을 돌려 쓴다. */
@@ -232,7 +241,10 @@ export function buildPlaced(placed) {
       // 서서 쓰는 가구(stand)에는 그 의자가 없다. 자리는 상판 바로 앞이고
       // 배정된 직원은 앉지 않고 선다 — 의자 없는 자리에 앉히면 허공에
       // 앉아 있게 된다. 그것이 스탠딩 책상 버그의 절반이었다.
-      const away = def.stand ? 2.0 : 2.6;
+      // `seatAway` 는 의자가 상판에서 얼마나 떨어져 있는가다. 대부분은
+      // 2.6 이지만 L자 코너 책상처럼 줄여 놓은 가구는 의자도 앞으로 와
+      // 있어서, 기본값을 쓰면 앉은 사람이 의자 뒤에 서 있게 된다.
+      const away = def.seatAway ?? (def.stand ? 2.0 : 2.6);
       desks.push({
         id: it.uid,
         floor: it.floor, role: plan.role,

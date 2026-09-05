@@ -112,6 +112,12 @@ for (let week = 0; week < YEARS * 48; week++) {
     }
     const shipped = g.finished;
     g.release();
+    /* 출시하면 실시간 판매가 돈다. 브라우저에서는 플레이어가 18초를 보고
+       정산 버튼을 누르지만, 여기서는 시계가 없으므로 한 번에 흘려 보낸다.
+       이걸 빼면 판매가 영원히 안 끝나고, 다음 게임에 착수할 수도 없어서
+       시뮬레이션이 5년 동안 게임 한 개만 내고 멈춘다. */
+    for (let i = 0; i < 40 && g.sales && !g.sales.ended; i++) g.salesTick(2);
+    if (g.sales) g.closeSalesRun();
     if (g.company.shipped <= 12 || g.company.shipped % 20 === 0) {
       const r0 = g.releases[0];
       console.log(`  #${String(g.company.shipped).padStart(3)} ${g.dateLabel()}  x=${(shipped.rawPerSlot || 0).toFixed(0).padStart(4)}  avgQ=${String(Math.round(Object.values(r0.quality).reduce((a, b) => a + b, 0) / 5)).padStart(4)}  critic=${String(r0.criticTotal).padStart(2)}  lvl=${Math.round(g.staff.reduce((a, s) => a + s.level, 0) / g.staff.length)}`);

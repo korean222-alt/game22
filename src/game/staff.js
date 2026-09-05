@@ -331,6 +331,37 @@ export function giveItem(s, itemId, rank) {
   return { ok: true, gain };
 }
 
+/* ---------- 선물 ----------
+   상점에서 사거나 보물상자에서 나온 음식·물건을 직원에게 준다. 돌아오는
+   것은 두 가지다: **경험치**(레벨이 오르면 다섯 능력치가 고루 오른다)와,
+   그 물건이 가리키는 **한 능력치의 추가 상승**.
+
+   왜 레벨만으로는 부족한가: 레벨은 모두를 똑같이 키운다. 같은 디자이너
+   두 명이 다르게 자라려면 방향을 주는 물건이 있어야 하고, 그 방향이 곧
+   "이 사람에게 무엇을 먹일까" 라는 결정이다. 멘토 특성이 붙은 사람은
+   같은 물건에서 더 많이 가져간다.
+
+   최대 레벨이라 경험치가 버려지는 경우에도 능력치는 오른다. 눌러서 아무
+   일도 안 일어나는 버튼을 만들지 않는다는 규칙 그대로다. */
+export function giveGift(s, item, rank) {
+  if (!s || !item || item.kind !== 'gift') return { ok: false, why: '선물이 아니다' };
+  const mult = traitMult(s, 'train');
+  const exp = Math.round((item.exp || 0) * mult);
+  const before = s.level;
+  const levels = gainExp(s, exp);
+  const key = item.ability;
+  const gain = key ? Math.round((item.gain || 0) * mult * 10) / 10 : 0;
+  if (key && gain) s.bonus[key] = Math.round(((s.bonus[key] || 0) + gain) * 10) / 10;
+  if (item.mot) addMotivation(s, item.mot, rank);
+  // 전직 조건(서로 다른 아이템 3종)에도 그대로 들어간다.
+  if (!s.itemsGiven.includes(item.id)) s.itemsGiven.push(item.id);
+  syncHp(s);
+  return {
+    ok: true, exp, levels, level: s.level, wasted: before >= s.maxLevel,
+    ability: key, gain,
+  };
+}
+
 /* ---------- experience ----------
    Gifts are the fast lane to a level; shipping is the slow one. Without a slow
    lane a studio that never spends a won on training is frozen at level 3

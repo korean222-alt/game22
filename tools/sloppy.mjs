@@ -50,6 +50,10 @@ for (let week = 0; week < 8 * 48; week++) {
   if (g.finished) {
     if (g.managed().length >= g.info().managedCap) g.endService(g.managed()[0].id);
     g.release();
+    // 실시간 판매를 한 번에 흘려 보낸다. 안 그러면 판매가 안 끝나서
+    // 다음 게임에 착수할 수 없다 (브라우저에서는 플레이어가 정산을 누른다).
+    for (let i = 0; i < 40 && g.sales && !g.sales.ended; i++) g.salesTick(2);
+    if (g.sales) g.closeSalesRun();
   }
   if (!g.project && !g.finished) {
     if (!g.proposals.length && c.stamina > 2) g.makeProposal();
