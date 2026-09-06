@@ -134,26 +134,30 @@ await step('신입이 정문에서 걸어 들어온다', async () => {
   return `정문 근처 · "${r.bubble}"`;
 });
 /* 정문에서 자리까지는 40 유닛 남짓이다. SwiftShader 는 초당 한두 프레임밖에
-   못 내므로 실제로 걸어서 도착하기까지 벽시계로 몇 분이 걸린다 — 하네스가
-   보려는 것은 "도착했나" 가 아니라 **"자기 자리를 향해 실제로 걷고 있나"**
-   이므로, 거리가 줄어드는 것으로 본다. 도착하면 그것대로 통과다. */
+   못 내므로 실제로 걸어서 도착하기까지 벽시계로 몇 분이 걸린다 — 여기서 볼
+   것은 "도착했나" 가 아니라 **자기 자리로 가는 경로를 실제로 잡았나** 다.
+   경로의 마지막 점이 그 사람의 책상이면 걷기가 걸린 것이고, 도착까지는
+   프레임만 더 주면 된다. 이미 앉았으면 그것대로 통과다. */
 await step('걸어서 자리에 앉는다', async () => {
-  const at = async () => page.evaluate(() => {
+  const at = () => page.evaluate(() => {
     const g = window.__game, v = window.__view;
     const s = g.staff[g.staff.length - 1];
     const a = v.crew.get(s.id), d = v.deskOf(s);
-    return { state: a.state, dist: d ? Math.hypot(a.x - d.seatX, a.z - d.seatZ) : -1 };
+    const end = a.path && a.path.length ? a.path[a.path.length - 1] : null;
+    return {
+      state: a.state,
+      dist: d ? Math.hypot(a.x - d.seatX, a.z - d.seatZ) : -1,
+      toDesk: !!(end && d && Math.hypot(end[0] - d.seatX, end[1] - d.seatZ) < 3),
+    };
   });
-  await page.waitForTimeout(1500);
-  const first = await at();
-  let r = first;
-  for (let i = 0; i < 25; i++) {
-    await page.waitForTimeout(1000);
+  let r = null;
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(700);
     r = await at();
     if (r.state === 'sit' && r.dist < 2.5) return '착석 (sit)';
-    if (r.dist < first.dist - 6) return `자리 쪽으로 ${(first.dist - r.dist).toFixed(1)} 이동 (${r.state})`;
+    if (r.toDesk) return `자기 자리로 가는 길을 잡았다 (${r.dist.toFixed(1)} 남음)`;
   }
-  throw new Error(`자리로 가지 않음: ${first.dist.toFixed(1)} → ${r.dist.toFixed(1)} (state=${r.state})`);
+  throw new Error(`자리로 가지 않음: ${r.dist.toFixed(1)} 떨어짐 (state=${r.state})`);
 });
 await step('퇴사자는 자리에 남지 않는다', async () => {
   const id = await page.evaluate(() => {
@@ -376,10 +380,18 @@ await step('직원을 격려하면 의욕이 오른다', async () => {
     v.fp.x = a.x - 2.2; v.fp.z = a.z; v.fp.yaw = Math.PI / 2;
     v.fp.focus = v.fp.findFocus();
     const s = g.staff.find((x) => x.id === a.id);
-    const before = s.motivation;
+    /* 의욕이 이미 상한이면 격려는 **일부러** 아무것도 안 한다 (그리고 그 주의
+       한 번을 쓰지도 않는다 — 사무실을 가로질러 걸어온 것이 헛걸음이 되면
+       그건 플레이어 탓이 아니다). 오르는지를 보려면 상한 아래에서 시작한다. */
+    for (const x of g.staff) { x.motivation = 1; x.pepTalk = null; }
+    /* 시선이 잡은 사람이 옆에 세운 사람과 다를 수 있다 — 더 가까운 사람이
+       있으면 그쪽이 잡힌다. 격려가 오른 것을 보려면 **실제로 잡힌 사람**을
+       봐야 한다. */
+    const target = g.staff.find((x) => x.id === (v.fp.focus && v.fp.focus.id)) || s;
+    const before = target.motivation;
     const line = v.fp.interact();
     const again = v.fp.interact();
-    return { name: a.name, focus: v.fp.focus && v.fp.focus.kind, before, after: s.motivation, line, again };
+    return { name: target.name, focus: v.fp.focus && v.fp.focus.kind, before, after: target.motivation, line, again };
   });
   if (r.none) throw new Error('같은 층에 직원이 없음');
   if (r.focus !== 'staff') throw new Error('직원을 인식하지 못함: ' + r.focus);

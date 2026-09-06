@@ -1325,18 +1325,26 @@ export class UI {
     await say(`${a.year}년차 ${a.month}월 게임 어워드, 지금 시작하겠습니다!`, 700);
 
     /* 부문은 우리 것 먼저, 남의 것은 뒤에. 좋은 소식을 앞에 두는 것이 아니라
-       — 순서를 섞으면 "우리 차례가 언제 오나" 를 계속 기다리게 되기 때문이다. */
+       — 순서를 섞으면 "우리 차례가 언제 오나" 를 계속 기다리게 되기 때문이다.
+
+       그 달에 우리가 한 편도 안 냈으면 남의 상은 **한 부문만** 부른다.
+       시상식은 매달 서는 무대라, 우리와 상관없는 발표를 셋씩 앉아서 보면
+       그건 사건이 아니라 통행료가 된다. 그래도 하나는 부른다 — 우리가
+       쉬는 동안에도 업계는 돌고 있다는 것이 이 화면의 일이기 때문이다. */
+    const others = (a.others || []).slice(0, a.entries ? 3 : 1);
     const rows = [
       ...(a.wins || []).map((w) => ({ ...w, mine: true })),
-      ...(a.others || []).map((w) => ({ ...w, mine: false })),
+      ...others.map((w) => ({ ...w, mine: false })),
     ];
 
-    if (!rows.length) {
+    if (!a.entries) {
+      await say(`${a.studio}는 지난달 출시작이 없어 심사 대상이 아니었습니다.`, 700);
+    } else if (!(a.wins || []).length) {
       await say('그런데… 이번 달은 기준선을 넘긴 작품이 한 편도 없었습니다.', 900);
       const n = a.near;
       if (n) await say(`가장 가까웠던 것은 ${n.catKo} — 「${n.title}」 ${num(n.value)}점. 기준은 ${num(n.bar)}점이었습니다.`, 1200);
-      else await say('다음 달에는 무대에서 뵙기를 바랍니다.', 1000);
     }
+    if (!rows.length) await say('오늘은 부를 이름이 없습니다. 다음 달에 뵙겠습니다.', 900);
 
     for (const w of rows) {
       if (skipped) break;
