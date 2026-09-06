@@ -62,6 +62,58 @@ export const MONSTERS = [
     idle: 'Idle', walk: 'Walk', attack: 'Bite_Front', hit: 'HitRecieve', death: 'Death',
     taunts: ['재현이 안 될걸', '내 탓 아니야', '한 마리만 더…'],
   },
+
+  /* ---- 나중에 들어온 네 마리 ----
+     Quaternius 의 같은 리그를 쓰는 CC0 캐릭터들이다. 클립 이름이 냥이와
+     같아서(Bite_Front / HitRecieve) 보스 코드는 한 줄도 안 바뀐다.
+
+     이 넷은 `minHp: Infinity` 다 — 체력 사다리(monsterFor)로는 절대 뽑히지
+     않고, **스테이지가 제비뽑기로 부를 때만** 선다. 그래야 한 판의 4연전이
+     매번 같은 얼굴이 아니게 되면서도, 옛 세이브의 사다리는 그대로 돈다. */
+  {
+    id: 'chicken',
+    ko: '기획 병아리',
+    file: 'assets/monsters/chicken.glb',
+    desc: '아직 아무것도 아닌 기획. 그런데 시끄럽다.',
+    height: 4.0,
+    minHp: Infinity,
+    idle: 'Idle', walk: 'Idle', attack: 'Bite_Front', hit: 'HitRecieve', death: 'Death',
+    taunts: ['삐약', '이거 재밌겠는데?', '한 줄만 더 적어 봐'],
+  },
+  {
+    id: 'bee',
+    ko: '잡생각 벌떼',
+    file: 'assets/monsters/bee.glb',
+    desc: '하나씩은 아무것도 아닌데 떼로 온다.',
+    height: 3.8,
+    minHp: Infinity,
+    // 벌은 걷지 않는다. 팩에 Idle 이 없어서 Flying 이 그 자리를 대신한다 —
+    // 없는 클립을 넣으면 SkinnedInstance 가 첫 프레임에서 멈춘 채로 선다.
+    idle: 'Flying', walk: 'Flying', attack: 'Bite_Front', hit: 'HitRecieve', death: 'Death',
+    taunts: ['그것도 넣을까?', '이것도 넣자', '아 그거 어떻게 하더라'],
+  },
+  {
+    id: 'alien',
+    ko: '외계 사양',
+    file: 'assets/monsters/alien.glb',
+    desc: '누가 썼는지 모르는 요구사항. 말이 안 통한다.',
+    height: 7.4,
+    minHp: Infinity,
+    idle: 'Idle', walk: 'Idle', attack: 'Bite_Front', hit: 'HitRecieve', death: 'Death',
+    taunts: ['…?', '그건 원래 그렇게 되는 겁니다', '문서에 적혀 있는데요'],
+  },
+  {
+    /* 버그 자리의 다른 얼굴. 몸은 벌이고 크기만 더 작다 — 마지막 공정에
+       설 놈이 매번 같은 실루엣이면 4연전의 마지막 칸만 늘 같은 그림이다. */
+    id: 'bugBee',
+    ko: '버그 벌레떼',
+    file: 'assets/monsters/bee.glb',
+    desc: '덮은 자리마다 한 마리씩 날아오른다.',
+    height: 3.2,
+    minHp: Infinity,
+    idle: 'Flying', walk: 'Flying', attack: 'Bite_Front', hit: 'HitRecieve', death: 'Death',
+    taunts: ['재현이 안 될걸', '이건 사양입니다', '한 마리만 더…'],
+  },
 ];
 
 export const MONSTER_BY_ID = new Map(MONSTERS.map((m) => [m.id, m]));
@@ -84,6 +136,37 @@ export function monsterForStage(project) {
   if (!project || !project.stages) return monsterFor(project);
   const st = project.stages[Math.min(project.stage || 0, project.stages.length - 1)];
   return (st && MONSTER_BY_ID.get(st.species)) || monsterFor(project);
+}
+
+/* 그 공정의 **무대** id. 세트장은 몬스터가 아니라 공정의 것이다 — 기획
+   단계는 누가 서 있든 브레인스토밍 광장이고, 마지막은 누가 서 있든 QA 실.
+   옛 세이브에는 set 칸이 없으므로 종족으로 되돌아간다(그 시절엔 같은 값이었다). */
+export function stageSetOf(project) {
+  if (!project || !project.stages) return 'cat';
+  const st = project.stages[Math.min(project.stage || 0, project.stages.length - 1)];
+  return (st && (st.set || st.species)) || 'cat';
+}
+
+/* ---------- 제비뽑기 ----------
+   4연전의 네 칸은 각자 **후보 목록**을 갖는다. 착수할 때 한 번 뽑고 그 결과가
+   프로젝트에 박히므로, 같은 게임을 다시 들어가도 상대는 안 바뀐다 — 세이브를
+   불러도, 화면을 껐다 켜도 같다.
+
+   칸마다 크기가 다른 놈들만 모여 있는 것이 요령이다. 첫 칸은 작고 만만한
+   것들, 두 번째는 중간, 세 번째는 큰 놈, 마지막은 벌레. 무작위가 "이번엔
+   왜 데뷔작에 마감 데몬이 나오지" 로 읽히면 그건 무작위가 아니라 고장이다. */
+export const STAGE_SPECIES = [
+  ['cat', 'chicken', 'bee'],
+  ['orc', 'alien', 'chicken'],
+  ['demon', 'alien', 'orc'],
+  ['bug', 'bugBee'],
+];
+
+export function rollStageSpecies(i, rnd) {
+  const pool = STAGE_SPECIES[Math.max(0, Math.min(STAGE_SPECIES.length - 1, i))];
+  if (!pool || !pool.length) return 'cat';
+  const r = typeof rnd === 'function' ? rnd() : Math.random();
+  return pool[Math.floor(r * pool.length) % pool.length];
 }
 
 /* A short line for the moment the fight starts, and for the moment it ends. */

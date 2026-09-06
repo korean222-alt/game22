@@ -48,6 +48,11 @@ const state = () => page.evaluate(() => {
     hpBarW: document.getElementById('aBossHp').style.width,
     set: v.arenaSet ? v.arenaSet.id : null,
     setKo: v.arenaSet ? v.arenaSet.def.ko : null,
+    // 무대는 **공정**의 것이고 몬스터는 제비뽑기로 정해진다. 둘이 같은
+    // 값이던 시절의 검사(set === boss)는 이제 틀린 검사다.
+    stageSet: p && p.stages ? p.stages[p.stage].set : null,
+    stageSpecies: p && p.stages ? p.stages[p.stage].species : null,
+    allSpecies: p && p.stages ? p.stages.map((x) => x.species).join(',') : null,
     bossX: v.boss ? Math.round(v.boss.x) : null,
     title: document.getElementById('aTitle').textContent,
   };
@@ -177,8 +182,12 @@ await step('보스마다 전용 세트장에 선다', async () => {
 });
 
 await step('버튼을 누르지 않아도 직원들이 알아서 때린다', async () => {
+  // 모달이 떠 있으면 전투는 멈춘다(읽는 동안 체력이 깎이면 읽는 것이 벌칙이
+  // 되므로). 창업 흐름의 잔여 팝업이 남아 있으면 이 검사는 영원히 못 센다.
+  await pickFirstChoice();
+  await page.waitForTimeout(200);
   const a = await state();
-  const b = await wait((s) => s.strikes > a.strikes + 4, 20000, '타격 누적');
+  const b = await wait((s) => s.strikes > a.strikes + 4, 45000, '타격 누적');
   if (b.stamina !== a.stamina) throw new Error(`전투가 스태미나를 먹었다 ${a.stamina}→${b.stamina}`);
   return `${b.strikes}타 · HP ${b.hp}/${b.hpMax} · 스태미나 그대로 ${b.stamina}`;
 });
@@ -208,10 +217,28 @@ await step('내용을 고르면 합성 팝업이 뜨고 2번 보스가 선다', 
   return `${fusion.title} → ${s.bossName}`;
 });
 
-await step('2번 보스는 다른 몸으로 나온다 — 무대도 같이 바뀐다', async () => {
-  const s = await wait((x) => x.boss && x.boss !== 'cat', 30000, '보스 모델 교체');
-  const t = await wait((x) => x.set === s.boss, 15000, '세트장 교체');
+/* 보스의 몸은 착수할 때 칸마다 제비뽑기로 정해지고, 무대는 **공정**이
+   정한다. 예전에는 둘이 같은 값이라 `set === boss` 로 검사했는데, 이제
+   1번 칸에 병아리가 서도 무대는 브레인스토밍 광장이다. */
+await step('2번 보스는 다른 몸으로 나온다 — 무대는 공정을 따른다', async () => {
+  const s = await wait((x) => x.boss && x.stage === 1 && x.boss === x.stageSpecies, 30000, '보스 모델 교체');
+  const t = await wait((x) => x.set === x.stageSet, 15000, '세트장 교체');
+  if (t.stageSet !== 'orc') throw new Error('2번 공정의 무대가 난제의 작업장이 아님: ' + t.stageSet);
   return `${s.boss} · ${t.setKo}`;
+});
+
+/* 제비뽑기. 네 칸의 종족이 각자 자기 후보 안에서 나와야 한다 — 데뷔작에
+   마감 데몬이 1번으로 서면 그건 무작위가 아니라 고장이다. */
+await step('보스는 칸마다 후보 안에서 뽑힌다', async () => {
+  const pools = [['cat', 'chicken', 'bee'], ['orc', 'alien', 'chicken'],
+    ['demon', 'alien', 'orc'], ['bug', 'bugBee']];
+  const s = await state();
+  const got = (s.allSpecies || '').split(',');
+  if (got.length !== 4) throw new Error('스테이지가 4칸이 아님: ' + s.allSpecies);
+  got.forEach((sp, i) => {
+    if (!pools[i].includes(sp)) throw new Error(`${i + 1}번 칸에 후보 밖의 종족: ${sp}`);
+  });
+  return got.join(' → ');
 });
 
 await step('아레나에서 나오면 사무실로 돌아온다', async () => {
@@ -245,6 +272,24 @@ await step('끝까지 자동으로 굴러 완성된다', async () => {
     await page.waitForTimeout(120);
   }
   throw new Error('완성되지 않음: ' + JSON.stringify(await state()));
+});
+
+/* 마지막 보스를 잡고 나서 아무도 다시 서지 않아야 한다.
+
+   "다 잡았는데 갑자기 첫 번째 보스가 뜬다" 가 이 자리였다. 화면의 보스는
+   언제나 **지금 공정의 놈**이거나 아무도 아니다 — 그 불변식을 매 프레임
+   강제하도록 고쳤고, 여기서 그 결과를 본다. */
+await step('완성 뒤에는 보스가 다시 서지 않는다', async () => {
+  /* 여기서 모달을 눌러 치우지 않는다. 완성 팝업의 '확인' 은 홍보로 이어지고
+     홍보는 출시로 이어지므로, 치우는 순간 다음 절의 출시 검사가 이미 끝난
+     게임을 다시 내려 하게 된다. 보스가 섰는지는 모달과 무관하다. */
+  for (let i = 0; i < 24; i++) {
+    const s = await state();
+    if (s.boss) throw new Error(`완성 뒤에 보스가 섰다: ${s.boss} (arena=${s.arena})`);
+    if (errs.length) throw new Error(errs[0]);
+    await page.waitForTimeout(150);
+  }
+  return '3.6초 동안 아무도 안 섬';
 });
 
 console.log('\n── 4. 출시와 판매 현황 ──');

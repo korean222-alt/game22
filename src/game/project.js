@@ -19,6 +19,7 @@ import {
 } from './data.js';
 import { JOBS, JOB_ABILITY } from './data.js';
 import { helperSkill } from './helpers.js';
+import { rollStageSpecies, MONSTER_BY_ID } from './monsters.js';
 import {
   power, basePower, ability, motivationMult, traitMult, traitAdd, hasTrait, traitsOf,
   gearAxis, drainHp, hpRatio, syncHp, healHp, upSpeedMult, upCritAdd,
@@ -192,13 +193,17 @@ export function expectedRoundDamage(team) {
 }
 
 /* 네 마리분의 총 체력과 그 배분. */
-export function raidPlan({ genreId, platformId, grade, seriesN = 1, team }) {
+export function raidPlan({ genreId, platformId, grade, seriesN = 1, team, rnd = null }) {
   const rounds = raidRounds({ genreId, platformId, grade, seriesN });
   const total = Math.max(60, Math.round(expectedRoundDamage(team) * rounds));
   const stages = BOSS_STAGES.map((st, i) => ({
     index: i,
     ko: st.ko,
-    species: st.species,
+    /* 칸마다 후보 중 하나를 뽑는다. rnd 를 안 주면(착수 전 미리보기) 기본값
+       그대로다 — 고르는 화면에서 상대가 매번 흔들리면 그건 정보가 아니다. */
+    species: rnd ? rollStageSpecies(i, rnd) : st.species,
+    // 무대는 몬스터가 아니라 **공정**의 것이라 뽑지 않는다.
+    set: st.set || st.species,
     dmg: st.dmg,
     atk: st.atk,
     card: st.card,
@@ -255,7 +260,7 @@ export function devCostOf({ platformId, grade, seriesN = 1, monetizeId = null })
   return Math.round(platform.cost * gradeMult * seriesMult * (money ? money.cost || 1 : 1));
 }
 
-export function startProject({ proposal, platformId, monetizeId, team, rank, seriesOf, helpers }) {
+export function startProject({ proposal, platformId, monetizeId, team, rank, seriesOf, helpers, rnd = null, title = null }) {
   const genre = GENRES.find((g) => g.id === proposal.genreId);
   const platform = PLATFORMS.find((p) => p.id === platformId);
   const seriesN = seriesOf ? seriesOf.seriesN + 1 : 1;
@@ -263,7 +268,7 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
   const seriesMult = 1 + (seriesN - 1) * 0.55;
   const gradeMult = 0.75 + proposal.grade * 0.25;
   const plan = raidPlan({
-    genreId: proposal.genreId, platformId, grade: proposal.grade, seriesN, team,
+    genreId: proposal.genreId, platformId, grade: proposal.grade, seriesN, team, rnd,
   });
 
   const boss = bossFor(genre.id);
@@ -272,12 +277,15 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
   // 카드를 고를 때 이름이 붙는다 — 아직 정하지 않은 것을 미리 보여줄 수는 없다.
   stages[0].name = boss.ko;
   stages[1].name = '???';
-  stages[2].name = '마감 데몬';
-  if (stages[3]) stages[3].name = '버그 무리';
+  stages[2].name = speciesKo(stages[2], '마감 데몬');
+  if (stages[3]) stages[3].name = speciesKo(stages[3], '버그 무리');
 
   return {
     id: 'gp' + (_pid++),
-    title: proposal.title,
+    /* 제목은 **플레이어의 것**이다. 기획서가 지어 준 이름을 그대로 써도 되고,
+       착수 화면에서 바꿔도 된다. 빈 문자열이 들어오면 기획서 이름으로 돌아간다 —
+       제목 없는 게임이 판매 차트에 오르면 그 줄은 아무것도 가리키지 못한다. */
+    title: (typeof title === 'string' && title.trim()) ? title.trim().slice(0, 18) : proposal.title,
     proposal,
     genreId: genre.id,
     // 개발은 보스전이다. 넷을 차례로 잡는다.
@@ -347,7 +355,13 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
 /* 저장 파일이 예전 판(스테이지가 없던 시절)이면 여기서 한 마리짜리
    스테이지로 감싸 준다. 세이브를 깨지 않는 값이 가장 싸다. */
 export function ensureStages(project) {
-  if (!project || project.stages) return project;
+  if (!project) return project;
+  if (project.stages) {
+    // 옛 세이브에는 무대 칸이 없다. 종족을 그대로 무대 이름으로 쓰면 예전과
+    // 똑같이 돈다 — 그 시절에는 둘이 같은 값이었기 때문이다.
+    for (const st of project.stages) if (!st.set) st.set = st.species || 'cat';
+    return project;
+  }
   project.stages = [{
     index: 0, ko: '아이디어', species: 'orc', dmg: 1, atk: 4.6, card: null,
     name: project.boss ? project.boss.ko : '아이디어',
@@ -738,18 +752,27 @@ export function reviveTeam(project, staffById) {
   return out;
 }
 
+/* 그 칸에 실제로 선 놈의 이름. 종족을 제비뽑기로 고르게 되면서, 이름을
+   상수로 적어 두면 화면에는 벌떼가 서 있는데 이름표는 '마감 데몬' 이 된다. */
+function speciesKo(stage, fallback) {
+  const def = stage && MONSTER_BY_ID.get(stage.species);
+  return def ? def.ko : fallback;
+}
+
 /* 스테이지 이름. 2번 보스는 고른 조합이, 3번은 마감이 이름을 준다. */
 export function stageName(project, i) {
   if (i === 0) return bossFor(project.genreId).ko;
+  const st = project.stages ? project.stages[i] : null;
   if (i === 1) {
     const c = project.contentId ? CONTENTS.find((x) => x.id === project.contentId) : null;
     const g = GENRES.find((x) => x.id === project.genreId);
     if (!c) return '조합 보스';
     return `${c.ko} ${g ? g.ko : ''} 융합체`.trim();
   }
-  if (i >= 3) return '버그 무리';
+  if (i >= 3) return speciesKo(st, '버그 무리');
+  const base = speciesKo(st, '마감 데몬');
   const m = project.methodId ? METHODS.find((x) => x.id === project.methodId) : null;
-  return m ? `마감 데몬 · ${m.ko}` : '마감 데몬';
+  return m ? `${base} · ${m.ko}` : base;
 }
 
 /* ---------- 버그를 얼마나 잡았나 ----------

@@ -278,7 +278,12 @@ await step('개발을 시작하고 세트장에 들어가면 3D 보스가 뜬다
   }));
   if (!r.boss) throw new Error('보스가 안 생겼다');
   if (!r.inBattle) throw new Error('아레나가 안 열렸다');
-  if (r.stages !== 3) throw new Error('보스가 3마리가 아니다: ' + r.stages);
+  /* 마지막 공정에 버그 보스가 한 마리 더 서면서 3연전이 4연전이 됐다.
+     숫자를 여기에 박아 두면 공정을 늘릴 때마다 하네스가 거짓말을 한다 —
+     data.js 의 표를 그때그때 읽어서 맞춘다. */
+  const wantStages = await page.evaluate(async () =>
+    (await import('/src/game/data.js')).BOSS_STAGES.length);
+  if (r.stages !== wantStages) throw new Error(`보스가 ${wantStages}마리가 아니다: ` + r.stages);
   return `${r.boss} · 삼각형 ${r.tris}개 · 라벨 "${r.label}" · ${r.stages}연전`;
 });
 
@@ -334,23 +339,31 @@ await step('보스가 반격하고 팀의 체력이 준다', async () => {
     g.pauseBattle(false);
     const team0 = g.project.team.slice();
     const hp0 = g.staff.filter((s) => team0.includes(s.id)).reduce((a, s) => a + s.hp, 0);
-    let attacks = 0, cleared = 0;
+    let attacks = 0, cleared = 0, hits = 0;
     // 자동 전투를 실시간으로 굴린다. 보스의 반격은 자기 게이지로 나온다.
     for (let i = 0; i < 900 && g.project; i++) {
       if (g.project.pendingCards) { g.pickCard(g.project.pendingCards.options[0].id); continue; }
       const res = g.devTick(0.1, 4);
       for (const ev of res.events || []) {
-        if (ev.kind === 'boss') attacks++;
+        if (ev.kind === 'boss') { attacks++; hits += (ev.hits || []).length; }
         if (ev.kind === 'stageClear') cleared++;
       }
       if (attacks >= 3) break;
     }
     const hp1 = g.staff.filter((s) => team0.includes(s.id)).reduce((a, s) => a + s.hp, 0);
-    return { attacks, cleared, hp0, hp1, bugExtra: g.project ? g.project.bugExtra : null };
+    return { attacks, cleared, hits, hp0, hp1, bugExtra: g.project ? g.project.bugExtra : null };
+    /* 공정이 넘어가면 쓰러졌던 사람이 피 한 칸으로 **일어선다**(reviveTeam).
+       그래서 스테이지를 넘긴 구간에서는 체력 합이 오히려 늘 수 있다 —
+       그 사실을 모르고 hp1 < hp0 만 보던 검사가 여기서 헛돌았다. */
   });
   if (r.none) throw new Error('프로젝트가 없다');
   if (!r.attacks) throw new Error('반격이 한 번도 없었다');
-  if (r.hp1 >= r.hp0) throw new Error(`체력이 안 줄었다 ${r.hp0} → ${r.hp1}`);
+  /* 공정이 넘어가는 순간 쓰러졌던 사람이 피 한 칸으로 일어서므로
+     (reviveTeam), 스테이지를 넘긴 구간에서는 체력 **합**이 오히려 늘 수
+     있다. 그 구간에서 보려는 것은 "반격이 체력을 깎는가" 이고, 그건
+     반격 이벤트가 실제로 사람을 때렸는지로 봐야 한다. */
+  if (!r.cleared && r.hp1 >= r.hp0) throw new Error(`체력이 안 줄었다 ${r.hp0} → ${r.hp1}`);
+  if (r.cleared && !r.hits) throw new Error('반격이 아무도 안 때렸다');
   return `반격 ${r.attacks}회 · 격파 ${r.cleared}마리 · 팀 체력 ${r.hp0} → ${r.hp1} · 반격 버그 ${r.bugExtra}`;
 });
 

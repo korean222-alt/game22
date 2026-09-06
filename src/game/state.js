@@ -38,7 +38,7 @@ import {
 import { TASKS, rollEvent, grantReward, rewardText } from './events.js';
 import {
   RIVALS, marketScale, rivalReleaseChance, makeRivalRelease, tickRival,
-  buildChart, myBestRank, CHART_FAN_BONUS,
+  buildChart, myBestRank, CHART_FAN_BONUS, rivalTitle,
 } from './rivals.js';
 import {
   HELPERS, HELPER_BY_ID, helperSlots, helperBonus, helperLevel,
@@ -49,7 +49,7 @@ import {
   recordMail, sealMail, giftText,
 } from './mail.js';
 import {
-  EXPO_PLANS, awardBar, judge, awardTotals, nearMiss,
+  EXPO_PLANS, awardBar, judge, awardTotals, nearMiss, rivalAwards,
   expoVisitors, expoResult, expoNote,
 } from './awards.js';
 import {
@@ -754,10 +754,20 @@ export class Game {
     this.dexSee('jobs', c.job);
     this.candidates = this.candidates.filter((x) => x.id !== candidateId);
     this.note(`${c.name} (${JOBS[c.job].ko}) 입사.`, 'good');
-    if (this.desks) this.assignDesks(this.desks);
-    // The office walks a new hire in through the front door rather than
-    // teleporting them into a chair, so hiring is something you SEE happen.
+    /* ---- 순서가 연출을 정한다 ----
+       The office walks a new hire in through the front door rather than
+       teleporting them into a chair, so hiring is something you SEE happen.
+
+       그런데 오랫동안 그 일이 실제로는 안 일어났다. `assignDesks` 가 먼저
+       `desks` 를 쏘고, 그 신호를 받은 3D 층이 **아직 오지 않은 사람의 몸을
+       만들어 의자에 앉혀 버렸기** 때문이다. 그 뒤에 오는 `hired` 는 이미
+       앉아 있는 사람을 보고 아무것도 하지 않았다 — 신입은 늘 자기 자리에
+       뿅 하고 나타났다.
+
+       그래서 `hired` 를 먼저 쏜다. 그때는 아직 책상이 없으므로 3D 층은
+       정문에 세워만 두고, 바로 뒤의 `desks` 가 어디로 걸어갈지를 알려준다. */
     this.emit('hired', c);
+    if (this.desks) this.assignDesks(this.desks);
     this.emit('staff', null);
     this.checkTasks();
     return { ok: true };
@@ -861,7 +871,7 @@ export class Game {
   availableMonetize() { return MONETIZE.filter((m) => this.company.rank >= m.rank); }
 
   /* ---------- development ---------- */
-  beginDevelopment({ proposalId, platformId, monetizeId, teamIds, seriesOfId }) {
+  beginDevelopment({ proposalId, platformId, monetizeId, teamIds, seriesOfId, title = null }) {
     if (this.project) return { ok: false, why: '이미 개발 중' };
     if (this.finished) return { ok: false, why: '완성작을 먼저 출시하세요' };
     /* 앞의 게임이 아직 팔리고 있으면 다음 게임에 착수할 수 없다.
@@ -887,6 +897,9 @@ export class Game {
     const p = startProject({
       proposal: pr, platformId, monetizeId, team,
       rank: this.company.rank, seriesOf, helpers: this.helperBonus(),
+      // 상대는 착수할 때 제비뽑기로 정해지고, 그 결과가 프로젝트에 박힌다.
+      // 제목은 플레이어가 바꿔 넣을 수 있다 — 비워 두면 기획서 이름 그대로.
+      rnd: this.rnd, title,
     });
     // 스태미나는 **여기서** 나간다. 게임을 만드는 데 쓰는 것이 스태미나이고,
     // 보스를 잡는 데 쓰는 것은 직원들의 체력이다.
@@ -1887,8 +1900,13 @@ export class Game {
     c.lastAwardKey = key;
     // 지난 한 달(4주) 안에 낸 게임. 날짜가 없는 옛 세이브의 출시작은 뺀다.
     const entries = this.releases.filter((r) => r.at && this._weeksSince(r.at) <= 4);
-    if (!entries.length) return null;
-    const wins = judge(entries, c.year, c.rank);
+    /* 우리가 낸 게임이 없어도 시상식은 열린다.
+
+       예전에는 여기서 돌아섰다. 그러면 데뷔 전의 몇 달과 개발이 길어진 달에는
+       달력에 아무 일도 안 적히고, 시상식은 "우리가 잘한 달에만 있는 것" 이
+       되었다. 업계의 행사가 우리 사정에 맞춰 열리지는 않는다 — 우리가 아무
+       것도 안 냈으면 남들 이름이 불릴 뿐이다. */
+    const wins = entries.length ? judge(entries, c.year, c.rank) : [];
     const totals = awardTotals(wins);
     const near = wins.length ? null : nearMiss(entries, c.year);
     if (wins.length) {
@@ -1909,7 +1927,16 @@ export class Game {
       this.maybeGrantHelper(top, 1.3, '시상식');
       this._maybeRankUp();
     }
-    this.pendingAward = { year: c.year, month: c.month, wins, totals, near, entries: entries.length };
+    // 우리가 못 가져간 부문은 남이 가져간다. 무대에만 뜨고 규칙은 안 바꾼다.
+    const others = rivalAwards(wins, c.year, this.rnd, RIVALS, rivalTitle);
+    if (!wins.length && others.length) {
+      const top = others[0];
+      this.note(`${c.month}월 시상식: ${top.catKo} ${top.grade.ko}은(는) ${top.studio}의 「${top.title}」에 돌아갔다.`);
+    }
+    this.pendingAward = {
+      year: c.year, month: c.month, wins, totals, near, others,
+      entries: entries.length, rank: c.rank, studio: c.name || '우리 스튜디오',
+    };
     this.emit('award', this.pendingAward);
     this.checkTasks();
     return this.pendingAward;

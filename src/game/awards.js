@@ -101,6 +101,45 @@ export function judge(releases, year, rank = 1) {
   return wins;
 }
 
+/* ---------- 남이 받는 상 ----------
+
+   예전에는 우리가 낸 게임이 없으면 시상식 자체가 없었다. 그 달에는 달력에
+   아무 일도 안 적히고, 상은 "우리가 잘하면 생기는 것" 이 되었다. 그런데
+   시상식은 우리 회사의 행사가 아니라 **업계의 행사**다 — 우리가 아무것도
+   안 냈어도 남들은 냈고, 무대에서는 그 이름이 불린다.
+
+   그래서 우리가 못 가져간 부문은 라이벌 스튜디오가 가져간다. 이게 있어야
+   두 가지가 생긴다: 못 받은 달에도 무대가 서고, 받은 달에는 **뺏어 온 것**이
+   된다.
+
+   숫자는 진짜가 아니다 — 라이벌은 품질 축을 갖고 있지 않다. 기준선 언저리의
+   그럴듯한 값을 만들어 낸다. 이 값은 아무 규칙도 바꾸지 않고 무대에만 뜬다. */
+export function rivalAwards(wins, year, rnd, rivals, titleOf) {
+  const taken = new Set(wins.map((w) => w.catId));
+  const out = [];
+  for (const cat of AWARD_CATS) {
+    if (taken.has(cat.id)) continue;
+    // 매달 여섯 부문이 전부 나가면 상이 흔해진다. 대상은 자주, 부문상은 가끔.
+    if (rnd() > (cat.id === 'fun' ? 0.92 : 0.7)) continue;
+    const bar = awardBar(year, cat.id);
+    const grade = AWARD_GRADES[rnd() < 0.28 ? 0 : rnd() < 0.6 ? 1 : 2];
+    const studio = rivals[Math.floor(rnd() * rivals.length) % rivals.length];
+    out.push({
+      catId: cat.id, catKo: cat.ko, icon: cat.icon,
+      title: titleOf(rnd),
+      studio: studio.ko, studioIcon: studio.icon,
+      grade,
+      value: Math.round(bar * (grade.at + rnd() * 0.25)),
+      bar,
+      statKo: cat.stat ? STAT_KO[cat.stat] : '재미',
+    });
+  }
+  /* 매달 서는 무대다. 남의 상까지 여섯 개를 다 부르면 한 번에 1분이 넘고,
+     그러면 시상식은 사건이 아니라 통행료가 된다. 세 부문이면 "업계가 돌고
+     있다" 는 충분히 전해진다. */
+  return out.slice(0, 3);
+}
+
 export function awardTotals(wins) {
   return wins.reduce((a, w) => ({
     money: a.money + w.prize.money,

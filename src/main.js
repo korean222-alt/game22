@@ -21,7 +21,7 @@ import { loadKit } from './world/kit.js';
 import { initSound } from './ui/sound.js';
 import { FURNITURE_BY_ID, footprint } from './game/furniture.js';
 import { Crew, Agent, ST, homeState } from './world/agents.js';
-import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, tauntFor } from './world/boss.js';
+import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, stageSetOf, tauntFor } from './world/boss.js';
 import { buildArena, arenaSetFor, inArenaZone } from './world/arena.js';
 import { Game } from './game/state.js';
 import { addMotivation } from './game/staff.js';
@@ -99,7 +99,10 @@ class View {
     this.boss = null;               // the idea currently being fought
     this.arena = false;             // 보스 아레나 카메라가 켜져 있는가
     this.bossEl = null;
-    this.bossProject = null;
+    this.bossProject = null;    // 지금 서 있는 놈의 키
+    this.bossWant = null;       // 지금 세우려는 놈의 키 (모델을 기다리는 중일 수 있다)
+    this.bossLoading = false;
+    this.bossFailAt = 0;        // 모델을 못 받은 시각. 잠깐 쉬었다 다시 본다
     this.bossFloor = 0;
     /* ---- 아레나 세트장 ----
        사무실에서 아주 멀리 떨어진 자리에 세트를 짓고, 아레나에 들어가면
@@ -279,15 +282,24 @@ class View {
       const d = this.deskOf(s);
       const moved = (a.home ? a.home.id : null) !== (d ? d.id : null);
       a.home = d;
-      if (fresh && this.arriving.has(s.id) && this.entrance) {
-        // A new hire comes in through the front doors and walks to their desk.
-        this.arriving.delete(s.id);
-        const e = this.entrance;
-        a.placeAt(e.x, e.z, e.yaw, e.floor);
-        a.state = ST.STAND;
-        a.placed = true;
-        a.say('오늘부터 잘 부탁드립니다!', 3.4);
+      if (this.arriving.has(s.id) && this.entrance) {
+        /* A new hire comes in through the front doors and walks to their desk.
+
+           두 걸음으로 나뉜다. `hired` 가 먼저 오고(그때는 아직 책상이 없다)
+           정문에 세우기만 한 뒤, 곧이어 오는 `desks` 가 어디로 갈지를
+           알려주면 그때 걷기 시작한다. `arriving` 은 그 사이를 지키는
+           표식이라, 자리가 정해질 때까지 지우지 않는다 — 지워 버리면 바로
+           아래의 '자리가 바뀌었으면 앉힌다' 가 그 사람을 의자에 순간이동
+           시킨다. 그것이 신입이 늘 자기 자리에 뿅 하고 나타나던 이유였다. */
+        if (fresh) {
+          const e = this.entrance;
+          a.placeAt(e.x, e.z, e.yaw, e.floor);
+          a.state = ST.STAND;
+          a.placed = true;
+          a.say('오늘부터 잘 부탁드립니다!', 3.4);
+        }
         if (d) {
+          this.arriving.delete(s.id);
           setTimeout(() => {
             if (!this.crew.get(a.id)) return;
             a.goTo({ x: d.seatX, z: d.seatZ, yaw: d.yaw, floor: d.floor, state: homeState(d) },
@@ -388,9 +400,26 @@ class View {
     if (!project || !this.arena) { this.clearBoss(); return; }
     // 연전이므로 키는 프로젝트가 아니라 **프로젝트+스테이지**다. 예전처럼
     // 프로젝트 id 만 보면 두 번째 보스가 첫 번째 놈의 몸으로 나온다.
-    const key = project.id + ':' + (project.stage || 0);
-    if (this.boss && !this.boss.dead && this.bossProject === key) return;
+    const key = bossKey(project);
+    /* 이미 그 놈이 서 있거나, **지금 불러오는 중**이면 아무것도 하지 않는다.
+
+       `bossWant` 가 없던 동안 이 자리는 스테이지마다 세 번씩 돌았다. 모델이
+       네트워크에서 오는 동안 `this.boss` 는 null 이고, playBattle 은 초당
+       스무 번 여기를 지나가므로, 조건이 매번 참이 되어 spawnBoss 가 겹쳐
+       떴다. 늦게 도착한 쪽이 앞의 것을 dispose 없이 덮어써서 SkinnedInstance
+       가 스테이지마다 두 개씩 GPU 에 남았고, 세트장도 그만큼 다시 지어졌다. */
+    if (this.bossWant === key && (this.boss || this.bossLoading)) return;
+    /* 모델을 못 받았으면 잠깐 쉬었다 다시 시도한다. 쉬는 구간이 없으면
+       파일이 깨졌거나 네트워크가 끊긴 동안 이 자리가 초당 스무 번씩
+       fetch 를 던진다 — 전투는 그래도 돌지만 회선은 안 돈다. */
+    if (this.bossFailAt && this.time - this.bossFailAt < 2.5) return;
     this.spawnBoss(project);
+  }
+
+  /* 지금 화면에 서 있어야 하는 놈의 이름표. 프로젝트가 없으면 아무도 아니다. */
+  bossKeyNow() {
+    const p = this.game.project;
+    return this.arena && p ? bossKey(p) : null;
   }
 
   /* 모델은 네트워크에서 온다. 로딩 중에 프로젝트가 끝나거나 바뀌었을 수
@@ -400,21 +429,35 @@ class View {
     this.clearBoss();
     if (!project) return;
     const def = monsterForStage(project);
-    const want = project.id + ':' + (project.stage || 0);
+    const want = bossKey(project);
     this.bossProject = want;
-    const model = await preloadMonster(def);
-    if (!model || this.bossProject !== want || this.game.project !== project) return;
+    this.bossWant = want;
+    this.bossLoading = true;
+    let model = null;
+    try { model = await preloadMonster(def); } finally { if (this.bossWant === want) this.bossLoading = false; }
+    /* 돌아왔을 때 세상이 그대로인지 확인한다. 모델은 네트워크에서 오므로
+       그 사이에 스테이지가 넘어갔을 수도, 게임이 완성됐을 수도, 세트장에서
+       나왔을 수도 있다. `this.arena` 까지 보는 이유가 여기 있다 — 예전에는
+       사무실로 나온 뒤에 도착한 모델이 그대로 세워졌다. */
+    if (!model) { this.bossFailAt = this.time; return; }
+    if (this.bossWant !== want || this.game.project !== project || !this.arena) return;
+    this.bossFailAt = 0;
 
     this.boss = new Boss(def, model);
+    this.bossProject = want;
     this.boss.phase = project.phase || 0;
     this.boss.scale = 1 + (project.phase || 0) * 0.08;
-    // 아레나 안이면 세트장을 이 종에 맞춰 다시 짓고 그 위에 세운다.
-    if (this.arena) this.useArenaSet(def.id);
+    // 세트장은 몬스터가 아니라 **공정**의 것이다. 같은 칸이면 누가 서든 같은 무대다.
+    this.useArenaSet(stageSetOf(project));
     const spot = this.bossSpot();
     this.boss.setAnchor(spot[0], spot[1], spot[2], this.bossFloor);
     this.boss.faceTo(this.bossFaceYaw());
     this.boss.yaw = this.boss.goalYaw;
     this.boss.say(tauntFor(def, this.rnd), 3.4);
+    /* 무대는 공정이 정하고 몸은 제비뽑기가 정하므로, 둘의 조합마다 알맞은
+       카메라 거리가 다르다. 서 있는 놈의 키에 맞춘다 (arenaDist 참고 —
+       다가가기만 하고 물러나지는 않는다). */
+    if (this.arena) cam.goalDist = arenaDist(this.arenaSet, def);
     if (!this.bossEl) {
       this.bossEl = document.createElement('div');
       this.bossEl.className = 'bosstag';
@@ -427,6 +470,8 @@ class View {
     if (this.boss) this.boss.dispose();
     this.boss = null;
     this.bossProject = null;
+    this.bossWant = null;
+    this.bossLoading = false;
     if (this.bossEl) this.bossEl.style.display = 'none';
   }
 
@@ -992,7 +1037,12 @@ class View {
 
   playBattle({ project, events }) {
     this.startWork(project.team);
-    this.ensureBoss(project);
+    /* 이 묶음이 게임의 완성을 들고 있으면 새 보스를 세우지 않는다. 마지막
+       놈이 쓰러지는 그 순간에도 여기는 한 번 더 도는데, 그때 세우면 이미
+       끝난 판 위에 다음 놈을 부르게 된다 — 그 자리가 "다 잡았는데 갑자기
+       보스가 다시 뜬다" 였다. */
+    const ending = events.some((e) => e.kind === 'complete');
+    if (!ending) this.ensureBoss(project);
     for (const ev of events) {
       if (ev.kind === 'hit' || ev.kind === 'crit') {
         const a = this.crew.get(ev.staffId);
@@ -1092,13 +1142,12 @@ class View {
         gx: cam.gx, gy: cam.gy, gz: cam.gz, floor: this.floor,
       };
     }
-    const def = project ? monsterForStage(project) : null;
-    const set = this.useArenaSet(def ? def.id : 'cat');
+    const set = this.useArenaSet(project ? stageSetOf(project) : 'cat');
     this.ensureBoss(project);
     // 보스 모델이 아직 안 왔더라도 무대는 이미 서 있다. 카메라를 무대에
     // 맞춰 두면 로딩 몇 프레임 동안 빈 사무실이 비치는 일이 없다.
     if (this.boss) this.boss.setAnchor(set.spot[0], set.spot[1], set.spot[2], this.floor);
-    cam.goalDist = set.camera.dist;
+    cam.goalDist = arenaDist(set, monsterForStage(project));
     cam.el = set.camera.el;
     cam.az = set.camera.az;
     this.wallCut = false;
@@ -1144,6 +1193,11 @@ class View {
   }
 
   celebrate(teamIds) {
+    // 이 판은 끝났다. 죽는 모션은 그대로 두되 **다시 세울 대상에서 지운다** —
+    // 그러지 않으면 죽음 연출이 끝나기 전에 ensureBoss 가 같은 키를 보고
+    // 새 몸을 부른다.
+    this.bossWant = null;
+    this.bossLoading = false;
     if (this.boss) this.boss.kill();
     for (const a of this.crew.all()) a.busy = false;
     for (const id of teamIds || []) {
@@ -1161,6 +1215,17 @@ class View {
       if (a) a.mood = s.motivation;
     }
     this.crew.update(dt, this.time, this.rnd);
+
+    /* ── 불변식 ──
+       화면에 선 보스는 **지금 이 공정의 놈**이거나 아무도 아니다. 죽는
+       중인 놈만 예외다 (쓰러지는 모션을 끝까지 보여줘야 하므로).
+
+       규칙을 매 프레임 강제하는 편이, 보스를 세우고 지우는 열 몇 군데를
+       하나씩 맞추는 것보다 싸고 확실하다. 어느 경로가 어긋나든 다음
+       프레임에 제자리로 돌아온다. */
+    if (this.boss && !this.boss.dying && this.bossProject !== this.bossKeyNow()) {
+      this.clearBoss();
+    }
 
     if (this.boss) {
       this.boss.faceTo(this.bossFaceYaw());
@@ -1309,6 +1374,34 @@ class View {
 }
 
 /* ══════════════════════════════════════ boot ══════════════════════════════ */
+
+/* 연전의 한 칸을 가리키는 이름표. 프로젝트 id 만으로는 두 번째 보스가
+   첫 번째 놈의 몸으로 나온다. */
+function bossKey(project) {
+  return project ? project.id + ':' + (project.stage || 0) : null;
+}
+
+/* 이 무대에서 이 몸을 담는 카메라 거리.
+
+   무대마다 '이 거리로 잡으면 알맞게 들어오는 키'(refHeight)가 적혀 있다.
+   그 키의 놈이 서면 기본값 그대로고, 더 작은 놈이면 그만큼 다가간다.
+
+   ── 왜 물러나지는 않는가
+   세트장은 고리 모양이다. 브레인스토밍 광장은 반지름 22 에 화이트보드가
+   둘러서 있고 27 에 연필 기둥이 선다. 기본 거리 21 은 그 안쪽에 카메라를
+   두려고 고른 값이라, 큰 놈이 섰다고 뒤로 물리면 카메라가 화이트보드 밖으로
+   나가고 화면이 통째로 판때기가 된다 (7.4 유닛짜리 외계 사양에서 실제로
+   그랬다). 큰 놈은 거리 대신 **시선 높이**로 담는다 — arenaTarget 이 키에
+   비례해 시선을 내려 몸을 위로 밀어 올린다.
+
+   완전 비례가 아니라 절반만 따라가는 이유도 같다: 무대의 크기 자체가
+   거리의 절반을 이미 정하고 있다. */
+function arenaDist(set, def) {
+  if (!set) return 30;
+  const ref = set.refHeight || 5;
+  const h = def && def.height ? def.height : ref;
+  return set.camera.dist * clamp(0.55 + 0.45 * (h / ref), 0.72, 1.0);
+}
 
 let renderer, cam, view, ui, game, skinPass, tier = 'high', quality = TIERS.high;
 // 실시간 스태미나 시계를 초에 한 번만 보게 하는 누적기.

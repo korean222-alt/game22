@@ -341,7 +341,9 @@ function buildSite(m, floors) {
   m.mat = MAT.DEF;                                       // not TILE: its 1-unit
   m.box(32, -1.2, 22, 260, 2, 260, P.ground);            // grout would tile the
                                                          // whole plaza as graph paper
-  m.box(32, -0.55, 78, 200, 1, 46, P.asphalt);           // the street
+  // 아스팔트. city.js 의 차선·연석이 x −110…180 을 덮으므로 같은 폭이어야
+  // 한다. 200 이던 동안 길 끝에서 노란 선이 허공으로 이어졌다.
+  m.box(35, -0.55, 78, 290, 1, 46, P.asphalt);           // the street
   m.mat = 0;
   m.noSolid = false;
 

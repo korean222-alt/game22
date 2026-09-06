@@ -14,6 +14,11 @@
    자리들을 한 번도 안 가르쳐 주면 플레이어는 게임을 다 봤다고 생각하고
    나간다. 그래서 첫 출시 **이후**까지 이어지도록 늘렸다.
 
+   9번(선물)을 뺀 이유: 그 단계만 **끝낼 방법이 손에 없을 수 있었다**. 선물은
+   상점에서 사거나 보물상자에서 나오는데, 둘 다 안 나온 사람에게는 영원히
+   지워지지 않는 줄이 됐다. 선물 자체는 남아 있고 — 상점과 가방이 설명한다 —
+   안내에서만 뺐다.
+
    `done(game)` is pure and reads only committed state, so the tutorial cannot
    drift out of step with a save that was loaded halfway through, and can be run
    in the headless flow test alongside the rest of the simulation. */
@@ -94,15 +99,6 @@ export const TUTORIAL = [
       + '<b>홍보</b>는 개발비의 몇 배가 나가는 <b>내기</b>입니다 — 잘 나온 게임에만 거세요. '
       + '출시하면 화면에서 <b>실시간으로 팔립니다</b>. 정산을 확인해야 다음 게임을 시작할 수 있습니다.',
     done: (g) => g.company.shipped > 0,
-  },
-  {
-    id: 'gift',
-    tab: 'staff',
-    title: '직원에게 선물을 주세요',
-    body: '상점의 <b>선물</b>과 보물상자에서 나온 물건을 직원에게 주면 <b>경험치</b>가 들어오고, '
-      + '그 물건이 가리키는 능력치가 <b>추가로</b> 오릅니다. 화집은 그래픽, LP는 사운드 — '
-      + '같은 직업 두 명을 다르게 키우는 자리입니다.',
-    done: (g) => g.staff.some((s) => (s.itemsGiven || []).length > 0),
   },
   {
     id: 'helper',

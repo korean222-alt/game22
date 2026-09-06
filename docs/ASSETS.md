@@ -160,14 +160,59 @@ node tools/kit.mjs "<압축 푼 곳>/Models/OBJ format" assets/furniture/kit.jso
   모니터 + 키보드 + 의자).
 - 모델은 **ry=0 에서 북(-Z)을 본다**. 게임의 책상 약속과 같다.
 
+## 4-3. 배경음악 — 받아 온 파일을 쓰고 싶을 때
+
+기본은 절차적이다. `ui/sound.js` 가 음표를 데이터로 들고 있고 WebAudio 가
+그걸 연주한다 — 파일 0바이트, 오프라인에서도 그대로 난다.
+
+받아 온 음원을 쓰고 싶으면 파일을 `assets/bgm/` 에 넣고 그 옆에
+`index.json` 한 장을 만든다:
+
+```json
+{ "dev": "tense.mp3", "boss": "final.mp3", "award": "gala.mp3", "expo": "expo.mp3" }
+```
+
+이 파일이 있으면 그때부터 그쪽이 이긴다. 없으면(기본값) 404 를 한 번 먹고
+조용히 절차적 트랙으로 돌아간다. 네 트랙의 쓰임은:
+
+| 이름 | 언제 |
+|---|---|
+| `dev` | 개발 현장 1~3 공정 — 긴장되고 계속 미는 곡 |
+| `boss` | 마지막 버그 보스 — 더 빠르고 조이는 곡 |
+| `award` | 시상식 무대 — 넓고 느린 곡 |
+| `expo` | 게임덱스 (지금은 미사용, 넣으면 돈다) |
+
+루프로 돌기 때문에 **이음매가 깨끗한 파일**이라야 한다. 길이는 60~120초면
+충분하다. CC0 음원은 이런 데서 받는다:
+
+- [Kenney — Music Jingles / Sci-Fi Sounds](https://kenney.nl/assets/category:Audio) (CC0)
+- [OpenGameArt · CC0 태그](https://opengameart.org/art-search-advanced?field_art_licenses_tid%5B%5D=4) (CC0)
+- [incompetech.com](https://incompetech.com/) (CC-BY — 크레딧 필요)
+- [Pixabay Music](https://pixabay.com/music/) (Pixabay 라이선스, 표시 불필요)
+
 ## 5. 지금 들어 있는 것
 
 ```
-assets/monsters/cat.glb     96 KB   아이디어 냥이  (조인트 4,  클립 5)
-assets/monsters/orc.glb    425 KB   난제 오크      (조인트 43, 클립 5)
-assets/monsters/demon.glb  414 KB   마감 데몬      (조인트 43, 클립 5)
-assets/furniture/kit.json  173 KB   가구 46종 · 삼각형 13,194 (Kenney, CC0)
+assets/monsters/cat.glb      96 KB   아이디어 냥이 · 버그 무리 (조인트 4,  클립 5)
+assets/monsters/orc.glb     425 KB   난제 오크      (조인트 43, 클립 5)
+assets/monsters/demon.glb   414 KB   마감 데몬      (조인트 43, 클립 5)
+assets/monsters/alien.glb   310 KB   외계 사양      (클립 4)
+assets/monsters/chicken.glb 296 KB   기획 병아리    (클립 4)
+assets/monsters/bee.glb     297 KB   잡생각 벌떼 · 버그 벌레떼 (클립 4)
+assets/furniture/kit.json   173 KB   가구 46종 · 삼각형 13,194 (Kenney, CC0)
+assets/city/kit.json        136 KB   건물 17종 (Kenney City Kit, CC0)
+assets/city/cars.json       436 KB   차 9종 · 삼각형 20,414 (Kenney Car Kit, CC0)
 ```
+
+나중에 들어온 **외계 사양 · 기획 병아리 · 잡생각 벌떼**는 냥이와 같은
+Quaternius 리그를 쓴다. 클립 이름이 같아서(`Idle` / `Bite_Front` /
+`HitRecieve` / `Death`) 보스 코드는 한 줄도 안 바뀌었다. 벌만 예외로
+`Idle` 이 없어서 `Flying` 이 그 자리를 대신한다 — `game/monsters.js` 의
+`idle` 필드가 클립 이름을 들고 있는 이유가 정확히 이것이다.
+
+차는 넷에서 아홉으로 늘렸다. 같은 모델을 색만 바꿔 여섯 대 세우면 그건
+여섯 대가 아니라 한 대가 여섯 번 보이는 것이고, 창밖의 직선 도로는 그
+반복을 정확히 들킨다.
 
 **Quaternius** 의 CC0 몬스터 팩(원본 아틀라스 이름 `Atlas_Monsters`,
 Blender glTF 익스포터 v1.7.33)에서 왔다. 원본은 클립이 14개인데

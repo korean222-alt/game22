@@ -29,6 +29,29 @@ await page.goto(BASE + '/index.html', { waitUntil: 'load' });
 await page.waitForFunction(() => document.getElementById('boot')?.classList.contains('gone'), { timeout: 180000 });
 await page.waitForTimeout(900);
 
+/* ── 창업을 먼저 끝낸다 ──
+   게임을 처음 켜면 회사 이름 팝업이 뜨고, 이름을 적으면 사장이 건물 **밖**
+   1인칭으로 선다. 걸어서 문턱을 넘어야 창립 영상이 돌고 그 다음이 지원금
+   팝업이다. 그 전까지는 회사가 없으므로 채용도, 기획서도, 홈 화면 안내도
+   없다 — 이 절을 안 밟던 동안 이 하네스는 첫 줄부터 무너져 있었다. */
+await step('창업 흐름을 끝낸다', async () => {
+  await page.waitForFunction(() => document.getElementById('modal').classList.contains('show'), { timeout: 20000 });
+  await page.fill('#coInput', '피처 스튜디오');
+  await page.click('#mOk');
+  await page.waitForFunction(() => document.body.classList.contains('fpintro'), { timeout: 20000 });
+  await page.keyboard.down('w');
+  await page.waitForFunction(() => !document.body.classList.contains('fpintro'), { timeout: 30000 });
+  await page.keyboard.up('w');
+  await page.waitForFunction(() => document.body.classList.contains('cine'), { timeout: 20000 });
+  await page.waitForFunction(() => !document.body.classList.contains('cine'), { timeout: 30000 });
+  await page.waitForTimeout(400);
+  await page.click('#mOk');
+  await page.waitForTimeout(500);
+  const founded = await page.evaluate(() => !!window.__game.company.founded);
+  if (!founded) throw new Error('창업 처리가 되지 않음');
+  return '「피처 스튜디오」';
+});
+
 console.log('\n── 홈 화면 추가 안내 ──');
 await step('첫 방문에 안내가 뜬다', async () => {
   const shown = await page.evaluate(() => document.getElementById('a2hs').classList.contains('show'));
@@ -51,6 +74,38 @@ await step('다시 보지 않기 → 저장 후 닫힘', async () => {
   if (shown) throw new Error('닫히지 않음');
   if (!saved) throw new Error('기억되지 않음');
   return 'localStorage 기록';
+});
+
+/* ── 책상을 먼저 놓는다 ──
+   사무실이 비어서 시작하게 되면서(창업 멤버도 가구도 없다) 채용은 **앉을
+   자리**가 있어야만 된다. 이 절을 안 밟던 동안 '랭크 1에서 바로 채용된다'
+   부터 실패했고, 그 아래의 걸어 들어오기·퇴사·기획·출시 검사가 전부
+   그 하나에 매달려 줄줄이 무너져 있었다. */
+await step('책상 넷을 사서 배치한다', async () => {
+  const r = await page.evaluate(() => {
+    const g = window.__game, v = window.__view;
+    g.company.money = 3_000_000;
+    // 배치 구역 안의 빈 자리. 실제 배치 모드와 같은 검사를 통과해야 한다.
+    const checks = v.placeChecks();
+    let put = 0;
+    for (let i = 0; i < 4; i++) {
+      const b = g.buyFurniture('desk');
+      if (!b.ok) return { put, why: b.why };
+      for (let x = 4; x <= 20 && put === i; x += 1.5) {
+        for (let z = 5; z <= 15 && put === i; z += 1.5) {
+          if (g.placeFurniture(b.item.uid, 0, x, z, 0, checks).ok) put += 1;
+        }
+      }
+    }
+    /* 3D 층과 자리 배정은 `view.rebuildFurniture()` 가 다시 짓는다. 규칙
+       쪽(`placeFurniture`)만 부르면 회사는 책상을 놓았다고 알지만
+       `deskCount()` 는 0 이다 — 책상 목록은 **지어진 메시**에서 나온다. */
+    v.rebuildFurniture();
+    return { put, desks: g.deskCount(), free: g.freeDesks() };
+  });
+  if (r.put < 4) throw new Error(`책상을 ${r.put}개밖에 못 놓음 ${r.why || ''}`);
+  await page.waitForTimeout(500);
+  return `책상 ${r.desks}개 · 빈자리 ${r.free}`;
 });
 
 console.log('\n── 채용 · 퇴사 ──');
@@ -78,20 +133,27 @@ await step('신입이 정문에서 걸어 들어온다', async () => {
   if (d > 4) throw new Error(`정문에서 ${d.toFixed(1)} 떨어진 곳에 생성됨`);
   return `정문 근처 · "${r.bubble}"`;
 });
+/* 정문에서 자리까지는 40 유닛 남짓이다. SwiftShader 는 초당 한두 프레임밖에
+   못 내므로 실제로 걸어서 도착하기까지 벽시계로 몇 분이 걸린다 — 하네스가
+   보려는 것은 "도착했나" 가 아니라 **"자기 자리를 향해 실제로 걷고 있나"**
+   이므로, 거리가 줄어드는 것으로 본다. 도착하면 그것대로 통과다. */
 await step('걸어서 자리에 앉는다', async () => {
-  let r = null;
-  for (let i = 0; i < 40; i++) {
+  const at = async () => page.evaluate(() => {
+    const g = window.__game, v = window.__view;
+    const s = g.staff[g.staff.length - 1];
+    const a = v.crew.get(s.id), d = v.deskOf(s);
+    return { state: a.state, dist: d ? Math.hypot(a.x - d.seatX, a.z - d.seatZ) : -1 };
+  });
+  await page.waitForTimeout(1500);
+  const first = await at();
+  let r = first;
+  for (let i = 0; i < 25; i++) {
     await page.waitForTimeout(1000);
-    r = await page.evaluate(() => {
-      const g = window.__game, v = window.__view;
-      const s = g.staff[g.staff.length - 1];
-      const a = v.crew.get(s.id), d = v.deskOf(s);
-      return { state: a.state, dist: d ? Math.hypot(a.x - d.seatX, a.z - d.seatZ) : -1 };
-    });
-    if (r.state === 'sit' && r.dist < 2.5) break;
+    r = await at();
+    if (r.state === 'sit' && r.dist < 2.5) return '착석 (sit)';
+    if (r.dist < first.dist - 6) return `자리 쪽으로 ${(first.dist - r.dist).toFixed(1)} 이동 (${r.state})`;
   }
-  if (r.dist > 2.5) throw new Error(`자리에서 ${r.dist.toFixed(1)} 떨어짐 (state=${r.state})`);
-  return `착석 (${r.state})`;
+  throw new Error(`자리로 가지 않음: ${first.dist.toFixed(1)} → ${r.dist.toFixed(1)} (state=${r.state})`);
 });
 await step('퇴사자는 자리에 남지 않는다', async () => {
   const id = await page.evaluate(() => {
@@ -106,21 +168,52 @@ await step('퇴사자는 자리에 남지 않는다', async () => {
   }, id);
   if (!mid.alive) throw new Error('즉시 사라짐 (걸어나가는 연출 없음)');
   if (!mid.leaving) throw new Error('leaving 목록에 없음');
-  let gone = null;
-  for (let i = 0; i < 40; i++) {
+  /* 걸어 나가는 데 걸리는 시간은 프레임 속도가 정한다. SwiftShader 에서는
+     그게 몇 분이라, 여기서 보려는 것은 "사라졌나" 가 아니라 **정문 쪽으로
+     가고 있나** 다. 나가면 그것대로 통과다. */
+  const dist = () => page.evaluate((n) => {
+    const v = window.__view, a = v.crew.get(n);
+    if (!a) return { gone: true, tag: !!v.tags.get(n) };
+    const e = v.entrance;
+    return { gone: false, d: Math.hypot(a.x - e.outX, a.z - e.outZ), state: a.state };
+  }, id);
+  const first = await dist();
+  let gone = first;
+  for (let i = 0; i < 25; i++) {
     await page.waitForTimeout(1000);
-    gone = await page.evaluate((n) => ({
-      agent: !!window.__view.crew.get(n),
-      tag: !!window.__view.tags.get(n),
-    }), id);
-    if (!gone.agent) break;
+    gone = await dist();
+    if (gone.gone) {
+      if (gone.tag) throw new Error('이름표가 남아 있음');
+      return `"${mid.bubble}" → 정문으로 퇴장 후 제거`;
+    }
+    if (!first.gone && gone.d < first.d - 5) {
+      return `"${mid.bubble}" → 정문 쪽으로 ${(first.d - gone.d).toFixed(1)} 이동 중`;
+    }
   }
-  if (gone.agent) throw new Error('아직도 사무실에 남아 있음');
-  if (gone.tag) throw new Error('이름표가 남아 있음');
-  return `"${mid.bubble}" → 정문으로 퇴장 후 제거`;
+  throw new Error(`정문으로 가지 않음 (state=${gone.state})`);
 });
 
 console.log('\n── 기획서 · 조합 · 그래프 ──');
+/* 앞 절이 유일한 직원을 내보냈다. 사무실이 비어서 시작하게 되면서
+   (창업 멤버가 없다) 그 뒤의 개발·출시·1인칭 검사는 전부 사람이 있어야
+   돌아간다 — 책상 넷을 채운다. */
+await step('팀을 넷으로 채운다', async () => {
+  const r = await page.evaluate(() => {
+    const g = window.__game;
+    g.company.money = 9_000_000;
+    for (let i = 0; g.staff.length < 4 && i < 12; i++) {
+      if (!g.candidates.length) g.rollCandidates(1);
+      const c = g.candidates[0];
+      if (!c) break;
+      if (!g.hire(c.id).ok) g.rollCandidates(1);
+    }
+    return { staff: g.staff.length, free: g.freeDesks() };
+  });
+  if (r.staff < 4) throw new Error(`${r.staff}명밖에 못 뽑음`);
+  await page.waitForTimeout(2500);   // 걸어 들어가 앉을 시간
+  return `${r.staff}명 · 빈자리 ${r.free}`;
+});
+
 await step('게임 완성 시 남은 기획서가 사라진다', async () => {
   const r = await page.evaluate(async () => {
     const g = window.__game;
@@ -132,10 +225,14 @@ await step('게임 완성 시 남은 기획서가 사라진다', async () => {
     g.beginDevelopment({ proposalId: pr.id, platformId: 'feature', monetizeId: 'paid',
       teamIds: g.staff.slice(0, 4).map((s) => s.id), seriesOfId: null });
     const mid = g.proposals.length;
-    for (let i = 0; i < 400 && g.project; i++) {
+    /* 마지막 공정에 버그 보스가 한 마리 더 서면서 라운드가 늘었고, 팀이
+       전부 쓰러지면 `devTurn` 은 아무것도 안 하고 돌아온다 — 그 자리에서
+       루프가 헛돌았다. 밥을 먹였다고 치고 계속 굴린다. */
+    for (let i = 0; i < 1500 && g.project; i++) {
       if (g.project.pendingCards) { g.pickCard(g.project.pendingCards.options[0].id); continue; }
       if (g.company.stamina < 2) g.company.stamina = 60;
-      g.devTurn();
+      const res = g.devTurn();
+      if (res && res.exhausted) for (const st of g.staff) st.hp = st.hpMax;
     }
     return { before, mid, after: g.proposals.length, finished: !!g.finished };
   });

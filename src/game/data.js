@@ -674,10 +674,15 @@ export const BOSS_RAGE = { id: 'rage', ko: '격노', hp: 0.055, bugs: 2, targets
    atk 는 반격 주기(초)다. 짧을수록 자주 때린다 — 예전 값(7.6/5.6/4.4)에서는
    반격 로그가 초 단위로 흘러가서 어느 것이 무슨 기술인지 볼 수가 없었다.
    드물게, 대신 한 방이 기억에 남는 쪽으로 옮겼다. */
+/* `species` 는 이제 **기본값**이다. 착수할 때 monsters.js 의 제비뽑기가
+   칸마다 후보 중 하나를 뽑아 덮어쓴다 — 4연전의 얼굴이 매번 같으면 두
+   번째 게임부터는 볼 것이 없다. 그래도 `set`(무대)은 칸에 고정이다:
+   무대는 몬스터의 것이 아니라 **공정**의 것이기 때문이다. 기획 단계는
+   누가 서 있든 브레인스토밍 광장이고, 마지막은 누가 서 있든 QA 실이다. */
 export const BOSS_STAGES = [
-  { ko: '장르 보스', species: 'cat', dmg: 1.00, share: 0.23, atk: 10.5, card: 'content' },
-  { ko: '조합 보스', species: 'orc', dmg: 1.08, share: 0.30, atk: 8.2, card: 'method' },
-  { ko: '마감 보스', species: 'demon', dmg: 1.16, share: 0.39, atk: 6.4, card: null },
+  { ko: '장르 보스', species: 'cat', set: 'cat', dmg: 1.00, share: 0.23, atk: 10.5, card: 'content' },
+  { ko: '조합 보스', species: 'orc', set: 'orc', dmg: 1.08, share: 0.30, atk: 8.2, card: 'method' },
+  { ko: '마감 보스', species: 'demon', set: 'demon', dmg: 1.16, share: 0.39, atk: 6.4, card: null },
   /* ---- 4번 · 버그 보스 ----
      "디버그" 는 오래 스태미나를 넣고 버튼을 누르는 잡일이었다. 고칠 것이
      남아 있는 한 누르는 게 언제나 옳으니 선택이 아니었고, 그런데도 화면
@@ -688,7 +693,7 @@ export const BOSS_STAGES = [
      덤으로 하나 더 잡고 끝나는 정도다. 대신 앞의 보스에서 팀이 쓰러져
      덜 만든 채로 넘어왔다면 그만큼 부풀어 오른다(advanceStage) — 급하게
      덮은 자리가 곧 벌레이기 때문이다. */
-  { ko: '버그 보스', species: 'bug', bug: true, dmg: 0.82, share: 0.08, atk: 13.0, card: null },
+  { ko: '버그 보스', species: 'bug', set: 'bug', bug: true, dmg: 0.82, share: 0.08, atk: 13.0, card: null },
 ];
 
 /* 이름이 바뀐 뒤로도 예전 저장 파일과 UI 가 phase 를 읽는다. 스테이지

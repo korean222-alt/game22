@@ -43,6 +43,10 @@ export const P = {
   /* exterior */
   extWall: '#c6bda8', extTrim: '#6d6555', roof: '#7b7367', lot: '#5f6062',
   curb: '#c9c4b6', grass: '#7c8a55', ground: '#c9cacc', asphalt: '#54565a',
+  /* 길바닥의 것들. 차선은 아스팔트보다 훨씬 밝아야 위에서 봐도 선으로 읽힌다. */
+  lane: '#d8d5c8', laneY: '#d6b04e', walkStripe: '#e2e0d6',
+  pole: '#5a5d63', lampHead: '#f2e6c2', signRed: '#c04a3c', signGreen: '#4a9c62',
+  signAmber: '#e0a83c', busStop: '#3f6a86', hedge: '#5d7c46', trunk: '#6b4f34',
 
   /* skin tones */
   sk1: '#eabb8d', sk2: '#dda877', sk3: '#c08a55', sk4: '#a06a3c', sk5: '#7d4c2a',
@@ -61,10 +65,12 @@ put(MAT.TILE, 'tile', 'tileDk', 'vinyl', 'slab');
 put(MAT.WOOD, 'oak', 'oakDk', 'walnut', 'walnutDk', 'lam', 'lamDk', 'door', 'doorDk', 'woodFloor', 'birch');
 put(MAT.WALL, 'wall', 'wallDk', 'wallWarm', 'wallCool', 'accent', 'accentWarm', 'base', 'extWall');
 put(MAT.CEIL, 'ceil');
-put(MAT.METAL, 'steel', 'steelDk', 'chrome', 'alu', 'frame', 'mullion');
+put(MAT.METAL, 'steel', 'steelDk', 'chrome', 'alu', 'frame', 'mullion', 'pole');
 put(MAT.FABRIC, 'chair', 'chairB', 'chairG', 'chairR', 'cubicle', 'cubicle2', 'couch', 'blind', 'blindDk');
 put(MAT.PAPER, 'paper');
-put(MAT.LEAF, 'leaf', 'leafDk');
+put(MAT.LEAF, 'leaf', 'leafDk', 'hedge');
+put(MAT.WOOD, 'trunk');
+put(MAT.EMIT, 'lampHead');
 put(MAT.SCREEN, 'screen');
 
 setMatMap(MAP);

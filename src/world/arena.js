@@ -351,6 +351,9 @@ export const ARENA_SETS = [
     sub: '아이디어가 처음 튀어나오는 자리',
     build: buildIdeaPlaza,
     camera: { az: 2.42, el: 0.33, dist: 21 },
+    // 이 거리로 잡을 때 화면에 알맞게 들어오는 몬스터의 키. 다른 종이
+    // 서면 그 비율만큼 카메라가 물러난다 (main.js 의 arenaDist).
+    refHeight: 4.2,
     lightRadius: 34,
   },
   {
@@ -359,6 +362,7 @@ export const ARENA_SETS = [
     sub: '기획서대로는 안 되는 그 부분',
     build: buildProblemYard,
     camera: { az: 2.10, el: 0.36, dist: 40 },
+    refHeight: 7.6,
     lightRadius: 46,
   },
   {
@@ -367,6 +371,7 @@ export const ARENA_SETS = [
     sub: '일정은 이미 늦었다',
     build: buildDeadlineAltar,
     camera: { az: 2.66, el: 0.42, dist: 32 },
+    refHeight: 9.4,
     lightRadius: 50,
   },
   {
@@ -375,6 +380,7 @@ export const ARENA_SETS = [
     sub: '재현 절차는 적혀 있다',
     build: buildQaLab,
     camera: { az: 2.38, el: 0.48, dist: 30 },
+    refHeight: 3.4,
     lightRadius: 40,
   },
 ];
@@ -398,6 +404,7 @@ export function buildArena(monsterId) {
     mesh: m,
     spot: [ox, ({ orc: 1.2, demon: 2.0, bug: 0.95 })[def.id] ?? 1.1, oz],
     camera: { ...def.camera },
+    refHeight: def.refHeight || 5,
     light: { center: [ox, 7, oz], radius: def.lightRadius },
   };
 }

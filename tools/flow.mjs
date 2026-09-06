@@ -160,6 +160,10 @@ await step('오른쪽에 지금 할 일이 서 있다', async () => {
   const skip = await page.evaluate(() =>
     [...document.querySelectorAll('#tutor button')].some((b) => b.textContent.includes('건너뛰기')));
   if (skip) throw new Error('건너뛰기 버튼이 남아 있음');
+  /* 9번(선물) 단계는 뺐다. 선물은 상점에서 사거나 상자에서 나오는데 둘 다
+     안 나온 사람에게는 영원히 지워지지 않는 줄이었다 — 끝낼 방법이 손에
+     없는 안내는 안내가 아니다. */
+  if (r.step !== '1 / 11') throw new Error('단계 수가 11이 아님: ' + r.step);
   return `${r.step} · ${r.title}`;
 });
 
@@ -477,13 +481,34 @@ await step('기획서 뽑기', async () => {
   if (!(await state()).proposals) throw new Error('기획서가 생기지 않음');
   return '기획서 1건';
 });
-await step('개발 착수 + 회의 연출', async () => {
+/* 게임 이름은 플레이어의 것이다. 기획서가 지어 준 이름이 기본값이고,
+   착수 화면에서 고쳐 쓰면 그게 출시작의 이름이 된다. */
+await step('게임 이름을 바꿔서 착수한다', async () => {
   await page.evaluate(() => document.querySelector('#panel .item.click').click());
   await page.waitForTimeout(250);
+  const box = await page.$('#gpTitle');
+  if (!box) throw new Error('이름 입력 칸이 없음');
+  const def = await page.evaluate(() => document.getElementById('gpTitle').value);
+  if (!def) throw new Error('기본값(기획서 이름)이 안 들어옴');
+  await box.click({ clickCount: 3 });
+  await box.type('나만의 게임');
+  // 다른 항목을 눌러 패널이 다시 그려져도 값이 살아 있어야 한다.
+  await page.evaluate(() => {
+    const plats = document.querySelectorAll('#panel .item.plat.click');
+    if (plats.length) plats[0].click();
+  });
+  await page.waitForTimeout(200);
+  const kept = await page.evaluate(() => document.getElementById('gpTitle').value);
+  if (kept !== '나만의 게임') throw new Error('패널을 다시 그리면 이름이 사라짐: ' + kept);
+  return `${def} → 나만의 게임`;
+});
+
+await step('개발 착수 + 회의 연출', async () => {
   await tap('개발 시작');
   await page.waitForTimeout(900);
   const s = await state();
   if (!s.project) throw new Error('프로젝트가 시작되지 않음');
+  if (s.project !== '나만의 게임') throw new Error('바꾼 이름이 안 붙음: ' + s.project);
   if (!s.meeting) throw new Error('회의 연출이 시작되지 않음');
   return `「${s.project}」 · 회의 중`;
 });

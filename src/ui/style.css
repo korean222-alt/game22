@@ -461,6 +461,11 @@ h4.sec:first-child{margin-top:0}
 }
 .tin:focus{outline:none;border-color:var(--gold);background:rgba(232,176,85,.10)}
 
+/* 게임 이름 칸. 입력 하나에 주사위(다시 짓기)와 되돌리기가 붙는다. */
+.gname{display:flex;gap:6px;align-items:stretch;margin-top:6px}
+.gname .tin{flex:1;min-width:0;font-size:14px;padding:9px 11px}
+.gname .btn{flex:0 0 auto;min-width:40px;padding:7px 9px}
+
 /* ── battle bar ──
    Anchored to the band right of the panel, so opening or closing the panel
    slides it rather than covering it. */
@@ -1900,3 +1905,218 @@ body.cine #menuBtn,body.cine #fpBtn,body.cine #fsBtn,body.cine #rrail,body.cine 
 body.cine #ov{
   opacity:0;pointer-events:none;transition:opacity .25s ease;
 }
+
+/* ══════════════════════ 시상식 무대 ══════════════════════
+   결과를 표로 뿌리면 시상식이 아니라 명세서다. 사회자가 부문을 부르고,
+   북이 굴러가고, 봉투가 열리고, 이름이 불린다 — 그 순서를 화면이 그대로
+   따라가야 "무대에 있다" 가 된다.
+
+   무대는 어둡고, 조명이 하나 떨어지고, 그 아래에 봉투가 있다. 우리가
+   받으면 금색 종이가 쏟아지고, 남이 받으면 조명만 식는다. */
+#gala{
+  position:fixed;inset:0;z-index:130;display:none;align-items:center;justify-content:center;
+  background:radial-gradient(120% 90% at 50% 0%,rgba(28,22,12,.94),rgba(6,7,10,.97));
+  overflow:hidden;
+}
+body.gala #gala{display:flex}
+/* 무대 조명. 위에서 원뿔로 떨어진다. */
+.gspot{
+  position:absolute;left:50%;top:-24vh;width:78vw;height:120vh;transform:translateX(-50%);
+  background:conic-gradient(from 180deg at 50% 0%,transparent 42%,rgba(232,176,85,.16) 50%,transparent 58%);
+  filter:blur(6px);pointer-events:none;
+  animation:gsway 7s ease-in-out infinite alternate;
+}
+@keyframes gsway{from{transform:translateX(-50%) rotate(-2.2deg)}to{transform:translateX(-50%) rotate(2.2deg)}}
+.gstage{
+  position:relative;z-index:2;width:min(560px,94vw);text-align:center;
+  padding:14px 18px 12px;
+}
+.gtag{font-size:10px;font-weight:800;color:var(--gold);letter-spacing:.16em}
+.gcat{
+  margin-top:10px;font-size:15px;font-weight:800;color:var(--txt);min-height:20px;
+  opacity:0;transform:translateY(6px);transition:opacity .3s ease,transform .3s ease;
+}
+.gcat.on{opacity:1;transform:none}
+/* 봉투. 굴러가는 북 동안 흔들리고, 열릴 때 커졌다 사라진다. */
+.genv{
+  margin:6px auto 0;font-size:40px;line-height:1;width:60px;height:52px;
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .25s ease;
+}
+.genv.on{opacity:1}
+.genv.roll{animation:gshake .1s linear infinite}
+@keyframes gshake{0%{transform:translate(-2px,0) rotate(-3deg)}50%{transform:translate(2px,-1px) rotate(3deg)}100%{transform:translate(-2px,0) rotate(-3deg)}}
+.genv.pop{animation:gpop .45s cubic-bezier(.2,1.5,.4,1) forwards}
+@keyframes gpop{0%{transform:scale(1)}55%{transform:scale(1.5) rotate(8deg)}100%{transform:scale(.2);opacity:0}}
+/* 수상자. */
+.gwin{min-height:74px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
+.gwin .gwt{
+  font-size:22px;font-weight:900;letter-spacing:-.01em;
+  opacity:0;transform:scale(.86);transition:opacity .28s ease,transform .28s cubic-bezier(.2,1.4,.4,1);
+}
+.gwin.on .gwt{opacity:1;transform:none}
+.gwin .gws{font-size:11.5px;color:var(--dim);opacity:0;transition:opacity .4s ease .12s}
+.gwin.on .gws{opacity:1}
+.gwin.mine .gwt{color:var(--gold);text-shadow:0 0 22px rgba(232,176,85,.55)}
+.gwin.rival .gwt{color:#b9c2d2}
+.gwin .gwg{font-size:11px;font-weight:800;padding:2px 8px;border-radius:99px;margin-top:2px;
+  background:rgba(255,255,255,.10);color:var(--txt);opacity:0;transition:opacity .4s ease .2s}
+.gwin.on .gwg{opacity:1}
+.gwin.mine .gwg{background:var(--gold);color:#241a08}
+/* 사회자. 마이크 하나와 말줄. */
+.gmc{
+  margin-top:10px;display:flex;gap:9px;align-items:flex-start;text-align:left;
+  background:rgba(0,0,0,.34);border:1px solid rgba(255,255,255,.10);border-radius:12px;
+  padding:10px 12px;min-height:52px;
+}
+.gmcw{font-size:19px;line-height:1.2;flex:none;filter:drop-shadow(0 0 8px rgba(232,176,85,.5))}
+.gmct{font-size:12.5px;line-height:1.65;color:var(--txt);flex:1}
+.gmct::after{content:'▌';color:var(--gold);animation:gcar .7s steps(1) infinite}
+.gmct.done::after{content:''}
+@keyframes gcar{0%,50%{opacity:1}51%,100%{opacity:0}}
+.gfoot{margin-top:9px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ghint{font-size:10px;color:var(--dim)}
+/* 금색 종이. 우리가 받은 순간에만 쏟아진다. */
+.gconf{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:3}
+.gconf i{
+  position:absolute;top:-14px;width:7px;height:11px;border-radius:1.5px;
+  background:var(--gold);opacity:.95;will-change:transform;
+}
+
+/* ══════════════════════ 더 많은 연출 ══════════════════════
+
+   자동 전투는 플레이어가 누를 것이 거의 없는 화면이다. 그래서 여기서
+   일어나는 일은 **보이는 것으로만** 전해진다 — 반격이 로그 한 줄로,
+   격파가 글자 하나로 지나가면 20분짜리 개발이 진행 바 한 개가 된다.
+
+   전부 DOM 이다. 3D 층에 파티클 시스템을 하나 더 얹는 것보다, 이미 도는
+   합성 레이어에 몇 십 개를 붙이는 편이 폰에서 훨씬 싸다. */
+
+/* ── 붉은 테두리 ──
+   보스가 반격했다. 화면 가장자리만 물들이므로 무대는 안 가린다. */
+#aVig{
+  position:absolute;inset:0;pointer-events:none;z-index:4;opacity:0;
+  background:radial-gradient(120% 92% at 50% 50%,transparent 46%,rgba(190,42,42,.62) 100%);
+}
+#aVig.on{animation:avig .62s ease-out}
+@keyframes avig{0%{opacity:0}16%{opacity:1}100%{opacity:0}}
+
+/* ── 격파 충격파 ──
+   무대 한복판에서 한 번 퍼진다. 위치는 JS 가 보스의 화면 좌표로 준다. */
+#aWave{
+  position:absolute;left:50%;top:46%;width:60px;height:60px;margin:-30px 0 0 -30px;
+  border-radius:50%;border:3px solid rgba(255,236,190,.9);
+  pointer-events:none;z-index:4;opacity:0;
+}
+#aWave.on{animation:awave .8s cubic-bezier(.1,.7,.3,1)}
+@keyframes awave{
+  0%{opacity:0;transform:scale(.2)}
+  12%{opacity:1}
+  100%{opacity:0;transform:scale(11)}
+}
+
+/* ── 공정 이름표 ──
+   새 보스가 설 때 화면을 가로질러 지나간다. 로그 한 줄로 흘려보내면
+   "누가 나왔는지" 가 그 순간에 안 읽힌다. */
+#aBanner{
+  position:absolute;left:0;right:0;top:38%;z-index:6;pointer-events:none;
+  text-align:center;opacity:0;
+}
+#aBanner.on{animation:aban 2.1s cubic-bezier(.16,.9,.3,1)}
+#aBanner b{
+  display:block;font-size:26px;font-weight:900;letter-spacing:-.02em;
+  color:#fff;text-shadow:0 0 26px rgba(255,120,90,.85),0 3px 12px rgba(0,0,0,.9);
+}
+#aBanner span{
+  display:block;margin-top:3px;font-size:11px;font-weight:800;letter-spacing:.16em;
+  color:#ffd0a0;text-shadow:0 2px 8px rgba(0,0,0,.9);
+}
+@keyframes aban{
+  0%{opacity:0;transform:translateX(-40px) scale(.9)}
+  14%{opacity:1;transform:none}
+  72%{opacity:1;transform:none}
+  100%{opacity:0;transform:translateX(40px) scale(1.04)}
+}
+
+/* ── 화면 흔들기 ──
+   보스의 반격과 격파에서. 캔버스와 UI 를 함께 흔들면 멀미가 나므로
+   3D 캔버스만 흔든다. */
+#gl.shake{animation:gshk .34s cubic-bezier(.36,.07,.19,.97)}
+#gl.shake.big{animation:gshkb .5s cubic-bezier(.36,.07,.19,.97)}
+@keyframes gshk{
+  0%,100%{transform:translate(0,0)}
+  20%{transform:translate(-5px,3px)}
+  40%{transform:translate(4px,-4px)}
+  60%{transform:translate(-3px,-2px)}
+  80%{transform:translate(3px,2px)}
+}
+@keyframes gshkb{
+  0%,100%{transform:translate(0,0)}
+  15%{transform:translate(-11px,6px)}
+  30%{transform:translate(10px,-8px)}
+  45%{transform:translate(-8px,-5px)}
+  60%{transform:translate(7px,5px)}
+  80%{transform:translate(-4px,2px)}
+}
+
+/* ── 화면 전체 연출 층 ──
+   아레나 밖에서 쓴다. 상자를 열 때, 상을 받을 때, 랭크가 오를 때. */
+#fx{position:fixed;inset:0;pointer-events:none;z-index:118;overflow:hidden}
+#fx .afxd{position:absolute}
+#fx i.conf{
+  position:absolute;top:-14px;width:7px;height:11px;border-radius:1.5px;
+  background:var(--gold);opacity:.95;will-change:transform;
+}
+/* 화면 위로 떠오르는 보상 글자. 돈·코인·팬이 어디서 왔는지가 보인다. */
+.fxr{
+  position:absolute;left:0;top:0;transform:translate(-50%,0);
+  font-size:15px;font-weight:900;white-space:nowrap;
+  color:#ffe6a0;text-shadow:0 2px 10px rgba(0,0,0,.9);
+  animation:fxrise 1.5s cubic-bezier(.2,.7,.3,1) forwards;
+}
+.fxr.good{color:#8fe0a0}
+.fxr.bad{color:#ff9b8f}
+@keyframes fxrise{
+  0%{opacity:0;transform:translate(-50%,10px) scale(.7)}
+  16%{opacity:1;transform:translate(-50%,0) scale(1.1)}
+  30%{transform:translate(-50%,-4px) scale(1)}
+  100%{opacity:0;transform:translate(-50%,-72px) scale(.96)}
+}
+
+/* ── 콤보가 붙은 화면 ──
+   연속이 쌓이는 동안 무대 아래가 은은하게 달아오른다. */
+body.combo #arena::after{
+  content:'';position:absolute;inset:0;pointer-events:none;z-index:2;
+  background:radial-gradient(120% 60% at 50% 118%,rgba(255,170,80,.24),transparent 70%);
+  animation:cpulse 1.1s ease-in-out infinite alternate;
+}
+@keyframes cpulse{from{opacity:.5}to{opacity:1}}
+
+/* ── 무대의 먼지 ──
+   세트장이 정지 화면으로 보이지 않게 하는 것이 전부다. 열두 알이 아주
+   느리게 떠오른다. 위치·속도·지연을 각 알갱이마다 다르게 주려면 인라인
+   스타일이나 JS 가 필요한데, 열둘이면 nth-child 로 적는 편이 싸다. */
+#aMote{position:absolute;inset:0;pointer-events:none;z-index:1;overflow:hidden}
+#aMote i{
+  position:absolute;bottom:-12px;width:3px;height:3px;border-radius:50%;
+  background:rgba(255,236,190,.55);box-shadow:0 0 6px rgba(255,220,150,.5);
+  animation:amote linear infinite;
+}
+@keyframes amote{
+  0%{transform:translateY(0) translateX(0);opacity:0}
+  12%{opacity:.9}
+  88%{opacity:.7}
+  100%{transform:translateY(-96vh) translateX(28px);opacity:0}
+}
+#aMote i:nth-child(1){left:12%;animation-duration:15s;animation-delay:0s}
+#aMote i:nth-child(2){left:22%;animation-duration:19s;animation-delay:-3s;width:2px;height:2px}
+#aMote i:nth-child(3){left:31%;animation-duration:13s;animation-delay:-7s}
+#aMote i:nth-child(4){left:39%;animation-duration:22s;animation-delay:-11s;width:4px;height:4px}
+#aMote i:nth-child(5){left:47%;animation-duration:17s;animation-delay:-2s}
+#aMote i:nth-child(6){left:55%;animation-duration:14s;animation-delay:-9s;width:2px;height:2px}
+#aMote i:nth-child(7){left:62%;animation-duration:20s;animation-delay:-14s}
+#aMote i:nth-child(8){left:70%;animation-duration:16s;animation-delay:-5s}
+#aMote i:nth-child(9){left:78%;animation-duration:23s;animation-delay:-17s;width:4px;height:4px}
+#aMote i:nth-child(10){left:85%;animation-duration:12s;animation-delay:-1s;width:2px;height:2px}
+#aMote i:nth-child(11){left:91%;animation-duration:18s;animation-delay:-8s}
+#aMote i:nth-child(12){left:6%;animation-duration:21s;animation-delay:-12s}
