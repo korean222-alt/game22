@@ -48,7 +48,7 @@ export const TUTORIAL = [
     id: 'proposal',
     tab: 'dev',
     title: '기획서를 뽑으세요',
-    body: '개발 탭의 <b>기획서 뽑기</b>는 스태미나를 1 씁니다. 장르와 ★등급이 정해지고, '
+    body: '개발 탭의 <b>기획서 뽑기</b>는 공짜입니다. 장르와 ★등급이 정해지고, '
       + '기획자가 있으면 ★가 잘 나옵니다. 마음에 안 들면 다시 뽑아도 됩니다.',
     done: (g) => g.proposals.length > 0 || !!g.project || !!g.finished || g.company.shipped > 0,
   },
@@ -57,7 +57,8 @@ export const TUTORIAL = [
     tab: 'dev',
     title: '개발을 시작하세요',
     body: '기획서를 고르고 <b>플랫폼 · 수익 모델 · 팀</b>을 정한 뒤 <b>개발 시작</b>. '
-      + '개발비와 착수 스태미나가 여기서 한 번 나갑니다 — 싸움 자체는 공짜입니다. '
+      + '<b>스태미나는 여기서만 나갑니다</b> — 피처폰 3, 스마트폰 5, 그 위로 계속 오릅니다. '
+      + '싸움 자체는 공짜이고, 큰 플랫폼은 랭크가 하나씩 오를 때마다 열립니다. '
       + '첫 게임은 <b>피처폰 · 유료</b>로 작게 시작하는 편이 안전합니다.',
     done: (g) => !!g.project || !!g.finished || g.company.shipped > 0,
   },
@@ -65,7 +66,7 @@ export const TUTORIAL = [
     id: 'battle',
     tab: 'dev',
     title: '아이디어를 게임으로 만드세요',
-    body: '개발 현장은 <b>기획 → 제작 → 마감</b> 세 공정입니다. 공정마다 아직 형태가 없는 '
+    body: '개발 현장은 <b>기획 → 제작 → 마감 → 디버그</b> 네 공정입니다. 공정마다 아직 형태가 없는 '
       + '<b>아이디어</b>가 한 마리씩 버티고 있고, 그 체력이 곧 <b>남은 작업량</b>입니다 — 직원들이 '
       + '알아서 만들어 나가고, 만드는 동안 자기 체력이 깎입니다. '
       + '중간에 <b>게임 내용</b>과 <b>개발 방식</b> 카드를 고르는데, 장르와 <b>궁합</b>이 좋은 내용을 고르는 것이 '
@@ -87,8 +88,9 @@ export const TUTORIAL = [
   {
     id: 'release',
     tab: 'dev',
-    title: '디버그하고 출시하세요',
-    body: '<b>디버그</b>로 버그를 줄이면 평론가 점수가 오릅니다(스태미나 1). '
+    title: '홍보를 걸고 출시하세요',
+    body: '버그는 마지막 공정의 <b>버그 보스</b>가 가져갑니다 — 끝까지 잡으면 대부분 사라지고, '
+      + '앞에서 팀이 쓰러졌으면 그만큼 커져서 기다립니다. '
       + '<b>홍보</b>는 개발비의 몇 배가 나가는 <b>내기</b>입니다 — 잘 나온 게임에만 거세요. '
       + '출시하면 화면에서 <b>실시간으로 팔립니다</b>. 정산을 확인해야 다음 게임을 시작할 수 있습니다.',
     done: (g) => g.company.shipped > 0,
@@ -119,17 +121,17 @@ export const TUTORIAL = [
     id: 'shop',
     tab: 'shop',
     title: '상점을 둘러보세요',
-    body: '<b>음식</b>은 전투 중 체력, <b>음료</b>는 스태미나, <b>장비</b>는 직원에게 장착하는 영구 강화입니다. '
+    body: '<b>음식</b>은 개발 중 체력, <b>음료</b>는 스태미나, <b>장비</b>는 직원에게 장착하는 영구 강화입니다. '
       + '큰 게임은 밥을 안 사주면 팀이 전부 쓰러져 <b>덜 만든 채로</b> 마감됩니다 — 그때 완성도가 깎입니다.',
     done: (g) => (g.company.spentOnShop || 0) > 0,
   },
   {
     id: 'manage',
     tab: 'company',
-    title: '운영과 계약을 보세요',
+    title: '운영과 연구를 보세요',
     body: '출시작은 매주 매출을 냅니다(동시 3작품까지). <b>시간은 일하면 흐릅니다</b> — 게임을 완성하고, '
-      + '판매 정산을 확인하고, 계약을 받을 때. 자금이 마르면 <b>계약 일감</b>이 스태미나를 쓰고 '
-      + '그 기간만큼 시간을 밀어 주면서 확실한 현금을 줍니다. '
+      + '판매 정산을 확인하고, 외주를 받을 때. 랭크가 오르면 <b>외주 의뢰</b>가 갑자기 전화로 걸려 옵니다 — '
+      + '확실한 현금이지만 그 기간만큼 우리 게임은 멈춥니다. '
       + '<b>연구</b>는 게임을 낼 때마다 쌓이는 포인트로 회사를 영구히 강하게 만듭니다.',
     done: (g) => g.company.shipped >= 2 || !!g.company.contract
       || Object.keys(g.company.research || {}).length > 0,
@@ -146,9 +148,9 @@ function isSeat(id) {
 /* The step the company is on, or null once the sequence is finished. Steps that
    are already satisfied are skipped, so a player who buys a desk before the
    tutorial mentions desks is not told to do it again. */
-/* 건너뛰기가 없어졌으므로 '다 봤다' 는 표시도 없다 — 안내는 화면에 떠 있지
-   않고 ❓ 탭에서만 열리니, 지울 이유가 없다. 옛 세이브의 tutorialDone 은
-   그래서 더 읽지 않는다. */
+/* 안내는 이제 화면 오른쪽 레일의 카드 한 장이고, 마지막 단계를 끝내면
+   카드째로 사라진다. 끝나면 사라질 것이므로 '건너뛰기' 도 '다 봤다' 표시도
+   없다 — 옛 세이브의 tutorialDone 은 그래서 더 읽지 않는다. */
 export function tutorialStep(game) {
   if (!game) return null;
   for (const step of TUTORIAL) {

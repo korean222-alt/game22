@@ -27,6 +27,22 @@ import {
 let _pid = 1;
 export function seedProjectIds(n) { _pid = Math.max(_pid, n); }
 
+/* ---------- 번뜩임 ----------
+   기본 확률과, 번뜩였을 때 한 축이 추가로 받는 배율. 데미지는 예전대로
+   2.2배이고, 여기서 정하는 것은 **품질** 쪽이다. */
+export const CRIT_BASE = 0.10;
+export const CRIT_BOOM = 2.0;
+
+/* 버그 보스를 끝까지 잡았을 때 지워지는 버그의 비율. 예전 디버그 버튼이
+   한 번에 지우던 양(약 3분의 1)을 여러 번 눌러 도달하던 자리를, 한 마리로
+   묶었다. 다 못 잡고 탈진 마감하면 잡은 만큼만 줄어든다. */
+export const BUG_BOSS_CUT = 0.9;
+
+/* 앞의 보스에서 팀이 쓰러져 덜 만든 채로 넘어왔을수록 버그 보스가 커진다.
+   "약하게, 대신 앞에서 사람이 죽었으면 세게" 가 이 두 계수다. */
+const BUG_SWELL_UNFINISHED = 2.2;
+const BUG_SWELL_FORFEIT = 0.35;
+
 const pick = (rnd, arr) => arr[Math.floor(rnd() * arr.length)];
 
 /* ---------- the two curves the whole difficulty rests on ----------
@@ -175,7 +191,7 @@ export function expectedRoundDamage(team) {
   return Math.max(1, sum * 1.14 * 1.12);
 }
 
-/* 세 마리분의 총 체력과 그 배분. */
+/* 네 마리분의 총 체력과 그 배분. */
 export function raidPlan({ genreId, platformId, grade, seriesN = 1, team }) {
   const rounds = raidRounds({ genreId, platformId, grade, seriesN });
   const total = Math.max(60, Math.round(expectedRoundDamage(team) * rounds));
@@ -186,6 +202,9 @@ export function raidPlan({ genreId, platformId, grade, seriesN = 1, team }) {
     dmg: st.dmg,
     atk: st.atk,
     card: st.card,
+    // 버그 보스 표시. 이 한 칸이 없으면 마지막 공정이 그냥 네 번째 보스가
+    // 되고, 잡아도 버그가 하나도 안 줄어든다.
+    bug: !!st.bug,
     hpMax: Math.max(20, Math.round(total * st.share)),
   }));
   return { rounds, total, stages };
@@ -254,13 +273,14 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
   stages[0].name = boss.ko;
   stages[1].name = '???';
   stages[2].name = '마감 데몬';
+  if (stages[3]) stages[3].name = '버그 무리';
 
   return {
     id: 'gp' + (_pid++),
     title: proposal.title,
     proposal,
     genreId: genre.id,
-    // 개발은 보스전이다. 세 마리를 차례로 잡는다.
+    // 개발은 보스전이다. 넷을 차례로 잡는다.
     boss: { id: genre.id, ko: boss.ko, shape: boss.shape, col: boss.col, accent: boss.accent },
     stages,
     stage: 0,
@@ -374,6 +394,9 @@ export function forfeitStage(project, rnd, ctx = {}) {
   // 이유는 그쪽에 상한(HP.bugCap)이 걸려 있기 때문이다 — 같은 칸에 넣으면
   // 다음 반격 한 번에 탈진 마감의 대가가 도로 지워진다.
   project.rushBugs = (project.rushBugs || 0) + Math.round(left * share * EXHAUST.bugs * 3);
+  // 잡은 만큼만 인정된다. 체력을 0 으로 밀기 **전에** 적어야 한다 — 버그
+  // 보스를 반만 잡고 마감하면 버그도 반만 지워진다.
+  st.killed = Math.max(0, Math.min(1, 1 - left));
   project.hp = 0;
   st.hp = 0;
   const events = [{
@@ -417,7 +440,7 @@ export function rollTreasure(project, rnd, force = false, ctx = {}) {
   };
 }
 
-/* 전체 진행률 0..1 — 세 마리를 합쳐 하나의 막대로 볼 때 쓴다. */
+/* 전체 진행률 0..1 — 넷을 합쳐 하나의 막대로 볼 때 쓴다. */
 export function raidProgress(project) {
   ensureStages(project);
   const total = project.totalHp || project.hpMax || 1;
@@ -541,7 +564,10 @@ export function staffStrike(project, s, rnd, ctx = {}) {
   const base = power(s);
   const teamMood = ctx.teamMood || 0;
 
-  const critChance = 0.06 + Math.min(0.30, (s.motivation + teamMood * 2) * 0.006)
+  /* 번뜩임. 기본 확률을 10% 로 둔다 — 한 사람이 열 번 치면 한 번은 터지는
+     정도이고, 그보다 낮으면 전투 한 판을 보고도 "이런 게 있었나" 로 끝난다.
+     의욕·특성·강화·콤보·도우미가 이 위에 얹힌다. */
+  const critChance = CRIT_BASE + Math.min(0.30, (s.motivation + teamMood * 2) * 0.006)
     + traitAdd(s, 'crit') + upCritAdd(s) + (project.critBonus || 0)
     + comboCrit(project) + (help.crit || 0)
     + ((project.critBuffT || 0) > 0 ? (project.critBuff || 0) : 0);
@@ -556,17 +582,30 @@ export function staffStrike(project, s, rnd, ctx = {}) {
   if (crit) { dmg *= 2.2; project.crits += 1; }
   dmg = Math.max(1, Math.round(dmg));
 
+  /* ---- 번뜩임이 터지는 축 ----
+     번뜩임은 데미지만 두 배로 만들고 끝났다. 그러면 "빨리 끝났다" 이지
+     "좋은 게 나왔다" 가 아니다. 이제 번뜩인 사람이 맡은 축 중 하나가
+     제비뽑기로 뽑히고, **그 축만** 원래 오르던 양의 두 배로 오른다 —
+     재미가 터질 수도 그래픽이 터질 수도 있고, 그 한 방이 완성작의 성격을
+     바꾼다. 화면은 그 축 이름을 금색으로 띄운다(boom). */
+  const contrib = Object.entries(job.contrib);
+  const boom = crit && contrib.length ? contrib[Math.floor(rnd() * contrib.length)][0] : null;
+
   const gains = {};
   let gained = null;
-  for (const [stat, w] of Object.entries(job.contrib)) {
+  for (const [stat, w] of contrib) {
     const bias = (genre.bias[stat] || 1) * (content ? (content.bias[stat] || 1) : 1)
       * (method && method.focus ? (method.focus[stat] || 1) : 1);
     const add = base * w * qMult * bias * roll * (crit ? 1.8 : 1)
+      * (stat === boom ? CRIT_BOOM : 1)
       * traitMult(s, 'quality') * fan * gearAxis(s, stat) * cmb;
     project.raw[stat] += add;
     gains[stat] = (gains[stat] || 0) + add;
     if (!gained || add > gained.amount) gained = { stat, amount: add };
   }
+  // 터진 축이 있으면 화면에 띄우는 축도 그쪽이다. 배율이 붙은 축과 다른
+  // 이름이 뜨면 "왜 2배라면서 저것만 올랐지" 가 된다.
+  if (boom && gains[boom] !== undefined) gained = { stat: boom, amount: gains[boom] };
 
   // 개발은 사람을 갈아 넣는다. 한 방마다 체력이 빠지고, 빠지면 느려진다.
   // 얼마나 갈리는지는 프로젝트의 야심이 정한다 (strain).
@@ -583,6 +622,8 @@ export function staffStrike(project, s, rnd, ctx = {}) {
     // jobId 는 연출이 쓴다 — 직업마다 다른 것을 던지게 하려면 한국어 이름이
     // 아니라 id 가 필요하다.
     staffId: s.id, name: s.name, job: job.ko, jobId: s.job,
+    // 두 배로 터진 축. 없으면 null 이고, 화면은 이 값이 있을 때만 ×2 를 띄운다.
+    boom,
     // 이번 한 방이 **어느 축을 얼마나** 올렸나. 데미지만 돌려주면 화면에는
     // 때린 것만 보이고 만들어진 것은 안 보인다.
     damage: dmg, stat: gained ? gained.stat : null,
@@ -606,6 +647,8 @@ function applyDamage(project, dmg) {
 export function stageCleared(project, rnd, ctx = {}) {
   ensureStages(project);
   const st = currentStage(project);
+  // 이 보스를 얼마나 잡았나. 탈진 마감이 먼저 적어 두었으면 건드리지 않는다.
+  if (st.killed === undefined) st.killed = 1;
   const events = [{
     kind: 'stageClear', stage: project.stage || 0, ko: st.ko,
     name: st.name || st.ko, last: (project.stage || 0) >= project.stages.length - 1,
@@ -644,6 +687,19 @@ export function advanceStage(project) {
   project.phase = project.stage;
   const st = currentStage(project);
   st.name = stageName(project, project.stage);
+  /* ---- 버그 보스의 크기는 앞에서 무슨 일이 있었는지가 정한다 ----
+     아무도 안 쓰러졌으면 덤 한 마리로 끝나고, 팀이 줄줄이 눕고 덜 만든 채로
+     넘어왔으면 그만큼 부풀어 서 있다. 급하게 덮은 자리가 곧 벌레라는 것을
+     숫자로 말하는 자리다. 총 작업량도 같이 늘려야 완성도 막대가 100%를
+     넘거나 뒤로 튀지 않는다. */
+  if (st.bug && !st.swollen) {
+    const swell = 1 + (project.unfinished || 0) * BUG_SWELL_UNFINISHED
+      + (project.forfeits || 0) * BUG_SWELL_FORFEIT;
+    const grown = Math.max(20, Math.round(st.hpMax * swell));
+    project.totalHp = (project.totalHp || st.hpMax) + (grown - st.hpMax);
+    st.hpMax = grown;
+    st.swollen = true;
+  }
   project.hpMax = st.hpMax;
   project.hp = st.hpMax;
   st.hp = st.hpMax;
@@ -662,11 +718,14 @@ export function advanceStage(project) {
 export function reviveTeam(project, staffById) {
   const out = [];
   if (!staffById) return out;
+  // 버그 보스 앞에서는 더 많이 일어선다 — 이유는 data.js 의 bugReviveHp 주석에.
+  const st = currentStage(project);
+  const ratio = st && st.bug ? (EXHAUST.bugReviveHp ?? EXHAUST.reviveHp) : EXHAUST.reviveHp;
   for (const id of project.team) {
     const s = staffById.get(id);
     if (!s) continue;
     syncHp(s);
-    const want = Math.max(1, Math.round(s.hpMax * EXHAUST.reviveHp));
+    const want = Math.max(1, Math.round(s.hpMax * ratio));
     if (s.hp < want) {
       s.hp = want;
       out.push({ kind: 'revive', staffId: s.id, name: s.name, hp: s.hp, hpMax: s.hpMax, stage: true });
@@ -688,8 +747,22 @@ export function stageName(project, i) {
     if (!c) return '조합 보스';
     return `${c.ko} ${g ? g.ko : ''} 융합체`.trim();
   }
+  if (i >= 3) return '버그 무리';
   const m = project.methodId ? METHODS.find((x) => x.id === project.methodId) : null;
   return m ? `마감 데몬 · ${m.ko}` : '마감 데몬';
+}
+
+/* ---------- 버그를 얼마나 잡았나 ----------
+   0 이면 손도 못 댔고, 1 이면 버그 보스를 끝까지 잡았다. 개발 중에는 지금
+   깎고 있는 체력에서 실시간으로 읽히므로, 오른쪽 진행판의 '예상 버그' 가
+   때리는 대로 줄어든다 — 그게 이 보스를 잡는 이유다. */
+export function debugRatio(project) {
+  if (!project || !project.stages) return 0;
+  const st = project.stages.find((s) => s.bug);
+  if (!st) return 0;
+  if (typeof st.killed === 'number') return Math.max(0, Math.min(1, st.killed));
+  if ((project.stage || 0) !== project.stages.indexOf(st)) return 0;
+  return Math.max(0, Math.min(1, 1 - project.hp / Math.max(1, project.hpMax)));
 }
 
 /* ---------- 실시간 자동 전투 ----------
@@ -1021,7 +1094,9 @@ function bugCount(project, quality, staffById, ctx = {}) {
   const total = bugs + (project.bugExtra || 0) + (project.rushBugs || 0);
   // 디버그 오리가 지운 만큼. 개발 중에 눌렀으므로 반격이 나중에 남긴
   // 버그까지 같이 줄어드는데, 그게 "일찍 부른 QA" 의 뜻과도 맞는다.
-  return total * (1 - Math.max(0, Math.min(0.9, project.bugCut || 0)));
+  const helper = 1 - Math.max(0, Math.min(0.9, project.bugCut || 0));
+  // 마지막 공정의 버그 보스를 잡은 만큼. 예전 디버그 버튼이 하던 일이다.
+  return total * helper * (1 - BUG_BOSS_CUT * debugRatio(project));
 }
 
 /* 뽑아서 가진 소재만 카드로 나온다. `owned` 가 없으면 (헤드리스 밸런스

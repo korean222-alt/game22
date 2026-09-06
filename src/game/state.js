@@ -28,8 +28,8 @@ import {
   canUpgrade, applyUpgrade, upgradeList, giveGift,
 } from './staff.js';
 import {
-  generateProposal, startProject, battleTurn, battleTick, chooseCard, finishProject, debug,
-  useHelperSkill,
+  generateProposal, startProject, battleTurn, battleTick, chooseCard, finishProject,
+  scoreCritics, useHelperSkill,
   turnCost, seedProjectIds, previewQuality, previewBugs, funScore,
   ensureStages, currentStage, raidProgress, teamDown, advanceStage, stageName,
   forfeitStage, completion, projectQuality,
@@ -783,16 +783,13 @@ export class Game {
     const s = this.staff.find((x) => x.id === staffId);
     const item = ITEMS.find((i) => i.id === itemId);
     if (!s || !item) return { ok: false };
-    // A gift costs stamina as well as money. Without that, growth is limited
-    // only by cash and the whole company maxes out in a handful of weeks —
-    // spending stamina here means training genuinely competes with shipping.
-    const stam = trainStamina(s);
-    if (this.company.stamina < stam) return { ok: false, why: `스태미나 ${stam} 필요` };
+    /* 예전에는 아이템 지급에도 스태미나가 들었다. 스태미나가 개발 착수
+       한 자리로 모이면서 그 값은 사라진다 — 교육은 이제 순수하게 돈으로
+       하고, 값은 레벨에 따라 오르는 itemCost 가 혼자 맡는다. */
     const cost = itemCost(s, item);
     if (!this.spend(cost)) return { ok: false, why: '자금 부족' };
-    this.company.stamina -= stam;
     const r = giveItem(s, itemId, this.company.rank);
-    if (!r.ok) { this.company.money += cost; this.company.stamina += stam; return r; }
+    if (!r.ok) { this.company.money += cost; return r; }
     this.note(`${s.name}에게 ${item.ko} 지급 → Lv.${s.level}`, 'good');
     this.emit('staff', null);
     return r;
@@ -837,8 +834,9 @@ export class Game {
   }
 
   makeProposal() {
-    if (this.company.stamina < 1) return { ok: false, why: '스태미나 부족' };
-    this.company.stamina -= 1;
+    // 기획서는 이제 공짜다. 스태미나는 **착수**할 때만 나간다 — 뽑는 데
+    // 값이 붙어 있으면 마음에 안 드는 기획서를 붙잡고 있는 쪽이 이득이 되고,
+    // 그건 고르는 재미를 없애는 값이었다.
     // The staffer with the most planning weight is credited as the author, and
     // is the one who gains motivation if the game ships.
     let author = null, best = -1;
@@ -1135,19 +1133,10 @@ export class Game {
     this.advanceWeeks(this.devWeeksOf(p), `「${p.title}」 개발 완료`);
   }
 
-  debugProject() {
-    const p = this.finished;
-    if (!p || p.bugs <= 0) return { ok: false, why: '고칠 버그가 없다' };
-    if (this.company.stamina < 1) return { ok: false, why: '스태미나 부족' };
-    this.company.stamina -= 1;
-    const wasHof = p.hallOfFame;
-    const r = debug(p, this.staffById(), this.rnd);
-    const gained = r.gained > 0 ? ` · 평론가 +${r.gained}점 (${p.criticTotal}점)` : '';
-    this.note(`디버그: 버그 ${r.fixed}개 수정 (남은 ${p.bugs}개)${gained}`, r.gained > 0 ? 'good' : 'info');
-    if (!wasHof && p.hallOfFame) this.note('버그를 잡아 명예의 전당에 올랐다!', 'good');
-    this.emit('finished', p);
-    return { ok: true, ...r };
-  }
+  /* 「디버그」 버튼이 있던 자리다. 버그는 이제 마지막 공정의 **버그 보스**로
+     잡는다 — 고칠 것이 남아 있는 한 누르는 게 언제나 옳던 버튼은 선택이
+     아니라 잡일이었고, 스태미나까지 먹고 있었다. 손으로 고치는 길은 상점의
+     디버그 킷 하나로 남는다. */
 
   release() {
     const p = this.finished;
@@ -1388,7 +1377,13 @@ export class Game {
       if (!p || p.bugs <= 0) return { ok: false, why: '고칠 버그가 없다' };
       const fixed = Math.min(p.bugs, item.bugs);
       p.bugs -= fixed;
-      msg = `${item.emoji} ${item.ko} — 버그 ${fixed}개 수정 (남은 ${p.bugs}개)`;
+      // 평론가 점수도 같이 올라야 한다. 버그만 줄고 점수가 그대로면 이
+      // 물건을 쓸 이유가 화면 어디에도 없다.
+      const before = p.criticTotal;
+      scoreCritics(p);
+      const up = p.criticTotal - before;
+      msg = `${item.emoji} ${item.ko} — 버그 ${fixed}개 수정 (남은 ${p.bugs}개)`
+        + (up > 0 ? ` · 평론가 +${up}점` : '');
       this.emit('finished', p);
     } else if (item.kind === 'tool' && item.crit) {
       const p = this.project;
@@ -1614,9 +1609,14 @@ export class Game {
     return { ok: true, level: lvl + 1 };
   }
 
-  /* ---------- 계약 일감 ----------
-     The design doc's rule that a player must never be permanently stuck at
-     zero. Contracts are dull, safe and always available. */
+  /* ---------- 외주 일감 ----------
+     회사 탭에 늘 서 있던 목록이었다. 자금이 마르면 아무 때나 눌러서 돈을
+     받는 자판기였고, 그 자판기가 있는 한 "돈이 없다" 는 상황이 상황이 되지
+     못했다. 이제 외주는 **찾아오는 것**이다 — 랭크가 어느 정도 오른 회사에
+     주간 사건으로 갑자기 의뢰가 들어오고, 받을지 말지를 그 자리에서 정한다.
+     (events.js 의 `outsource`)
+
+     스태미나는 더 이상 들지 않는다. 나가는 것은 시간뿐이다. */
   availableContracts() { return CONTRACTS; }
 
   contractPayFor(id) {
@@ -1628,8 +1628,6 @@ export class Game {
     const c = CONTRACTS.find((x) => x.id === id);
     if (!c) return { ok: false };
     if (this.company.contract) return { ok: false, why: '이미 계약을 진행 중' };
-    if (this.company.stamina < c.stamina) return { ok: false, why: '스태미나 부족' };
-    this.company.stamina -= c.stamina;
     const pay = contractPay(c, this.company.rank);
     this.company.contract = { id, ko: c.ko, weeksLeft: c.weeks, pay, research: c.research };
     this.note(`${c.ko} 수주. ${c.weeks}주 동안 팀이 남의 일을 한다.`);

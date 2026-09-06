@@ -276,14 +276,33 @@ export const UNKNOWN_COMBO = { ko: '미지의 조합', cls: 'ok' };
    수로 환산한 값이라 "SNS 가 스마트폰보다 넓다" 는 표시와 실제 유입 계산이
    같은 방향을 가리킨다. `share` 는 그 시장의 구매력(ARPU 배율)이다.
    어느 플랫폼으로 낼지가 고민이 되려면 넓이와 구매력이 따로 보여야 한다. */
+/* ---- 랭크 사다리와 스태미나 ----
+   `rank` 는 이 플랫폼이 열리는 회사 랭크다. 예전에는 0·2·5·9·14·20 이라
+   콘솔을 한 번 만져 보려면 몇 년을 기다려야 했고, 그 사이의 화면에는
+   "랭크 14 필요" 라고 적힌 회색 줄만 여섯 개가 서 있었다. 한 칸에 하나씩
+   열리게 바꾸면 랭크가 오르는 순간마다 **새 플랫폼 하나**가 손에 들어온다.
+
+   `stamina` 는 이 플랫폼으로 개발에 착수할 때 드는 스태미나다. 이제
+   스태미나가 나가는 자리는 여기 하나뿐이므로, 사다리를 올라갈수록
+   "한 작품에 회사가 얼마를 태우는가" 가 이 숫자로만 말해진다.
+
+   `tier` 는 난이도 축이다(0..5). 랭크를 압축했다고 콘솔이 갑자기 만만해지면
+   안 되므로, 부담·라운드 수처럼 규모를 보는 자리는 랭크가 아니라 이쪽을 본다. */
 export const PLATFORMS = [
-  { id: 'feature', ko: '피처폰', rank: 0, fans: 0.80, hp: 0.62, cost: 9000, share: 0.55, market: 6_100_000, note: '누구나 가지고 있지만 지갑은 얇다.' },
-  { id: 'smart', ko: '스마트폰', rank: 2, fans: 1.00, hp: 1.60, cost: 42000, share: 1.00, market: 21_000_000, note: '표준. 넓이도 구매력도 무난하다.' },
-  { id: 'sns', ko: 'SNS 플랫폼', rank: 5, fans: 1.35, hp: 2.60, cost: 95000, share: 1.25, market: 34_000_000, note: '입소문이 가장 빠르게 퍼진다.' },
-  { id: 'tablet', ko: '태블릿', rank: 9, fans: 1.20, hp: 3.20, cost: 160000, share: 1.10, market: 27_000_000, note: '오래 붙잡고 하는 게임에 맞는다.' },
-  { id: 'console', ko: '콘솔 크로스', rank: 14, fans: 1.60, hp: 5.00, cost: 340000, share: 1.45, market: 52_000_000, note: '한 명이 쓰는 돈이 크다. 개발비도 크다.' },
-  { id: 'own', ko: '자체 플랫폼', rank: 20, fans: 2.10, hp: 7.50, cost: 720000, share: 2.00, market: 96_000_000, note: '수수료가 없다. 회사가 곧 시장이다.' },
+  { id: 'feature', ko: '피처폰', rank: 1, tier: 0, stamina: 3, fans: 0.80, hp: 0.62, cost: 9000, share: 0.55, market: 6_100_000, note: '누구나 가지고 있지만 지갑은 얇다.' },
+  { id: 'smart', ko: '스마트폰', rank: 2, tier: 1, stamina: 5, fans: 1.00, hp: 1.60, cost: 42000, share: 1.00, market: 21_000_000, note: '표준. 넓이도 구매력도 무난하다.' },
+  { id: 'sns', ko: 'SNS 플랫폼', rank: 3, tier: 2, stamina: 7, fans: 1.35, hp: 2.60, cost: 95000, share: 1.25, market: 34_000_000, note: '입소문이 가장 빠르게 퍼진다.' },
+  { id: 'tablet', ko: '태블릿', rank: 4, tier: 3, stamina: 9, fans: 1.20, hp: 3.20, cost: 160000, share: 1.10, market: 27_000_000, note: '오래 붙잡고 하는 게임에 맞는다.' },
+  { id: 'console', ko: '콘솔 크로스', rank: 5, tier: 4, stamina: 11, fans: 1.60, hp: 5.00, cost: 340000, share: 1.45, market: 52_000_000, note: '한 명이 쓰는 돈이 크다. 개발비도 크다.' },
+  { id: 'own', ko: '자체 플랫폼', rank: 6, tier: 5, stamina: 13, fans: 2.10, hp: 7.50, cost: 720000, share: 2.00, market: 96_000_000, note: '수수료가 없다. 회사가 곧 시장이다.' },
 ];
+
+/* 예전 저장 파일과 균형 도구가 읽던 난이도 축. `rank` 를 그대로 쓰던
+   자리들이 압축된 랭크에 끌려가지 않게 한 겹 감싼다. */
+export function platformTier(p) {
+  if (!p) return 0;
+  return typeof p.tier === 'number' ? p.tier : Math.round((p.rank || 0) * 0.3);
+}
 
 /* ---------- 시장 도달 ----------
    출시한 게임이 몇 명에게 가 닿는가. 이 세 숫자가 이 게임의 수지타산을
@@ -354,14 +373,15 @@ export function rankInfo(rank) {
     staffCap: Math.min(26, 7 + Math.floor(r * 0.9)),
     motivationCap: Math.min(60, 5 + r * 2),
     floors: Math.min(5, 1 + Math.floor((r - 1) / 4)),
-    // Stamina has to cover development AND staff training AND proposals, and
-    // it is the real throughput limiter: every point is another battle turn,
-    // so this curve decides how many games a year the studio can ship.
-    // 실시간 회복(3분/1점)이 생기면서 상한을 한 칸 올렸다. 크게 올리면
-    // 처리량이 통째로 움직인다 — 8 → 14 로 올려 봤더니 5년차 출시작이
-    // 125편(기준 65~83)이 되고 금상이 18개 나왔다. 지금 값은 랭크 1 에서
-    // 11 (예전 9), 랭크 10 에서 20 (예전 18) 이다.
-    staminaMax: Math.min(46, 10 + Math.floor(r * 1.05)),
+    /* 스태미나는 이제 **개발 착수 한 자리**에서만 나간다. 기획서·교육·
+       디버그·계약이 조금씩 갉아먹던 시절에는 상한이 곧 잡일의 예산이었고,
+       그래서 "무엇에 쓸까" 가 아니라 "무엇부터 참을까" 의 숫자였다.
+
+       한 자리로 모으면 상한은 곧 **이 회사가 한 번에 얼마나 큰 작품을
+       시작할 수 있는가** 가 된다. 그래서 플랫폼 사다리(3·5·7·9·11·13)를
+       한 칸 위에서 받을 수 있게 잡는다 — 랭크 5 에서 콘솔(11)에 ★5(+2)를
+       얹어도 서고, 그 이상은 다음 랭크의 몫이다. */
+    staminaMax: Math.min(48, 12 + Math.floor(r * 1.15)),
     managedCap: 3,
   };
 }
@@ -641,12 +661,12 @@ export const BOSS_MOVES = [
 ];
 export const BOSS_RAGE = { id: 'rage', ko: '격노', hp: 0.055, bugs: 2, targets: 'all', line: '아이디어가 형태를 바꾼다!' };
 
-/* ---------- 3연전 ----------
-   보스는 하나가 세 번 변신하는 게 아니라 **세 마리**다. 장르를 정하면 장르
-   보스가 나오고, 그 놈을 잡으면 게임 내용을 고르고, 고른 조합이 두 번째
-   보스가 되고, 마지막으로 마감이 온다. 각자 자기 체력 바를 갖는다 —
-   한 프로젝트에 바가 하나뿐이면 "얼마나 남았나" 밖에 안 보이지만, 셋이면
-   "지금 어디까지 왔나" 가 보인다.
+/* ---------- 연전 ----------
+   보스는 하나가 여러 번 변신하는 게 아니라 **여러 마리**다. 장르를 정하면
+   장르 보스가 나오고, 그 놈을 잡으면 게임 내용을 고르고, 고른 조합이 두
+   번째 보스가 되고, 마감이 오고, 마지막으로 버그를 턴다. 각자 자기 체력
+   바를 갖는다 — 한 프로젝트에 바가 하나뿐이면 "얼마나 남았나" 밖에 안
+   보이지만, 여럿이면 "지금 어디까지 왔나" 가 보인다.
 
    dmg 는 그 스테이지의 방어력이다(데미지가 그만큼 나눠진다). species 는
    world/boss.js 가 불러올 3D 모델.
@@ -655,9 +675,20 @@ export const BOSS_RAGE = { id: 'rage', ko: '격노', hp: 0.055, bugs: 2, targets
    반격 로그가 초 단위로 흘러가서 어느 것이 무슨 기술인지 볼 수가 없었다.
    드물게, 대신 한 방이 기억에 남는 쪽으로 옮겼다. */
 export const BOSS_STAGES = [
-  { ko: '장르 보스', species: 'cat', dmg: 1.00, share: 0.24, atk: 10.5, card: 'content' },
-  { ko: '조합 보스', species: 'orc', dmg: 1.08, share: 0.32, atk: 8.2, card: 'method' },
-  { ko: '마감 보스', species: 'demon', dmg: 1.16, share: 0.44, atk: 6.4, card: null },
+  { ko: '장르 보스', species: 'cat', dmg: 1.00, share: 0.23, atk: 10.5, card: 'content' },
+  { ko: '조합 보스', species: 'orc', dmg: 1.08, share: 0.30, atk: 8.2, card: 'method' },
+  { ko: '마감 보스', species: 'demon', dmg: 1.16, share: 0.39, atk: 6.4, card: null },
+  /* ---- 4번 · 버그 보스 ----
+     "디버그" 는 오래 스태미나를 넣고 버튼을 누르는 잡일이었다. 고칠 것이
+     남아 있는 한 누르는 게 언제나 옳으니 선택이 아니었고, 그런데도 화면
+     하나를 차지했다. 그래서 마지막 공정을 한 마리 더 세운다 — 버그는 이제
+     **잡는 것**이다.
+
+     기본값은 약하다(전체 작업량의 8%). 아무 일 없이 마감까지 온 팀이라면
+     덤으로 하나 더 잡고 끝나는 정도다. 대신 앞의 보스에서 팀이 쓰러져
+     덜 만든 채로 넘어왔다면 그만큼 부풀어 오른다(advanceStage) — 급하게
+     덮은 자리가 곧 벌레이기 때문이다. */
+  { ko: '버그 보스', species: 'bug', bug: true, dmg: 0.82, share: 0.08, atk: 13.0, card: null },
 ];
 
 /* 이름이 바뀐 뒤로도 예전 저장 파일과 UI 가 phase 를 읽는다. 스테이지
@@ -686,12 +717,19 @@ export const RAID = {
   speeds: [1, 2, 4],   // 배속 버튼
 };
 
-/* 개발 착수에 드는 스태미나. 야심이 클수록 비싸다 — 이것이 "게임을 만들 때
-   쓰는 스태미나" 의 본체이고, 배틀 중에는 한 점도 들지 않는다. */
+/* ---------- 개발 착수 스태미나 ----------
+   스태미나가 나가는 자리는 이제 여기 하나다. 기획서도 교육도 디버그도
+   계약도 더는 스태미나를 먹지 않으므로, 이 숫자 하나가 "이 회사가 한 주에
+   몇 작품을 시작할 수 있는가" 를 통째로 정한다.
+
+   그래서 값을 플랫폼이 직접 들고 있게 했다: 피처폰 3, 스마트폰 5, 그 위로
+   7·9·11·13. 사다리를 한 칸 올라간다는 것이 곧 "한 작품에 두 배를 태운다"
+   로 읽혀야 하고, 계수를 곱해 만든 숫자는 그렇게 읽히지 않는다. */
 export function devStamina(platform, grade, seriesN = 1, monetize = null) {
-  const p = platform ? platform.rank : 0;
+  const base = platform && typeof platform.stamina === 'number'
+    ? platform.stamina : 3 + platformTier(platform) * 2;
   const m = monetize ? (monetize.stam || 0) : 0;
-  return Math.max(2, Math.round(2 + p * 0.22 + (grade - 1) * 0.7 + (seriesN - 1) * 0.5 + m));
+  return Math.max(2, Math.round(base + (grade - 1) * 0.5 + (seriesN - 1) * 0.5 + m));
 }
 
 /* ---------- 탈진 ----------
@@ -713,6 +751,11 @@ export const EXHAUST = {
      된다 — 한 스테이지의 실패가 프로젝트 전체의 실패로 확정되는 자리였다.
      한 칸은 "이어서 싸울 수는 있지만 곧 또 눕는다" 의 양이다. */
   reviveHp: 0.20,    // 다음 보스가 설 때 되살아나는 최대 체력 비율
+  /* 버그 보스 앞에서는 더 많이 일어선다. 마감이 끝난 뒤의 공정이라 크런치가
+     아니고 — 무엇보다, 피 한 칸으로 마지막 놈 앞에 세워 두면 탈진 마감이
+     확정되고 그러면 **버그가 통째로 남는다**. 한 번 삐끗한 프로젝트가 영영
+     30점대에 못 가는 자리가 거기였다. */
+  bugReviveHp: 0.50,
 };
 
 /* ---------- 부담 ----------
@@ -729,8 +772,10 @@ export const EXHAUST = {
      ★5 · 콘솔     1.11 → 밥을 안 사면 못 끝낸다 */
 export function strainOf(grade, platform) {
   const g = Math.max(1, Math.min(5, grade || 1));
-  const rank = platform ? (platform.rank || 0) : 0;
-  return Math.max(0.30, Math.min(1.25, 0.34 + (g - 1) * 0.15 + rank * 0.012));
+  // 랭크가 아니라 난이도 축(tier)을 본다. 해제 랭크를 1..6 으로 압축한 뒤에도
+  // 콘솔 대작이 피처폰 데뷔작만큼 편해지면 안 된다.
+  const tier = platformTier(platform);
+  return Math.max(0.30, Math.min(1.25, 0.34 + (g - 1) * 0.15 + tier * 0.042));
 }
 
 /* ---------- 직원 강화 ----------

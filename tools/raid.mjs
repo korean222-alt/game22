@@ -75,11 +75,27 @@ await page.goto(BASE + '/index.html', { waitUntil: 'load' });
 await page.waitForFunction(() => document.getElementById('boot')?.classList.contains('gone'), { timeout: 180000 });
 await page.waitForTimeout(600);
 
-/* 창업 모달(이름 입력 → 지원금)이 아직 떠 있으면 먼저 치운다. 이걸 안 하면
-   뒤의 카드 검사가 창업 팝업을 카드로 오인한다. */
-for (let i = 0; i < 6; i++) {
-  const open = await page.evaluate(() => document.getElementById('modal').classList.contains('show'));
-  if (!open) break;
+/* 창업 흐름(이름 입력 → 첫 출근 → 창립 영상 → 지원금)이 아직 돌고 있으면
+   먼저 치운다. 이걸 안 하면 뒤의 카드 검사가 창업 팝업을 카드로 오인하고,
+   1인칭으로 문 앞에 선 채로 아레나 검사가 시작된다. */
+for (let i = 0; i < 8; i++) {
+  const st = await page.evaluate(() => ({
+    modal: document.getElementById('modal').classList.contains('show'),
+    intro: document.body.classList.contains('fpintro'),
+    cine: document.body.classList.contains('cine'),
+  }));
+  if (st.intro) {
+    // 앞으로 걸어서 문턱을 넘는다.
+    await page.keyboard.down('w');
+    await page.waitForFunction(() => !document.body.classList.contains('fpintro'), { timeout: 30000 });
+    await page.keyboard.up('w');
+    continue;
+  }
+  if (st.cine) {
+    await page.waitForFunction(() => !document.body.classList.contains('cine'), { timeout: 30000 });
+    continue;
+  }
+  if (!st.modal) break;
   await pickFirstChoice();
   await page.waitForTimeout(250);
 }
@@ -120,7 +136,8 @@ await step('착수에 스태미나가 든다 — 전투에는 들지 않는다',
   });
   if (!r.ok) throw new Error(r.why);
   if (r.after !== r.afterProposal - r.need) throw new Error(`스태미나 차감이 안 맞음 ${r.afterProposal}→${r.after}, 필요 ${r.need}`);
-  if (r.stages.length !== 3) throw new Error('보스가 3마리가 아님: ' + r.stages.length);
+  // 마지막 공정에 버그 보스가 한 마리 더 선다 — 넷이 아니면 그 자리가 사라진 것이다.
+  if (r.stages.length !== 4) throw new Error('보스가 4마리가 아님: ' + r.stages.length);
   return `착수 -${r.need} · 스테이지 HP ${r.stages.join('/')} (합 ${r.total})`;
 });
 
@@ -132,7 +149,7 @@ await step('아레나에 들어가면 경영 UI 가 비켜선다', async () => {
   await page.waitForTimeout(300);
   const s = await state();
   if (!s.arena) throw new Error('body.arena 가 안 붙음');
-  if (s.pips !== 3) throw new Error('스테이지 표시가 3개가 아님: ' + s.pips);
+  if (s.pips !== 4) throw new Error('스테이지 표시가 4개가 아님: ' + s.pips);
   if (s.party !== 3) throw new Error('파티 카드가 3장이 아님: ' + s.party);
   const hidden = await page.evaluate(() => {
     const vis = (id) => {
@@ -166,7 +183,7 @@ await step('버튼을 누르지 않아도 직원들이 알아서 때린다', asy
   return `${b.strikes}타 · HP ${b.hp}/${b.hpMax} · 스태미나 그대로 ${b.stamina}`;
 });
 
-console.log('\n── 3. 3연전 ──');
+console.log('\n── 3. 4연전 ──');
 await step('1번 보스를 잡으면 내용 카드가 뜬다', async () => {
   await page.evaluate(() => { window.__ui.speed = 4; });
   const s = await wait((x) => x.cards || x.stage > 0, 90000, '1번 보스 격파');
@@ -234,9 +251,6 @@ console.log('\n── 4. 출시와 판매 현황 ──');
 await step('출시하면 판매 패널이 뜬다', async () => {
   const r = await page.evaluate(() => {
     const g = window.__game;
-    while (g.finished && g.finished.bugs > 3 && g.company.stamina > 0) {
-      if (!g.debugProject().ok) break;
-    }
     const res = g.release();
     window.__ui.renderAll();
     return { ok: res.ok, why: res.why, releases: g.releases.length };

@@ -101,8 +101,9 @@ for (let loop = 0; loop < YEARS * 48 * 20; loop++) {
     g.doResearch(opts[0].id);
   }
 
-  // ── contracts when cash is thin ──
-  if (!c.contract && c.money < 120000 && c.stamina > 4) {
+  // ── 외주: 자금이 얇을 때만. 목록이 사라지고 주간 사건이 됐지만,
+  //    헤드리스에서는 사건 창을 기다릴 수 없으므로 직접 받는다. ──
+  if (!c.contract && c.money < 120000 && c.rank >= 4) {
     const best = CONTRACTS.slice().sort((a, b) => g.contractPayFor(b.id) - g.contractPayFor(a.id))[0];
     g.takeContract(best.id);
   }
@@ -110,9 +111,8 @@ for (let loop = 0; loop < YEARS * 48 * 20; loop++) {
   // ── release anything finished, with affordable promotion ──
   if (g.finished) {
     bugSamples.push(g.finished.bugs);
-    let dbg = 0;
-    while (g.finished.bugs > 0 && c.stamina > 2) { g.debugProject(); dbg++; }
-    dbgSamples.push(dbg);
+    // 디버그 버튼은 사라졌다. 버그는 마지막 공정의 버그 보스가 가져간다.
+    dbgSamples.push(0);
     const affordable = MARKETING.filter((m) => g.marketingPrice(m.id) < c.money * 0.28);
     g.setMarketing(affordable[affordable.length - 1].id);
     if (g.managed().length >= g.info().managedCap) {

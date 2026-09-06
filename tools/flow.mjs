@@ -100,7 +100,16 @@ await step('회사 이름 팝업 → 지원금', async () => {
   if (!asked) throw new Error('창업 팝업이 뜨지 않음');
   await page.fill('#coInput', '플로우 스튜디오');
   await page.click('#mOk');
-  // 이름을 적으면 창립 영상이 돈다. 영상이 끝나야 지원금 팝업이 뜬다.
+  /* 이름을 적으면 **밖에 선다**. 1인칭으로 정문까지 걸어 들어가야 창립
+     영상이 돌고, 그 다음이 지원금 팝업이다. 손가락 대신 W 를 눌러서
+     문턱을 넘는다 — 못 넘으면 26초 뒤에 저절로 넘어가지만, 그러면
+     걸어 들어가는 길이 막힌 것을 하네스가 못 잡는다. */
+  await page.waitForFunction(() => document.body.classList.contains('fpintro'), { timeout: 20000 });
+  await page.keyboard.down('w');
+  await page.waitForFunction(() => !document.body.classList.contains('fpintro'), { timeout: 20000 });
+  await page.keyboard.up('w');
+  // 이제 창립 영상이 돈다. 영상이 끝나야 지원금 팝업이 뜬다.
+  await page.waitForFunction(() => document.body.classList.contains('cine'), { timeout: 20000 });
   await page.waitForFunction(() => !document.body.classList.contains('cine'), { timeout: 30000 });
   await page.waitForTimeout(400);
   const grant = await page.evaluate(() => document.getElementById('mTitle').textContent);
@@ -128,39 +137,49 @@ await step('설치 안내를 닫는다', async () => {
   if (still) throw new Error('닫기를 눌러도 안 닫힘');
   return '닫기';
 });
-/* 안내는 저절로 뜨지 않는다. 오른쪽 레일의 ❓ 안내를 눌러야 열린다. */
-await step('안내는 저절로 뜨지 않는다', async () => {
-  const stray = await page.evaluate(() => !!document.getElementById('tut'));
-  if (stray) throw new Error('옛 튜토리얼 배너가 아직 있음');
+/* 안내는 탭이 아니라 화면 오른쪽 레일의 카드 한 장이다. 지금 할 일 하나만
+   서 있고, 마지막 단계를 끝내면 카드째로 사라진다. */
+await step('튜토리얼 탭은 없다', async () => {
+  const stray = await page.evaluate(() => !!document.querySelector('.tabbtn[data-tab="guide"]'));
+  if (stray) throw new Error('옛 안내 탭이 아직 있음');
   const open = await page.evaluate(() => document.querySelector('#panel .gstep'));
-  if (open) throw new Error('안내가 저절로 떠 있음');
-  return '화면이 깨끗함';
+  if (open) throw new Error('안내가 패널에 떠 있음');
+  return '탭에서 빠졌다';
 });
-await step('❓ 안내를 누르면 지금 할 일이 뜬다', async () => {
+await step('오른쪽에 지금 할 일이 서 있다', async () => {
   const s = await state();
   if (s.tut !== 'desk') throw new Error('첫 단계가 desk 가 아님: ' + s.tut);
-  await openTab('guide'); await page.waitForTimeout(250);
-  const r = await page.evaluate(() => {
-    const now = document.querySelector('#panel .gstep.now');
-    return { n: document.querySelectorAll('#panel .gstep').length, now: now ? now.textContent.trim().slice(0, 12) : null };
-  });
-  if (!r.now) throw new Error('지금 할 일이 표시되지 않음');
-  if (r.n < 5) throw new Error(`안내 단계가 ${r.n}개뿐`);
-  const skip = await page.evaluate(() => [...document.querySelectorAll('#panel button')].some((b) => b.textContent.includes('건너뛰기')));
+  const r = await page.evaluate(() => ({
+    on: document.body.classList.contains('has-tutor'),
+    title: document.getElementById('tuTitle').textContent.trim(),
+    step: document.getElementById('tuStep').textContent.trim(),
+    body: document.getElementById('tuBody').textContent.trim().length,
+  }));
+  if (!r.on) throw new Error('튜토리얼 카드가 안 보임');
+  if (!r.title || !r.body) throw new Error('내용이 비어 있음');
+  const skip = await page.evaluate(() =>
+    [...document.querySelectorAll('#tutor button')].some((b) => b.textContent.includes('건너뛰기')));
   if (skip) throw new Error('건너뛰기 버튼이 남아 있음');
-  return `${r.n}단계 · 지금: ${r.now}`;
+  return `${r.step} · ${r.title}`;
 });
 
-console.log('\n── 2. 회사 탭 (계약 · 연구 · 저장) ──');
+console.log('\n── 2. 회사 탭 (외주 · 연구 · 저장) ──');
 await openTab('company'); await page.waitForTimeout(250);
-/* 계약은 받는 순간 그 기간만큼 시간이 흐르고 납품까지 끝난다. '다음 주로'
-   버튼이 없어졌으므로, 개발할 돈이 없는 회사가 달력을 미는 길이 여기다. */
-await step('계약 수주 = 그 자리에서 납품 · 달력이 흐른다', async () => {
+/* 외주 목록은 회사 탭에서 사라졌다. 이제 랭크가 오른 뒤 주간 사건으로
+   걸려 오고, 받으면 그 기간만큼 시간이 흐르며 납품까지 끝난다. */
+await step('회사 탭에 외주 목록이 없다', async () => {
+  const found = await page.evaluate(() =>
+    [...document.querySelectorAll('#panel button')].some((b) => b.textContent.includes('QA 대행')));
+  if (found) throw new Error('계약 일감 목록이 아직 있음');
+  return '자판기 목록이 사라졌다';
+});
+await step('외주 의뢰 = 그 자리에서 납품 · 달력이 흐른다', async () => {
   const b = await page.evaluate(() => ({
     money: window.__game.company.money,
     w: window.__game.dateLabel(),
   }));
-  await tap('QA 대행'); await page.waitForTimeout(400);
+  await page.evaluate(() => window.__game.takeContract('qa'));
+  await page.waitForTimeout(400);
   const a = await page.evaluate(() => ({
     money: window.__game.company.money,
     w: window.__game.dateLabel(),
@@ -593,14 +612,16 @@ console.log('\n── 7. 출시 준비 (디버그 · 홍보 · 출시) ──');
 // The finished-game panel lives on the 개발 tab: it is the last step of making
 // a game, not the first step of running one.
 await openTab('dev'); await page.waitForTimeout(300);
-await step('디버그로 버그 제거', async () => {
+await step('디버그 킷으로 버그 제거', async () => {
   const b0 = await page.evaluate(() => window.__game.finished.bugs);
   let passes = 0;
-  for (let i = 0; i < 40; i++) {
-    const r = await page.evaluate(() => {
-      if (window.__game.company.stamina < 2) window.__game.nextWeek();
-      return window.__game.debugProject().ok;
-    });
+  await page.evaluate(() => {
+    const g = window.__game;
+    g.company.bag = g.company.bag || {};
+    g.company.bag.debugkit = (g.company.bag.debugkit || 0) + 60;
+  });
+  for (let i = 0; i < 60; i++) {
+    const r = await page.evaluate(() => window.__game.useItem('debugkit').ok);
     if (!r) break;
     passes++;
     if ((await page.evaluate(() => window.__game.finished.bugs)) <= 0) break;

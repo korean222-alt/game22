@@ -23,14 +23,17 @@ const cache = new Map();
 
 export function preloadMonster(def) {
   if (!def) return Promise.resolve(null);
-  let job = cache.get(def.id);
+  // 파일로 캐시한다. 버그 무리는 냥이와 같은 리그를 쓰므로, id 로 캐시하면
+  // 같은 400KB 를 한 번 더 파싱한다 — 크기는 def.height 가 따로 정한다.
+  const key = def.file;
+  let job = cache.get(key);
   if (!job) {
     job = SkinnedModel.load(def.file).catch((e) => {
       console.warn('monster load failed', def.file, e);
-      cache.delete(def.id);          // 네트워크가 흔들렸다면 다음에 다시
+      cache.delete(key);             // 네트워크가 흔들렸다면 다음에 다시
       return null;
     });
-    cache.set(def.id, job);
+    cache.set(key, job);
   }
   return job;
 }

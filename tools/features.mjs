@@ -143,14 +143,19 @@ await step('게임 완성 시 남은 기획서가 사라진다', async () => {
   if (r.after !== 0) throw new Error(`완성 후에도 기획서 ${r.after}건 남음`);
   return `${r.before}건 → 착수 후 ${r.mid}건 → 완성 후 ${r.after}건`;
 });
-await step('디버그가 평론가 점수를 올린다', async () => {
+// 디버그 버튼은 사라졌다. 버그는 마지막 공정의 버그 보스가 가져가고, 손으로
+// 고치는 길은 상점의 디버그 킷 하나다 — 그 물건이 점수를 올리는지를 본다.
+await step('디버그 킷이 평론가 점수를 올린다', async () => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     const p = g.finished;
     const before = p.criticTotal, bugs = p.bugs;
-    g.company.stamina = 40;
+    g.company.bag = g.company.bag || {};
+    g.company.bag.debugkit = (g.company.bag.debugkit || 0) + 30;
     let guard = 0;
-    while (g.finished.bugs > 0 && guard++ < 60) g.debugProject();
+    while (g.finished.bugs > 0 && guard++ < 60) {
+      if (!g.useItem('debugkit').ok) break;
+    }
     return { before, after: g.finished.criticTotal, bugs, left: g.finished.bugs };
   });
   if (r.bugs > 0 && r.after <= r.before) throw new Error(`점수가 그대로 (${r.before} → ${r.after})`);

@@ -40,6 +40,15 @@ export class FirstPerson {
     this.onInteract = null;        // (target) => string | void
     this.onToggle = null;
     this.say = null;               // { text, left }
+    /* ---- 첫 출근 ----
+       게임을 처음 켜면 사장은 아직 건물 밖에 서 있다. 밖은 NavGrid 가
+       없는 자리라(격자는 건물 안쪽만 굽는다) 평소의 충돌로는 한 걸음도
+       못 걷는다. 그래서 이 동안만 격자를 끄고 **직사각형 통로**로 가둔다:
+       정문 앞 보도에서 문턱까지 일직선. 걷는 것 말고는 할 수 있는 것이
+       없어야 하는 장면이므로 상호작용도 시점 나가기도 막는다.
+
+       null 이면 평소의 1인칭이다. */
+    this.intro = null;             // { x0, x1, z0, z1, onCross }
   }
 
   /* ---- entering and leaving ---- */
@@ -62,8 +71,34 @@ export class FirstPerson {
     if (this.onToggle) this.onToggle(true);
   }
 
+  /* 첫 출근을 시작한다. `enter()` 와 달리 자리를 격자에서 찾지 않는다 —
+     밖에는 격자가 없고, 어차피 갈 수 있는 곳은 앞뿐이다. */
+  enterIntro({ floor = 0, x, z, yaw, bounds, onCross }) {
+    const v = this.view;
+    this.floor = floor;
+    this.x = x; this.z = z;
+    this.yaw = yaw; this.pitch = -0.02;
+    this.on = true;
+    this.bob = 0;
+    this.focus = null;
+    this.say = null;
+    this.keys.clear();
+    this.stick.id = null; this.stick.dx = 0; this.stick.dy = 0;
+    this.look.id = null;
+    this.intro = { ...bounds, onCross };
+    document.body.classList.add('fp', 'fpintro');
+    if (v.cam) v.cam.fp = { x: this.x, y: 0, z: this.z, yaw: this.yaw, pitch: this.pitch };
+    if (this.onToggle) this.onToggle(true);
+  }
+
+  endIntro() {
+    this.intro = null;
+    document.body.classList.remove('fpintro');
+  }
+
   exit() {
     if (!this.on) return;
+    this.endIntro();
     this.on = false;
     this.keys.clear();
     this.stick.id = null; this.stick.dx = 0; this.stick.dy = 0;
@@ -74,7 +109,8 @@ export class FirstPerson {
     if (this.onToggle) this.onToggle(false);
   }
 
-  toggle() { if (this.on) this.exit(); else this.enter(); }
+  // 첫 출근 중에는 시점을 끌 수 없다. 그 장면에서 나갈 문은 진짜 문뿐이다.
+  toggle() { if (this.intro) return; if (this.on) this.exit(); else this.enter(); }
 
   /* The floor rail still works while walking: you take the lift. */
   setFloor(f) {
@@ -151,7 +187,12 @@ export class FirstPerson {
     }
 
     if (this.say) { this.say.left -= dt; if (this.say.left <= 0) this.say = null; }
-    this.focus = this.findFocus();
+    // 첫 출근 동안에는 볼 것도 만질 것도 없다. 문턱을 넘었으면 그 자리에서 끝난다.
+    if (this.intro) {
+      const it = this.intro;
+      if (this.z <= it.crossZ) { const fn = it.onCross; this.endIntro(); if (fn) fn(); return; }
+      this.focus = null;
+    } else this.focus = this.findFocus();
 
     const cam = this.view.cam;
     if (cam) {
@@ -172,6 +213,15 @@ export class FirstPerson {
      x-slide, return, and never try the z axis at all. Walking straight at an
      open corridor then moved nowhere. An axis has to be a real axis to count. */
   moveBy(dx, dz) {
+    /* 첫 출근은 격자를 보지 않는다. 통로 밖으로 나가지만 못하게 잘라 둔다 —
+       건물 밖에는 걸을 수 있는 격자가 없어서, 평소 규칙이면 문 앞에서
+       한 걸음도 못 뗀다. */
+    if (this.intro) {
+      const it = this.intro;
+      this.x = clamp(this.x + dx, it.x0, it.x1);
+      this.z = clamp(this.z + dz, it.z0, it.z1);
+      return;
+    }
     const nav = this.view.crew.navFor(this.floor);
     const clear = (x, z) => !nav || nav.circleClear(x, z, RADIUS);
     if (clear(this.x + dx, this.z + dz)) { this.x += dx; this.z += dz; return; }
@@ -216,7 +266,7 @@ export class FirstPerson {
   }
 
   interact() {
-    if (!this.on || !this.focus) return null;
+    if (!this.on || this.intro || !this.focus) return null;
     const line = this.onInteract ? this.onInteract(this.focus) : null;
     if (line) this.say = { text: line, left: 3.2 };
     return line;

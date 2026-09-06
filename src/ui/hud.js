@@ -11,7 +11,7 @@
 
 import {
   JOBS, JOB_ABILITY, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, STATS, STAT_KO, METHODS,
-  RESEARCH, CONTRACTS, MARKETING, TRAITS, FLOOR_UPKEEP, UNKNOWN_COMBO,
+  RESEARCH, MARKETING, TRAITS, FLOOR_UPKEEP, UNKNOWN_COMBO,
   comboScore, comboLabel, rankInfo, RANK_UP_FANS, researchEffect,
   STARTUP_GRANT, hireDiscount,
   SHOP, SHOP_KINDS, GEAR_SLOTS, BOSSES, bossFor, BOSS_STAGES, BOSS_PHASES, RAID, OVERTIME,
@@ -23,7 +23,7 @@ import {
   FURNITURE, FURNITURE_BY_ID, FURNITURE_CATS, RESELL, comfortLabel,
 } from '../game/furniture.js';
 import {
-  abilities, power, role, itemCost, trainStamina, traitsOf, expToNext,
+  abilities, power, role, itemCost, traitsOf, expToNext,
   hpRatio, isTired, isSpent, gearOf, canEquip, upgradeList,
 } from '../game/staff.js';
 import {
@@ -92,16 +92,22 @@ function bar(label, value, max, opts = {}) {
     + `</span><span class="vv">${shown}</span></div>`;
 }
 
-/* ---- 개발의 세 공정 ----
-   보스 세 마리는 사실 게임 하나의 세 공정이다. 장르 보스는 뼈대를 세우는
+/* ---- 개발의 네 공정 ----
+   보스 넷은 사실 게임 하나의 네 공정이다. 장르 보스는 뼈대를 세우는
    기간이고, 조합 보스는 소재를 얹어 살을 붙이는 기간이고, 마감 보스는
-   출시일을 앞두고 남은 것을 밀어 넣는 기간이다. 그 대응을 화면에 적어 두지
-   않으면 "왜 괴물을 세 마리 잡아야 하는가" 에 답이 없다. */
+   출시일을 앞두고 남은 것을 밀어 넣는 기간이고, 버그 보스는 그렇게 급히
+   덮은 자리를 터는 기간이다. 그 대응을 화면에 적어 두지 않으면 "왜 괴물을
+   넷이나 잡아야 하는가" 에 답이 없다. */
 const DEV_PHASES = [
   { ko: '기획', desc: '뼈대를 세우는 중 — 장르가 정해졌고 아직 형태가 없다' },
   { ko: '제작', desc: '살을 붙이는 중 — 고른 소재로 내용을 채운다' },
   { ko: '마감', desc: '출시 준비 중 — 남은 것을 밀어 넣고 다듬는다' },
+  { ko: '디버그', desc: '벌레를 터는 중 — 급하게 덮은 자리마다 한 마리씩 나온다' },
 ];
+
+/* 공정마다 서는 놈의 얼굴. 화면 여러 곳(개발 탭·아레나·착수 미리보기)이
+   같은 줄을 쓰므로 여기 한 벌만 둔다. */
+const STAGE_ICONS = ['🐱', '👹', '👿', '🐞'];
 
 export class UI {
   constructor(game, view) {
@@ -126,6 +132,7 @@ export class UI {
     this._wireShell();
     this._wireSaleRun();
     this._wireSalesFold();
+    this._wireTutor();
 
     game.on((type, payload) => this._onGameEvent(type, payload));
     this.renderAll();
@@ -219,11 +226,12 @@ export class UI {
          <div><span class="k">👾 아이디어</span><span class="v">아직 게임이 아닌 기획</span></div>
          <div><span class="k">체력 바</span><span class="v">남은 작업량</span></div>
          <div><span class="k">직원의 공격</span><span class="v">만들어 낸 분량</span></div>
-         <div><span class="k">✨ 번뜩임</span><span class="v">좋은 아이디어가 나온 순간</span></div>
+         <div><span class="k">✨ 번뜩임</span><span class="v">좋은 아이디어 — 축 하나가 두 배로</span></div>
+         <div><span class="k">🐞 버그 보스</span><span class="v">마지막 공정. 잡으면 버그가 사라진다</span></div>
          <div><span class="k">반격</span><span class="v">사양 변경 · 버그 · 납기 압박</span></div>
        </div>
        <p style="font-size:11.5px;line-height:1.7;color:var(--dim);margin-top:9px">
-         공정은 <b>기획 → 제작 → 마감</b> 셋입니다. 팀의 체력이 다 떨어지면
+         공정은 <b>기획 → 제작 → 마감 → 디버그</b> 넷입니다. 팀의 체력이 다 떨어지면
          그 공정은 못 만든 채로 마감되고, 완성도가 그만큼 깎입니다.
          상점의 <b>음식</b>으로 체력을 채워 주세요.</p>`,
       null, () => {
@@ -310,7 +318,11 @@ export class UI {
       this.arenaLog(`${ev.all ? '💥 ' : ''}${ev.ko}${who ? ` → ${who}` : ''} — ${ev.line}`, 'bad');
       sfx('boss');
     } else if (ev.kind === 'crit') {
-      this.arenaLog(`✨ ${ev.name} 번뜩임! ${ev.stat ? `${STAT_KO[ev.stat]} +${num(ev.gain)}` : num(ev.damage)}`, 'good');
+      // 번뜩임이 밀어 올린 축과 그 배율까지 적는다. 로그가 "번뜩임!" 만
+      // 흘리면 이 시스템이 무엇을 하는지가 화면 어디에도 남지 않는다.
+      const x2 = ev.boom && ev.stat === ev.boom ? ' ×2!' : '';
+      this.arenaLog(`✨ ${ev.name} 번뜩임! ${ev.stat ? `${STAT_KO[ev.stat]} +${num(ev.gain)}${x2}` : num(ev.damage)}`,
+        x2 ? 'big' : 'good');
       this._arenaHit(ev);
     } else if (ev.kind === 'hit') {
       this._arenaHit(ev);
@@ -384,7 +396,7 @@ export class UI {
       $('aTitle').textContent = `「${p.title}」 · ${setKo}`;
       $('aBossName').textContent = st.name || st.ko;
       $('aBossTag').textContent = `${st.ko} · ${stage + 1}/${n}`;
-      $('aIco').textContent = ['🐱', '👹', '👿'][stage] || '👾';
+      $('aIco').textContent = STAGE_ICONS[stage] || '👾';
       const pips = $('aPips');
       pips.innerHTML = '';
       for (let i = 0; i < n; i++) {
@@ -468,7 +480,7 @@ export class UI {
 
      처음 보는 사람에게 이 화면은 사무실에 괴물이 나타나 직원들이 때리는
      장면이다. 실제로 일어나는 일은 팀이 아직 형태가 없는 기획을 붙들고
-     세 공정을 통과하는 것이고, 보스의 체력은 남은 작업량, 우리가 주는
+     네 공정을 통과하는 것이고, 보스의 체력은 남은 작업량, 우리가 주는
      피해는 만들어진 분량이다. 그 대응을 말해 주지 않으면 이 화면은 경영
      게임 안에 낀 미니게임처럼 보인다. */
   renderDevHead(p, stage) {
@@ -710,14 +722,59 @@ export class UI {
     const p = this.g.project;
     const rec = ev.stat && p && (best[ev.stat] || 0) > 0
       ? Math.round(previewQuality(p)[ev.stat] || 0) > best[ev.stat] : false;
-    const pop = el('div', 'afxp' + (crit ? ' crit' : '') + (rec ? ' rec' : ''),
+    // 번뜩임이 어느 축을 두 배로 밀었는지. 그 한 줄이 없으면 화면에서는
+    // "숫자가 좀 컸다" 로만 지나간다.
+    const boom = !!(ev.boom && ev.stat === ev.boom);
+    const pop = el('div', 'afxp' + (crit ? ' crit' : '') + (rec ? ' rec' : '') + (boom ? ' boom' : ''),
       ev.stat
-        ? `<span class="k">${STAT_KO[ev.stat]}</span>+${num(ev.gain)}${rec ? ' ★' : ''}`
+        ? `<span class="k">${STAT_KO[ev.stat]}</span>+${num(ev.gain)}${boom ? '<i class="x2">×2</i>' : ''}${rec ? ' ★' : ''}`
         : `+${num(ev.damage)}`);
     pop.style.left = (to.x + (Math.random() - 0.5) * 60) + 'px';
     pop.style.top = (to.y - 6 + (Math.random() - 0.5) * 30) + 'px';
     layer.appendChild(pop);
+    // 숫자가 오르는 자리에서 알갱이가 터진다. 숫자만 뜨면 화면이 조용하고,
+    // 조용한 화면에서는 큰 숫자와 작은 숫자가 같은 무게로 지나간다.
+    this._burst(layer, to, { crit, boom, rec });
     setTimeout(() => pop.remove(), 1050);
+  }
+
+  /* ---------- 파티클 ----------
+     점수가 튀는 자리에서 알갱이가 사방으로 흩어진다. 숫자 하나만 뜨면
+     화면이 조용하고, 조용한 화면에서는 +12 와 +480 이 같은 무게로 지나간다.
+     알갱이의 개수와 크기가 그 차이를 손보다 먼저 말한다.
+
+     Web Animations 로 돌린다 — 요소마다 다른 방향과 거리를 줘야 하는데
+     CSS 키프레임으로는 그 값을 넣을 자리가 없고, 인라인 스타일로 만들면
+     알갱이 하나마다 레이아웃이 한 번씩 돈다. 끝나면 스스로 지운다.
+
+     자동 전투는 초당 몇 방씩 나온다. 층에 살아 있는 것이 너무 많아지면
+     폰에서 이 연출이 프레임을 먹으므로, 넘치면 그냥 건너뛴다. */
+  _burst(layer, to, { crit = false, boom = false, rec = false } = {}) {
+    if (!layer || layer.childElementCount > 26) return;
+    const n = boom ? 14 : crit ? 10 : 6;
+    const cls = boom ? 'boom' : crit ? 'crit' : rec ? 'rec' : '';
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+      const dist = (boom ? 62 : crit ? 48 : 32) * (0.55 + Math.random() * 0.75);
+      const dx = Math.cos(a) * dist;
+      // 위로 조금 더 튄다. 완전한 원으로 흩어지면 폭발이 아니라 파문이 된다.
+      const dy = Math.sin(a) * dist * 0.72 - 12 - Math.random() * 16;
+      const size = (boom ? 5.5 : crit ? 4.5 : 3.4) * (0.7 + Math.random() * 0.7);
+      const dot = el('i', 'afxd' + (cls ? ' ' + cls : ''));
+      dot.style.width = dot.style.height = size.toFixed(1) + 'px';
+      dot.style.left = to.x + 'px';
+      dot.style.top = to.y + 'px';
+      layer.appendChild(dot);
+      const life = (boom ? 700 : crit ? 560 : 430) + Math.random() * 220;
+      const anim = dot.animate([
+        { transform: 'translate(-50%,-50%) scale(1)', opacity: 1 },
+        // 중간에서 가장 멀리 갔다가 아래로 조금 떨어진다 — 중력이 있는 것처럼.
+        { transform: `translate(calc(-50% + ${dx.toFixed(1)}px), calc(-50% + ${dy.toFixed(1)}px)) scale(.8)`, opacity: .95, offset: .62 },
+        { transform: `translate(calc(-50% + ${(dx * 1.12).toFixed(1)}px), calc(-50% + ${(dy + 26).toFixed(1)}px)) scale(.2)`, opacity: 0 },
+      ], { duration: life, easing: 'cubic-bezier(.16,.7,.4,1)' });
+      anim.onfinish = () => dot.remove();
+      setTimeout(() => dot.remove(), life + 500);
+    }
   }
 
   _wireModal() {
@@ -1105,9 +1162,12 @@ export class UI {
       const input = $('coInput');
       const name = (input && input.value.trim()) || pick;
       this.g.found(name);
-      // 이름을 적고 나면 창립 영상이 돈다. 지원금 팝업은 그 뒤다 —
-      // 회사가 세워지는 장면보다 숫자가 먼저 뜨면 순서가 거꾸로다.
+      /* 이름을 적고 나면 **밖에 선다**. 1인칭으로 정문까지 걸어 들어가는
+         동안 화면에는 독백 한 줄뿐이고, 문턱을 넘는 그 순간에 화면이 바뀌며
+         창립 영상이 돈다. 지원금 팝업은 그 뒤다 — 회사가 세워지는 장면보다
+         숫자가 먼저 뜨면 순서가 거꾸로다. */
       this.busy = true;
+      try { await this.view.playArrival(); } catch (e) { /* 걸어 들어가지 못해도 게임은 시작한다 */ }
       try { await this.view.playFounding(name); } catch (e) { /* 영상이 실패해도 게임은 시작한다 */ }
       this.busy = false;
       this.showGrant(name);
@@ -1139,51 +1199,58 @@ export class UI {
        <p style="font-size:12px;line-height:1.6;margin-top:10px">
          투자자가 급한 불을 꺼줬습니다. 회사는 문을 닫지 않습니다 — 대신
          <b>직원 의욕 ${morale}</b>. 다음 지원금은 더 적습니다.<br><br>
-         회사 탭의 <b>계약 일감</b>은 스태미나만 쓰고 확실한 현금이 들어옵니다.
-         지원금에 기대는 것보다 언제나 쌉니다.</p>`);
+         자금이 마르면 <b>외주 의뢰</b>가 전화로 걸려 옵니다. 확실한 현금이지만
+         그 기간만큼 우리 게임은 멈춥니다.</p>`);
   }
 
-  /* ---------- 안내 ----------
-     예전에는 게임을 켜자마자 화면 오른쪽에 안내 카드가 떠 있었고, 옆에
-     '건너뛰기' 가 붙어 있었다. 둘 다 없앴다.
+  /* ---------- 튜토리얼 ----------
+     한동안 안내는 ❓ 탭 안에 열두 줄로 접혀 있었다. 찾아가면 전부 읽을 수
+     있다는 점은 좋았지만, 처음 켠 사람은 **그런 탭이 있다는 것부터** 모른다
+     — 배지 하나로는 "이걸 눌러야 게임을 배울 수 있다" 가 전해지지 않았다.
 
-     띄워 두면: 처음 보는 사람은 사무실을 보기도 전에 글자부터 읽게 되고,
-     아는 사람은 매번 닫는다. 건너뛰기가 있으면: 대부분은 그걸 누르고,
-     그러면 안내는 애초에 없는 것과 같다. 그래서 안내는 **찾아오는 것**이
-     됐다 — 오른쪽 레일의 ❓ 안내를 누르면 전체 순서가 열리고, 지금 할
-     일이 표시된다. 언제든 다시 열 수 있으니 지울 이유도 없다. */
-  panelGuide(box) {
+     그래서 탭을 없애고 화면 오른쪽 레일 맨 위로 꺼냈다. 지금 할 일 한
+     가지만 서 있고, 마지막 단계를 끝내면 카드째로 사라진다. 끝나면 사라질
+     것이므로 건너뛰기도 다시 보지 않기도 필요 없다 — 접기 하나면 된다.
+
+     여기는 HUD 갱신 때마다 도는 자리라, 단계가 그대로면 DOM 을 건드리지
+     않는다. */
+  renderTutor() {
     const g = this.g;
+    const card = $('tutor');
+    if (!card) return null;
     const step = g.tutorialStep();
-    const at = step ? TUTORIAL.indexOf(step) : TUTORIAL.length;
+    document.body.classList.toggle('has-tutor', !!step && !this.inArena());
+    if (!step) { this._tuSig = null; return null; }
+    if (this._tuSig === step.id) return step;
+    this._tuSig = step.id;
 
-    box.appendChild(el('h4', 'sec', `안내 ${Math.min(at + 1, TUTORIAL.length)} / ${TUTORIAL.length}`));
-    if (!step) {
-      box.appendChild(el('div', 'item',
-        '<div class="d">기본은 다 보셨습니다. 아래 순서는 언제든 다시 읽을 수 있습니다.</div>'));
-    }
+    const at = TUTORIAL.indexOf(step);
+    $('tuStep').textContent = `${at + 1} / ${TUTORIAL.length}`;
+    $('tuTitle').textContent = step.title;
+    $('tuBody').innerHTML = step.body;
+    const go = $('tuGo');
+    if (go) go.onclick = () => this.openTab(step.tab);
+    return step;
+  }
 
-    TUTORIAL.forEach((st, i) => {
-      const done = i < at;
-      const now = step && st.id === step.id;
-      const it = el('div', 'gstep' + (done ? ' done' : '') + (now ? ' now' : ''));
-      it.innerHTML = `<div class="gt"><span class="gk">${done ? '✓' : now ? '▶' : i + 1}</span>
-        <b>${st.title}</b></div>
-        <div class="gb">${st.body}</div>`;
-      if (now) {
-        const go = el('button', 'btn sm primary', '그 탭으로');
-        go.onclick = () => this.openTab(st.tab);
-        it.appendChild(go);
-      }
-      box.appendChild(it);
-    });
-
-    box.appendChild(el('h4', 'sec', '기억할 것'));
-    box.appendChild(el('div', 'item',
-      '<div class="d">· <b>시간</b>은 일하면 흐릅니다. 게임을 완성하고, 정산을 확인하고, 계약을 받을 때.<br>'
-      + '· <b>스태미나</b>는 실시간으로 찹니다. 게임을 꺼 둔 사이에도 찹니다.<br>'
-      + '· <b>도우미</b>는 사거나 뽑는 것이 아니라 행사와 사건이 데려옵니다. 능력은 개발 현장에서 보스마다 한 번.<br>'
-      + '· <b>초반</b>에는 한 작품이 개발비의 1.5배까지만 남습니다. 회사를 키워야 그 천장이 올라갑니다.</div>'));
+  /* 접기. 개발 중에는 오른쪽 레일이 진행판·판매까지 함께 쌓이므로, 이미
+     아는 사람은 이 카드를 눕혀 둘 수 있어야 한다. 상태는 남긴다. */
+  _wireTutor() {
+    const h = $('tuHead');
+    if (!h) return;
+    try { this._tuFold = localStorage.getItem('socialdev3d.tufold') === '1'; } catch (e) { this._tuFold = false; }
+    const apply = () => {
+      const card = $('tutor');
+      if (card) card.classList.toggle('fold', !!this._tuFold);
+      h.setAttribute('aria-expanded', this._tuFold ? 'false' : 'true');
+      this.measureRail();
+    };
+    h.onclick = () => {
+      this._tuFold = !this._tuFold;
+      try { localStorage.setItem('socialdev3d.tufold', this._tuFold ? '1' : '0'); } catch (e) { /* private mode */ }
+      apply();
+    };
+    apply();
   }
 
   /* A weekly event with a choice holds the week until it is answered.
@@ -1417,10 +1484,12 @@ export class UI {
     const g = this.g;
     const running = g.sales && !g.sales.ended ? g.sales.id : null;
     this.renderBuff();
+    const tutor = this.renderTutor();
     // 상태에서 바로 읽는다. body 클래스를 보면 renderHUD 가 먼저 도는
     // 프레임에서 한 박자 늦게 반영된다.
     const buff = !!(g.company.buff && g.company.buff.weeks > 0);
-    const on = buff || !!g.project || !!g.sales || g.managed().some((r) => r.id !== running);
+    const on = !!tutor || buff || !!g.project || !!g.sales
+      || g.managed().some((r) => r.id !== running);
     document.body.classList.toggle('has-rail', on && !this.inArena());
     // 카드가 서고 눕는 자리다. 넘치면 레일이 손가락을 받아야 스크롤이 된다.
     this.measureRail();
@@ -1648,7 +1717,6 @@ export class UI {
       office: () => this.panelOffice(box),
       mail: () => this.panelMail(box),
       event: () => this.panelEvents(box),
-      guide: () => this.panelGuide(box),
     }[this.tab];
     if (fn) fn();
     box.scrollTop = scroll;
@@ -1687,7 +1755,7 @@ export class UI {
        <div class="d">시간은 <b>일하면</b> 흐릅니다.<br>
        · 게임을 완성하면 기획서 등급만큼 (★1 한 주 → ★5 세 주)<br>
        · 판매 정산을 확인하면 한 주<br>
-       · 계약 일감을 받으면 그 계약의 기간만큼<br>
+       · 외주를 받으면 그 일감의 기간만큼<br>
        스태미나는 <b>${Math.round(STAMINA_REGEN / 60)}분에 1씩 저절로</b> 찹니다. 게임을 꺼 둔 사이에도 찹니다.</div>`));
     if (g.pendingEvent) {
       const evb = el('button', 'btn primary wide', '이번 주 사건을 처리하세요');
@@ -1722,28 +1790,21 @@ export class UI {
     };
     box.appendChild(ot);
     box.appendChild(el('div', 'item',
-      `<div class="d">스태미나는 <b>${Math.round(STAMINA_REGEN / 60)}분에 1씩 저절로</b> 차고,
-       <b>야근</b>·<b>상점의 음료</b>로도 채운다. 주가 넘어갈 때도 조금 찬다.
+      `<div class="d">스태미나가 나가는 자리는 <b>개발 착수 하나</b>다 — 플랫폼이 값을 정하고
+       (피처폰 3 · 스마트폰 5 · 그 위로 계속), 기획서·교육·전투는 공짜다.<br>
+       <b>${Math.round(STAMINA_REGEN / 60)}분에 1씩 저절로</b> 차고, <b>야근</b>·<b>상점의 음료</b>로도 채운다.
        체력은 주간 휴식과 <b>음식</b>으로 회복한다.</div>`));
 
-    /* 계약 — the safety net */
-    box.appendChild(el('h4', 'sec', '계약 일감'));
+    /* ---- 외주 ----
+       여기에 '계약 일감' 네 줄이 상시로 서 있었다. 자금이 마르면 아무 때나
+       눌러서 돈을 받는 자판기였고, 그 자판기가 있는 한 "돈이 없다" 가 한 번도
+       위기가 되지 못했다. 이제 외주는 랭크가 오른 뒤에 **전화로 걸려 온다**
+       — 진행 중인 건이 있을 때만 이 자리에 뜬다. */
     if (c.contract) {
+      box.appendChild(el('h4', 'sec', '진행 중인 외주'));
       box.appendChild(el('div', 'item',
         `<div class="t"><span class="n">${c.contract.ko}</span><span class="j">${c.contract.weeksLeft}주 남음</span></div>
          <div class="d">납품 시 ${won(c.contract.pay)} · 연구 +${c.contract.research}</div>`));
-    } else {
-      box.appendChild(el('div', 'item',
-        '<div class="d">자금이 마르면 계약 일감으로 버틸 수 있다. 스태미나를 쓰고 <b>그 기간만큼 시간이 흐른다</b> — '
-        + '개발할 돈이 없을 때 달력을 미는 유일한 길이다.</div>'));
-      for (const ct of CONTRACTS) {
-        const b = el('button', 'btn sm',
-          `${ct.ko} · ${won(g.contractPayFor(ct.id))} · 스태미나 -${ct.stamina}`);
-        b.style.cssText = 'display:block;width:100%;margin-bottom:4px;text-align:left';
-        b.disabled = c.stamina < ct.stamina;
-        b.onclick = () => { const r = g.takeContract(ct.id); if (!r.ok) this.toast(r.why, 'bad'); g.save(); };
-        box.appendChild(b);
-      }
     }
 
     /* 연구 */
@@ -2225,14 +2286,14 @@ export class UI {
     }
     d.appendChild(ups);
 
-    d.appendChild(el('h4', 'sec', `아이템 지급 (스태미나 -${trainStamina(s)})`));
+    // 스태미나가 개발 착수 한 자리로 모이면서 교육의 값은 돈만 남았다.
+    d.appendChild(el('h4', 'sec', '아이템 지급'));
     for (const item of ITEMS) {
       const price = itemCost(s, item);
       const b = el('button', 'btn sm',
         `${item.ko} · ${won(price)} → Lv+${item.level}${item.motivation ? ` 의욕+${item.motivation}` : ''}`);
       b.style.cssText = 'display:block;width:100%;margin-bottom:4px;text-align:left';
-      b.disabled = g.company.money < price || s.level >= s.maxLevel
-        || g.company.stamina < trainStamina(s);
+      b.disabled = g.company.money < price || s.level >= s.maxLevel;
       b.onclick = (ev) => {
         ev.stopPropagation();
         const r = g.train(s.id, item.id);
@@ -2313,8 +2374,8 @@ export class UI {
     }
 
     box.appendChild(el('h4', 'sec', '기획서'));
-    const mk = el('button', 'btn primary wide', '기획서 뽑기 (스태미나 -1)');
-    mk.disabled = g.company.stamina < 1;
+    // 기획서는 공짜다. 스태미나는 착수할 때 한 번만 나간다.
+    const mk = el('button', 'btn primary wide', '기획서 뽑기');
     mk.onclick = async () => {
       this._quietLog = true;
       const r = g.makeProposal();
@@ -2368,27 +2429,37 @@ export class UI {
     const g = this.g, d = this.draft;
 
     /* ---- 플랫폼 ----
-       예전에는 이름만 적힌 버튼 줄이었다. 그러면 "왜 콘솔이 비싼가" 가
-       화면 어디에도 없다. 이제 한 줄에 **시장 인구 · 구매력 · 개발비**가
-       같이 서고, 아직 못 여는 플랫폼도 필요한 랭크와 함께 회색으로 보인다 —
-       사다리가 보여야 다음 칸이 목표가 된다. */
+       한동안 여섯 줄을 전부 세워 두고 못 여는 것은 회색으로 두었다. 그러면
+       착수 화면의 절반이 **지금 누를 수 없는 것**이고, 스크롤을 넉 줄 내려야
+       팀과 착수 버튼이 나온다.
+
+       이제 열린 것만 선다. 잠긴 것은 바로 다음 한 칸만 자물쇠 줄로 남겨서
+       "다음 랭크에 무엇이 열리는가" 만 알린다 — 사다리는 그 한 줄이면 보이고,
+       그 아래는 아직 아무 결정도 아니다. */
     box.appendChild(el('h4', 'sec', '플랫폼'));
-    const openIds = new Set(g.availablePlatforms().map((p) => p.id));
+    const open = g.availablePlatforms();
+    const openIds = new Set(open.map((p) => p.id));
     // 막대는 가장 큰 시장을 100 으로 잡는다. 상수로 박아 두면 표를 손볼 때
     // 막대만 조용히 틀어진다.
     const widest = Math.max(...PLATFORMS.map((p) => p.market));
-    for (const p of PLATFORMS) {
-      const open = openIds.has(p.id);
-      const on = open && d.platformId === p.id;
-      const it = el('div', 'item plat' + (on ? ' on' : '') + (open ? ' click' : ' lock'));
+    for (const p of open) {
+      const on = d.platformId === p.id;
+      const it = el('div', 'item plat click' + (on ? ' on' : ''));
       const bar = Math.round(p.market / widest * 100);
       it.innerHTML = `<div class="t"><span class="n">${p.ko}</span>
-        <span class="j">${open ? won(p.cost) : `랭크 ${p.rank}`}</span></div>
+        <span class="j">${won(p.cost)} · ⚡${p.stamina}</span></div>
         <div class="mkt"><span class="mb"><span class="mf" style="width:${bar}%"></span></span>
           <span class="mv">👥 ${num(p.market)}</span></div>
         <div class="d">구매력 ×${p.share.toFixed(2)} · 초기 유입 ×${p.fans.toFixed(2)}<br>${p.note}</div>`;
-      if (open) it.onclick = () => { d.platformId = p.id; this.renderPanel(); };
+      it.onclick = () => { d.platformId = p.id; this.renderPanel(); };
       box.appendChild(it);
+    }
+    // 잠긴 것 중 맨 앞의 하나. 이름도 숫자도 적지 않는다 — 열리는 랭크만.
+    const next = PLATFORMS.find((p) => !openIds.has(p.id));
+    if (next) {
+      box.appendChild(el('div', 'item plat lock',
+        `<div class="t"><span class="n">🔒 ???</span><span class="j">랭크 ${next.rank}</span></div>
+         <div class="d">랭크가 하나 오를 때마다 새 플랫폼이 하나씩 열립니다.</div>`));
     }
 
     box.appendChild(el('h4', 'sec', '수익 모델'));
@@ -2469,20 +2540,22 @@ export class UI {
     };
     box.appendChild(go);
 
-    // 상대는 세 마리다. 무엇을 잡게 되는지 착수 전에 보여준다 — 세 번째는
+    // 상대는 넷이다. 무엇을 잡게 되는지 착수 전에 보여준다 — 세 번째는
     // 언제나 마감이고, 두 번째는 첫 놈을 잡은 뒤 고를 조합이 이름을 준다.
     const rounds = raidRounds({
       genreId: pr.genreId, platformId: d.platformId, grade: pr.grade, seriesN,
     });
     const boss1 = bossFor(pr.genreId);
-    const names = [boss1.ko, '조합 보스 (내용 선택 후 결정)', '마감 데몬'];
-    const icons = ['🐱', '👹', '👿'];
+    const names = [boss1.ko, '조합 보스 (내용 선택 후 결정)', '마감 데몬', '버그 무리'];
+    const icons = STAGE_ICONS;
     box.appendChild(el('div', 'item',
-      `<div class="t"><span class="n">3연전</span><span class="j">약 ${rounds}라운드</span></div>
+      `<div class="t"><span class="n">${BOSS_STAGES.length}연전</span><span class="j">약 ${rounds}라운드</span></div>
        <div class="d">${BOSS_STAGES.map((st, i) =>
         `${icons[i]} <b>${names[i]}</b> <span style="color:var(--dim)">— ${st.ko}</span>`).join('<br>')}
        <br><br>보스는 <b>직원들이 자동으로</b> 공격해서 잡습니다. 전투에는 스태미나가 들지 않고,
-       직원들의 <b>체력</b>이 줄어듭니다.</div>`));
+       직원들의 <b>체력</b>이 줄어듭니다.<br>
+       마지막 <b>버그 보스</b>는 원래 약하지만, 앞에서 팀이 쓰러져 덜 만든 채로
+       넘어왔다면 그만큼 커져서 기다립니다.</div>`));
   }
 
   async _kickoff(p) {
@@ -2511,8 +2584,8 @@ export class UI {
     arena.onclick = () => this.enterArena();
     box.appendChild(arena);
 
-    // 세 마리의 사다리. 어디까지 왔는지가 한눈에 보여야 한다.
-    const icons = ['🐱', '👹', '👿'];
+    // 네 마리의 사다리. 어디까지 왔는지가 한눈에 보여야 한다.
+    const icons = STAGE_ICONS;
     box.appendChild(el('div', 'item',
       `<div class="t"><span class="n">공정 ${(p.stage || 0) + 1} / ${p.stages.length}</span>
          <span class="j">${Math.round(raidProgress(p) * 100)}%</span></div>
@@ -2601,20 +2674,19 @@ export class UI {
     // Buggy builds review worse; the panel says how many points are on the
     // table so debugging reads as a score decision, not as housekeeping. The
     // penalty is per critic, and there are four of them.
+    /* 「디버그」 버튼이 있던 자리다. 고칠 것이 남아 있는 한 누르는 게 언제나
+       옳은 버튼은 선택이 아니라 잡일이었고, 스태미나까지 먹었다. 버그는 이제
+       마지막 공정의 버그 보스가 가져간다 — 여기 남는 것은 결과뿐이다. */
     if (p.bugs > 0) {
       const held = Math.round(Math.min(2.6, p.bugs * 0.11) * 4);
       box.appendChild(el('div', 'item',
-        `<div class="d">버그 ${p.bugs}개가 평론가 점수를 <b style="color:var(--bad)">약 ${held}점</b> 깎고 있습니다. 고칠수록 점수가 올라갑니다.</div>`));
+        `<div class="d">버그 ${p.bugs}개가 평론가 점수를 <b style="color:var(--bad)">약 ${held}점</b> 깎고 있습니다.
+         ${p.forfeits ? '개발 중에 팀이 쓰러져 <b>버그 보스를 다 잡지 못했습니다</b>. ' : '<b>버그 보스</b>를 끝까지 잡으면 대부분 사라집니다. '}
+         지금 고치려면 상점의 <b>🧰 디버그 킷</b>을 쓰세요.</div>`));
+    } else {
+      box.appendChild(el('div', 'item',
+        '<div class="d">🐞 버그 0개 — 버그 보스를 깨끗하게 잡았습니다.</div>'));
     }
-    const db = el('button', 'btn wide', `디버그 (스태미나 -1) · 버그 ${p.bugs}개`);
-    db.disabled = p.bugs <= 0 || g.company.stamina < 1;
-    db.onclick = () => {
-      const r = g.debugProject();
-      if (!r.ok) this.toast(r.why, 'bad');
-      else if (r.gained > 0) this.toast(`버그 ${r.fixed}개 수정 · 평론가 +${r.gained}점`, 'good');
-      g.save();
-    };
-    box.appendChild(db);
 
     box.appendChild(el('h4', 'sec', '홍보'));
     for (const mk of MARKETING) {
@@ -3400,11 +3472,6 @@ export class UI {
     }
     const ev = $('tbEvent');
     if (ev) ev.hidden = !(g.expoOpen && g.expoOpen());
-    /* 안내는 이제 저절로 뜨지 않는다. 그러면 처음 켠 사람이 그 탭이
-       있다는 사실을 영영 모를 수 있으므로, 아직 안 끝난 동안에는 점을
-       하나 켜 둔다. 열어 보는 순간 그 탭이 켜져 있으니 점은 물러난다. */
-    const gd = $('tbGuide');
-    if (gd) gd.hidden = this.tab === 'guide' || !g.tutorialStep();
   }
 
   confirm(title, body, onYes, onAlso) {
@@ -3589,13 +3656,22 @@ export class UI {
   }
 
   showRankUp(up) {
+    /* 랭크 하나가 플랫폼 하나를 연다. 그것이 이 화면에서 가장 큰 소식인데
+       한동안 어디에도 안 적혀 있었다 — 개발 탭에 들어가야만 새 줄이 생긴
+       것을 알 수 있었고, 그러면 사다리가 올라간 순간이 아무 일도 아닌 것이
+       된다. */
+    const plat = PLATFORMS.find((p) => p.rank === up.rank);
     this.openModal('랭크 업', `회사 랭크 ${up.rank}!`,
       `<div class="grade">${up.rank}</div>
        <div class="gsub">RANK UP</div>
+       ${plat ? `<div class="row"><span>새 플랫폼</span><b class="stars">${plat.ko} 개방</b></div>` : ''}
        <div class="row"><span>직원 정원</span><b>${up.info.staffCap}명</b></div>
        <div class="row"><span>스태미나</span><b>${up.info.staminaMax}</b></div>
        <div class="row"><span>의욕 상한</span><b>${up.info.motivationCap}</b></div>
        <div class="row"><span>자금 상한</span><b>${won(up.info.cashCap)}</b></div>
+       ${plat ? `<p style="color:var(--dim);font-size:11.5px;margin-top:8px">
+         <b>${plat.ko}</b> — 시장 ${num(plat.market)}명 · 구매력 ×${plat.share.toFixed(2)} ·
+         착수 스태미나 ${plat.stamina}. 개발 탭에서 고를 수 있습니다.</p>` : ''}
        ${up.unlockedFloor ? `<div class="row"><span>새 층</span><b>${up.info.floors}층 입주 가능</b></div>` : ''}
        ${up.unlockedFloor ? '<p style="color:var(--dim);font-size:11.5px;margin-top:8px">사무실 탭에서 입주할 수 있습니다.</p>' : ''}`);
     this.renderFloors();

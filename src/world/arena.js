@@ -273,6 +273,75 @@ function buildDeadlineAltar(m, ox, oz) {
   m.mat = 0; m.noNav = false; m.flag = 0;
 }
 
+/* ---------- 4번 · 버그 무리 : QA 실 ----------
+   마지막 공정. 앞의 셋과 달리 여기는 **우리 사무실 안**이다 — 밤늦게
+   모니터만 켜져 있는 QA 실. 빌드가 돌아가는 화면이 벽처럼 둘러서 있고,
+   바닥에는 재현 절차가 적힌 종이가 깔려 있다. 세트가 작고 밝은 이유는
+   이 보스가 약하기 때문이다: 무대의 크기가 곧 상대의 크기다. */
+function buildQaLab(m, ox, oz) {
+  const rnd = mulberry32(0xB009);
+  groundPlate(m, ox, oz, '#2f343c');
+  backdrop(m, ox, oz, 34, 26, '#59616e', 20);
+  dais(m, ox, oz, 12, 0.9, '#3d434c', '#49505a');
+  rimLights(m, ox, oz, 11.6, 1.1, '#7dff9a', 20);
+
+  m.flag = SITE; m.noNav = true;
+
+  /* 둘러선 모니터 벽. 두 단으로 쌓아서 '검증실' 로 읽히게 한다. 화면은
+     발광이라 어두운 세트에서 이 놈의 윤곽을 잡아 주는 조명도 겸한다.
+
+     반지름은 카메라가 서는 자리(수평 27)보다 **밖**이어야 한다. 20 이던
+     동안에는 카메라가 모니터 줄 한복판에 앉아서, 화면에는 보스 대신
+     검은 판이 가득 찼다. */
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * TAU + 0.26;
+    const bx = ox + Math.cos(a) * 26, bz = oz + Math.sin(a) * 26;
+    m.mat = MAT.METAL;
+    m.boxY(bx, 3.0, bz, 1.0, 6.0, 9.0, -a, P.steelDk);
+    for (let k = 0; k < 2; k++) {
+      m.mat = MAT.DEF;
+      m.boxY(bx, 7.4 + k * 4.6, bz, 0.7, 4.0, 8.2, -a, P.charcoal);
+      m.mat = MAT.EMIT;
+      m.noSolid = true;
+      // 초록 로그가 흐르는 화면. 한 줄씩 밝기를 달리해서 글자처럼 보인다.
+      for (let r2 = 0; r2 < 5; r2++) {
+        const w = 2.2 + rnd() * 5.0;
+        m.boxY(bx - Math.cos(a) * 0.42, 8.8 + k * 4.6 - r2 * 0.72,
+          bz - Math.sin(a) * 0.42, 0.14, 0.34, w, -a,
+          r2 === 0 ? '#8dffb0' : (rnd() < 0.25 ? '#ff7a6a' : '#3f8f5c'));
+      }
+      m.noSolid = false;
+    }
+  }
+
+  // 재현 절차가 적힌 종이. 무대 가장자리에만 흩어 둔다.
+  m.mat = MAT.PAPER;
+  m.noSolid = true;
+  for (let i = 0; i < 16; i++) {
+    const a = rnd() * TAU, r = 7 + rnd() * 4.5;
+    m.boxY(ox + Math.cos(a) * r, 1.02, oz + Math.sin(a) * r, 1.6, 0.06, 2.1, rnd() * TAU, P.paper);
+  }
+  m.noSolid = false;
+
+  /* 천장 형광등은 놓지 않는다. 무대 위를 가로지르는 판은 그림자를 통째로
+     떨어뜨려서, 세트가 새까맣게 나온다 — 실제로 그렇게 나왔다. 밝기는
+     둘러선 모니터 화면 스물여덟 장과 무대 테두리의 발광이 맡는다.
+
+     대신 바닥에 빛 띠를 깐다. 위가 아니라 아래에서 올라오는 빛이라
+     그림자를 만들지 않고, 심야의 검증실이라는 인상에도 맞는다. */
+  m.mat = MAT.EMIT;
+  m.noSolid = true;
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * TAU + 0.15;
+    for (let k = 3; k < 9; k++) {
+      const r = 12.5 + k * 1.9;
+      m.boxY(ox + Math.cos(a) * r, 0.06, oz + Math.sin(a) * r, 0.7, 0.12, 2.6, -a, '#4fe08a');
+    }
+  }
+  m.noSolid = false;
+  m.mat = 0; m.noNav = false; m.flag = 0;
+}
+
 /* ---------- 세트 목록 ----------
    `id` 는 몬스터 id 와 같다. 몬스터가 늘면 여기에 한 줄 늘리면 된다. */
 export const ARENA_SETS = [
@@ -300,6 +369,14 @@ export const ARENA_SETS = [
     camera: { az: 2.66, el: 0.42, dist: 32 },
     lightRadius: 50,
   },
+  {
+    id: 'bug',
+    ko: '심야의 QA 실',
+    sub: '재현 절차는 적혀 있다',
+    build: buildQaLab,
+    camera: { az: 2.38, el: 0.48, dist: 30 },
+    lightRadius: 40,
+  },
 ];
 
 export const ARENA_BY_ID = new Map(ARENA_SETS.map((s) => [s.id, s]));
@@ -319,7 +396,7 @@ export function buildArena(monsterId) {
     id: def.id,
     def,
     mesh: m,
-    spot: [ox, def.id === 'orc' ? 1.2 : (def.id === 'demon' ? 2.0 : 1.1), oz],
+    spot: [ox, ({ orc: 1.2, demon: 2.0, bug: 0.95 })[def.id] ?? 1.1, oz],
     camera: { ...def.camera },
     light: { center: [ox, 7, oz], radius: def.lightRadius },
   };

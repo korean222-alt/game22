@@ -11,8 +11,13 @@
    returns a line of text, and nothing reaches for the DOM. The UI renders
    whatever `pending` holds. */
 
-import { GENRES, CONTENTS } from './data.js';
+import { GENRES, CONTENTS, CONTRACTS, contractPay } from './data.js';
 import { addMotivation } from './staff.js';
+
+/* 외주 의뢰가 들어오기 시작하는 랭크. 그 전에는 회사가 너무 작아서 남의
+   일을 받을 곳이 없다 — 그리고 초반에 이 창이 뜨면 "게임을 만들지 않고
+   외주만 돌리는" 쪽이 가장 빠른 길이 되어 버린다. */
+const OUTSOURCE_RANK = 4;
 
 const pickOne = (rnd, arr) => arr[Math.floor(rnd() * arr.length)];
 const won = (n) => '₩' + Math.round(n).toLocaleString('ko-KR');
@@ -127,11 +132,12 @@ export const EVENTS = [
     vars: (g, rnd, t) => ({ name: t ? t.name : '' }),
     choices: [
       {
-        ko: '휴가를 보낸다 (스태미나 -2)',
-        desc: '이번 주 개발은 늦어지지만 의욕이 크게 오른다.',
-        can: (g) => g.company.stamina >= 2,
+        // 스태미나는 개발 착수 한 자리에서만 나간다. 휴가의 값은 이제 돈이다.
+        ko: '휴가를 보낸다 (₩30,000)',
+        desc: '경비를 대신 내준다. 의욕이 크게 오른다.',
+        can: (g) => g.company.money >= 30000,
         apply: (g, rnd, target) => {
-          g.company.stamina -= 2;
+          g.spend(30000);
           if (target) addMotivation(target, 4, g.company.rank);
           return `${target ? target.name : '팀원'} 의욕 +4`;
         },
@@ -153,12 +159,11 @@ export const EVENTS = [
     text: '개발자 컨퍼런스가 열립니다. 참가비는 있지만 배울 것이 많습니다.',
     choices: [
       {
-        ko: '참가한다 (₩45,000 · 스태미나 -2)',
+        ko: '참가한다 (₩45,000)',
         desc: '연구 포인트와 의욕이 오른다.',
-        can: (g) => g.company.money >= 45000 && g.company.stamina >= 2,
+        can: (g) => g.company.money >= 45000,
         apply: (g) => {
           g.spend(45000);
-          g.company.stamina -= 2;
           const rp = 18 + g.company.rank * 4;
           g.company.researchPts += rp;
           for (const s of g.staff) addMotivation(s, 1, g.company.rank);
@@ -273,6 +278,42 @@ export const EVENTS = [
       const r = g.grantHelper(1.15, '');
       return `${r.def.icon} ${r.def.ko} ${r.isNew ? '합류!' : `레벨 ${r.level}`} — ${r.def.skill.desc}`;
     },
+  },
+  /* ---------- 외주 의뢰 ----------
+     회사 탭에 늘 서 있던 '계약 일감' 목록을 대신한다. 목록으로 있는 동안
+     외주는 자금이 마를 때마다 누르는 자판기였고, 그래서 "돈이 없다" 가
+     한 번도 위기가 아니었다. 갑자기 걸려 오는 전화로 바꾸면 같은 안전망이
+     **사건**이 된다 — 받을지 말지를 그 자리에서 정해야 하고, 받으면 그
+     기간만큼 우리 게임은 멈춘다. */
+  {
+    id: 'outsource',
+    ko: '외주 의뢰',
+    icon: '📞',
+    text: '큰 회사에서 전화가 왔습니다. 「{job}」을(를) 우리 팀에 맡기고 싶다는군요.',
+    when: (g) => g.company.rank >= OUTSOURCE_RANK && !g.company.contract,
+    pick: (g, rnd) => pickOne(rnd, CONTRACTS),
+    vars: (g, rnd, t) => ({ job: t ? t.ko : '외주' }),
+    choices: [
+      {
+        ko: '받는다',
+        desc: '확실한 현금과 연구 포인트. 대신 그 기간만큼 우리 게임은 멈춘다.',
+        apply: (g, rnd, target) => {
+          const c = target || CONTRACTS[0];
+          const pay = contractPay(c, g.company.rank);
+          const r = g.takeContract(c.id);
+          if (!r.ok) return r.why || '지금은 받을 수 없다.';
+          return `${c.ko} · ${c.weeks}주 뒤 ${won(pay)} · 연구 +${c.research}`;
+        },
+      },
+      {
+        ko: '거절한다',
+        desc: '우리 게임에 집중한다. 팀이 좋아한다.',
+        apply: (g) => {
+          for (const s of g.staff) addMotivation(s, 1, g.company.rank);
+          return '팀 의욕 +1';
+        },
+      },
+    ],
   },
   {
     id: 'aircon',

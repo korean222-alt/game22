@@ -386,7 +386,7 @@ class View {
     // 서 있다" 가 먼저 보였다 — 싸움터가 따로 있는데 사무실에도 있으니
     // 어느 쪽이 진짜인지 알 수 없었다. 이제 사무실에는 아무것도 서지 않는다.
     if (!project || !this.arena) { this.clearBoss(); return; }
-    // 3연전이므로 키는 프로젝트가 아니라 **프로젝트+스테이지**다. 예전처럼
+    // 연전이므로 키는 프로젝트가 아니라 **프로젝트+스테이지**다. 예전처럼
     // 프로젝트 id 만 보면 두 번째 보스가 첫 번째 놈의 몸으로 나온다.
     const key = project.id + ':' + (project.stage || 0);
     if (this.boss && !this.boss.dead && this.bossProject === key) return;
@@ -788,6 +788,74 @@ class View {
       // frame time is clamped for stability, so on a slow device the walk runs
       // in slow motion and waiting for it would stall the game.
       timers.push(setTimeout(() => { this.crew.forceSeat(); begin(); }, 4500));
+    });
+  }
+
+  /* ---- 첫 출근 ----
+     게임의 첫 화면이다. 예전에는 이름을 적자마자 카메라가 도시 위에서
+     시작하는 창립 영상이 돌았고, 플레이어는 자기 회사를 **처음부터 위에서**
+     내려다봤다. 경영 화면으로는 맞지만 첫 순간으로는 아니다 — 사무실이
+     남의 것처럼 보인다.
+
+     그래서 한 장면을 앞에 붙인다. 사장은 건물 밖 보도에 1인칭으로 서 있고,
+     화면에는 "여기가… 이제 내 사무실인가?" 한 줄이 뜬다. 앞으로 걸어서
+     문턱을 넘는 순간 — 그 순간에만 — 화면이 바뀌고 창립 영상이 돈다.
+     들어가는 동작을 플레이어가 직접 하기 때문에 그 다음에 오는 모든 화면이
+     "내가 들어온 곳" 이 된다.
+
+     통로는 firstperson.js 가 직사각형으로 잘라 준다. 밖에는 걸을 수 있는
+     격자가 없어서 평소 충돌 규칙으로는 한 걸음도 못 뗀다. */
+  playArrival() {
+    const box = document.getElementById('fpIntro');
+    const line = document.getElementById('fpIntroTx');
+    const sub = document.getElementById('fpIntroSub');
+    const doorX = (BUILDING.x0 + BUILDING.x1) / 2;      // 정문은 남쪽 벽 한가운데
+    const wallZ = BUILDING.z1;
+
+    if (this.arena) this.exitArena();
+    this.setFloor(0);
+
+    return new Promise((resolve) => {
+      const timers = [];
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        for (const t of timers) clearTimeout(t);
+        if (box) box.classList.remove('show');
+        this.fp.exit();
+        resolve();
+      };
+
+      // 브라우저가 3D 를 못 켜 준 경우까지 여기서 막지는 않는다. 다만 층이
+      // 하나도 안 지어졌으면 걸어 들어갈 문도 없으므로 그냥 넘어간다.
+      if (!box || !line || !this.crew) { resolve(); return; }
+
+      this.fp.enterIntro({
+        floor: 0,
+        x: doorX, z: wallZ + 15.0, yaw: Math.PI,         // 보도에서 문을 마주보고 선다
+        bounds: {
+          // 정문 폭(29.5~36.5)에서 바깥 기둥(x=30)을 피한 통로.
+          x0: doorX - 1.4, x1: doorX + 2.2,
+          z0: wallZ - 4.0, z1: wallZ + 19.0,
+          crossZ: wallZ - 1.6,                            // 이 선을 넘으면 안이다
+        },
+        onCross: finish,
+      });
+
+      box.classList.add('show');
+      line.textContent = '여기가… 이제 내 사무실인가?';
+      if (sub) sub.textContent = document.body.classList.contains('touch')
+        ? '왼쪽 스틱으로 앞으로 — 문으로 들어가 보자'
+        : 'W 로 앞으로 — 문으로 들어가 보자';
+
+      // 한참 서 있으면 한 줄 더 민다. 조작을 못 찾은 사람에게 화면이
+      // 아무 말도 안 하고 있는 시간이 제일 길게 느껴진다.
+      timers.push(setTimeout(() => {
+        if (!done) line.textContent = '문은 열려 있다. 들어가자.';
+      }, 9000));
+      // 그래도 못 들어오면 장면이 끝나지 않는다. 그 자리에서 데려다 놓는다.
+      timers.push(setTimeout(finish, 26000));
     });
   }
 
@@ -1320,7 +1388,6 @@ async function boot() {
 
   wirePointer();
   wireCamPad();
-  wireWalkKeys();
   suppressBrowserGestures(canvas);
   trackViewport(resize);
 
@@ -1872,24 +1939,13 @@ function wirePointer() {
   window.addEventListener('blur', () => view.fp.keys.clear());
 }
 
-/* 데스크톱에서는 WASD 로 걷는다. 조이스틱과 같은 벡터로 들어가므로
-   이동 코드는 하나뿐이다. */
-function wireWalkKeys() {
-  const map = { w: 'fwd', s: 'back', a: 'left', d: 'right', arrowup: 'fwd', arrowdown: 'back', arrowleft: 'left', arrowright: 'right' };
-  const set = (e, on) => {
-    if (e.target && e.target.tagName === 'INPUT') return;
-    const k = e.key.toLowerCase();
-    if (k === 'f' && on) { view.fp.toggle(); return; }
-    if (!view.walk) return;
-    const slot = map[k];
-    if (!slot) return;
-    e.preventDefault();
-    view.keys[slot] = on;
-  };
-  window.addEventListener('keydown', (e) => set(e, true));
-  window.addEventListener('keyup', (e) => set(e, false));
-  window.addEventListener('blur', () => { view.keys = { fwd: false, back: false, left: false, right: false }; });
-}
+/* WASD 배선이 여기 한 벌 더 있었다. 1인칭이 `ui/firstperson.js` 로 옮겨간
+   뒤로 `view.keys` 라는 객체는 존재하지 않는데, 걷는 중에 W 를 누르면
+   이 함수가 그 없는 객체에 값을 쓰려다 매번 예외를 던졌다 — 화면에는
+   아무 표시도 안 나고 콘솔에만 남는 종류다. 키 입력은 wirePointer 안의
+   keydown 한 곳이 전부 맡는다(F 토글 · E 상호작용 · Esc · fp.key).
+
+   function wireWalkKeys() 는 그래서 없앴다. */
 
 /* Browsers only grant fullscreen and orientation lock from inside a user
    gesture, and only once asked. Ask on the first interaction, then stop. */

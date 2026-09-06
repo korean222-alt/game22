@@ -44,6 +44,24 @@ export const MONSTERS = [
     idle: 'Idle', walk: 'Walk', attack: 'Punch', hit: 'HitReact', death: 'Death',
     taunts: ['일정은 이미 늦었다', '이번 분기 안에 되겠나?', '버그는 내 편이다'],
   },
+  /* ---- 버그 무리 ----
+     마지막 공정에 서는 놈. 몸은 냥이 리그를 그대로 쓴다 — 새 팩을 받는
+     값보다, 작고 빠르고 혼자서는 아무것도 못 하는 실루엣이 '버그' 라는
+     말에 더 맞는다. 크기를 줄여서 앞의 세 마리와 한눈에 구분되게 했다.
+
+     `minHp: Infinity` 는 이 놈이 **체력으로는 절대 뽑히지 않는다**는 뜻이다.
+     버그 보스는 스테이지가 부르는 자리에만 서고, 예전 monsterFor 의 사다리는
+     건드리지 않는다. */
+  {
+    id: 'bug',
+    ko: '버그 무리',
+    file: 'assets/monsters/cat.glb',
+    desc: '급하게 덮은 자리마다 한 마리씩 기어 나온다.',
+    height: 3.4,
+    minHp: Infinity,
+    idle: 'Idle', walk: 'Walk', attack: 'Bite_Front', hit: 'HitRecieve', death: 'Death',
+    taunts: ['재현이 안 될걸', '내 탓 아니야', '한 마리만 더…'],
+  },
 ];
 
 export const MONSTER_BY_ID = new Map(MONSTERS.map((m) => [m.id, m]));
@@ -59,9 +77,9 @@ export function monsterFor(project) {
   return pick;
 }
 
-/* 3연전에서는 종류를 체력으로 고르지 않는다. 스테이지가 곧 사다리다 —
-   장르 보스는 냥이, 조합 보스는 오크, 마감은 데몬. 세 마리를 차례로 잡는
-   구조 자체가 눈에 보여야 하기 때문이다. */
+/* 연전에서는 종류를 체력으로 고르지 않는다. 스테이지가 곧 사다리다 —
+   장르 보스는 냥이, 조합 보스는 오크, 마감은 데몬, 그리고 마지막이 버그
+   무리다. 넷을 차례로 잡는 구조 자체가 눈에 보여야 하기 때문이다. */
 export function monsterForStage(project) {
   if (!project || !project.stages) return monsterFor(project);
   const st = project.stages[Math.min(project.stage || 0, project.stages.length - 1)];
