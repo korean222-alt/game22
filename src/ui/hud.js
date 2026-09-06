@@ -31,7 +31,6 @@ import {
   currentStage, raidProgress, ensureStages, strikePeriod, devCostOf, completion,
   previewQuality, funScore, canUrge, comboMult, URGE, randomTitle,
 } from '../game/project.js';
-import { TUTORIAL } from '../game/tutorial.js';
 import { STAMINA_REGEN } from '../game/state.js';
 import { giftText } from '../game/mail.js';
 import { AWARD_CATS, AWARD_GRADES, EXPO_PLANS, awardBar } from '../game/awards.js';
@@ -41,7 +40,7 @@ import { FLOOR_PLANS } from '../world/office.js';
 import { arenaSetFor } from '../world/arena.js';
 import { kitReady } from '../world/kit.js';
 import { isTouch, isFullscreen, goFullscreen, exitFullscreen, wireInstallGuide } from './device.js';
-import { sfx, soundOn, setSound, music, musicOn, setMusic } from './sound.js';
+import { sfx, soundOn, setSound, music, musicOn, setMusic, soundState } from './sound.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, html) => {
@@ -68,6 +67,12 @@ const mot = (v) => (Number.isInteger(v) ? v : (Math.round(v * 10) / 10).toFixed(
 
    `bar` takes a value and its scale and draws one row. Nothing else does. */
 const QUALITY_MAX = 999;        // finishProject clamps every axis to this
+
+/* 가방에서 무엇을 썼느냐에 따라 다른 소리가 난다. 표로 두는 이유는 물건의
+   종류가 늘 때 조건문 사슬이 아니라 줄 하나만 늘어나게 하기 위해서다. */
+const BAG_SFX = {
+  food: 'eat', drink: 'drink', toy: 'levelup', gift: 'loot', tool: 'equip', gear: 'equip',
+};
 const QUALITY_GAMMA = 0.4;      // see barPct: a debut game must still draw a bar
 const ABILITY_MAX = 120;        // a tier-2 job at max level with items sits near here
 
@@ -132,7 +137,6 @@ export class UI {
     this._wireShell();
     this._wireSaleRun();
     this._wireSalesFold();
-    this._wireTutor();
     this._wireClickSound();
 
     game.on((type, payload) => this._onGameEvent(type, payload));
@@ -313,8 +317,15 @@ export class UI {
       music(last ? 'boss' : 'dev');
       return;
     }
-    music(null);
+    /* 사무실도 음악이 돈다. 예전에는 여기서 통째로 껐고, 그래서 게임 시간의
+       절반 — 책상을 놓고 사람을 뽑고 정산을 읽는 그 시간 — 이 무음이었다.
+       "배경음악이 없다" 는 말은 대개 이 자리를 가리킨다. */
+    music('office');
   }
+
+  /* 밖에서도 부를 수 있게 열어 둔다. 첫 터치로 오디오가 열리는 순간,
+     그때 무엇이 돌아야 하는지를 아는 곳은 여기뿐이다. */
+  syncMusic() { this._syncMusic(); }
 
   /* main.js 의 단 하나뿐인 rAF 루프가 매 프레임 부른다. 시계를 하나로 두면
      탭이 백그라운드로 갔을 때 전투만 따로 달려나가는 일이 없다. */
@@ -752,6 +763,7 @@ export class UI {
     if (!this.inArena()) return;
     const r = this.g.urge(id);
     if (!r.ok) return;
+    sfx('urge');
     sfx('combo', r.combo);
     if (card) {
       card.classList.remove('hit');
@@ -1060,12 +1072,30 @@ export class UI {
     strip.style.transition = 'transform 2.6s cubic-bezier(.12,.72,.15,1)';
     strip.style.transform = `translateX(${w / 2 - (target * CELL + CELL / 2)}px)`;
 
+    /* ── 도는 소리 ──
+       돌림판은 눈으로는 돌지만 귀로는 아무 일도 없었다. 칸이 하나 지날
+       때마다 딸깍 소리를 낸다 — 빨랐다가 점점 느려지는 그 간격 자체가
+       "지금 멈추는 중" 을 말한다. 프레임마다 지난 칸 수를 세어서 바뀔 때만
+       울리므로, 화면이 느린 기기에서도 소리가 밀리거나 겹치지 않는다. */
+    const SPIN_MS = 2600;
+    /* 칸이 지나는 시각을 **미리** 계산해서 예약한다. 프레임마다 세는 쪽이
+       코드는 짧지만, 이 게임의 한 프레임은 3D 한 장이라 느린 기기에서는
+       초당 몇 번밖에 안 돈다 — 그러면 서른 번 울려야 할 딸깍이 두 번이 된다.
+       화면의 cubic-bezier(.12,.72,.15,1) 를 easeOutCubic 으로 어림하고 그
+       역함수로 k번째 칸의 시각을 뽑는다. 소리의 간격만 정하는 자리라 정확할
+       필요는 없고, 끝으로 갈수록 느려지기만 하면 된다. */
+    for (let k = 1; k <= target; k++) {
+      const at = (1 - Math.cbrt(1 - k / target)) * SPIN_MS;
+      setTimeout(() => sfx('spin'), at);
+    }
+
     return new Promise((resolve) => {
       setTimeout(() => {
         const c = strip.querySelector('[data-win]');
         if (c) c.classList.add('hit');
         hit.textContent = hitText || labels[winIndex];
         hit.classList.add('on');
+        sfx('spinStop');
         setTimeout(() => {
           document.body.classList.remove('rouling');
           resolve();
@@ -1152,6 +1182,32 @@ export class UI {
     else if (type === 'discovery') sfx('trophy');
     else if (type === 'hired') sfx('hire');
     else if (type === 'milestone') sfx('trophy');
+    // 가방에서 무엇이 나가고 들어오는가. 밥·음료·장비가 서로 다르게 운다.
+    else if (type === 'bag') {
+      if (payload && payload.used) sfx(BAG_SFX[payload.used] || 'tap');
+      else if (payload && payload.loot) sfx('loot');
+      else if (payload && payload.n > 0) sfx('buy');
+      else sfx('tap');
+    }
+    // 가구를 사고, 놓고, 집어 든다.
+    else if (type === 'furniture') sfx(payload && payload.bought ? 'buy' : 'place');
+    else if (type === 'desks') sfx('place');
+    else if (type === 'research') sfx('research');
+    // 외주 계약. 도장을 찍거나(수주) 납품이 끝나거나(해제).
+    else if (type === 'contract') sfx(payload ? 'stamp' : 'coin');
+    else if (type === 'gacha') sfx(payload && payload.dup ? 'deny' : 'loot');
+    else if (type === 'task') sfx('levelup');
+    else if (type === 'levelup') sfx('levelup');
+    else if (type === 'expo') sfx('phone');
+    else if (type === 'trends') sfx('swipe');
+    else if (type === 'chart') sfx('swipe');
+    else if (type === 'fired') sfx('bad');
+    else if (type === 'founded') sfx('release');
+    else if (type === 'rescue') sfx('coin');
+    else if (type === 'floors') sfx('place');
+    // 실시간 판매. 열두 주가 초 단위로 지나가는 동안 동전이 떨어진다 —
+    // 숫자가 올라가는 것을 눈으로만 보는 것과 아주 다른 화면이 된다.
+    else if (type === 'sales') sfx('coin');
 
     /* ── 좋은 소식은 화면에서 터진다 ──
        출시·랭크업·새 조합·기념비는 회사에 몇 번 없는 사건인데, 예전에는
@@ -1493,8 +1549,7 @@ export class UI {
   /* ---------- the opening ----------
      A new studio has no name, no staff and no furniture. This is the ceremony
      that fixes the first of those and pays for the other two: a name box, then
-     the grant, then the tutorial takes over. A save that has already been
-     founded skips straight past. */
+     the grant. A save that has already been founded skips straight past. */
   openingFlow() {
     const c = this.g.company;
     if (c.founded) return;
@@ -1557,56 +1612,6 @@ export class UI {
          <b>직원 의욕 ${morale}</b>. 다음 지원금은 더 적습니다.<br><br>
          자금이 마르면 <b>외주 의뢰</b>가 전화로 걸려 옵니다. 확실한 현금이지만
          그 기간만큼 우리 게임은 멈춥니다.</p>`);
-  }
-
-  /* ---------- 튜토리얼 ----------
-     한동안 안내는 ❓ 탭 안에 열두 줄로 접혀 있었다. 찾아가면 전부 읽을 수
-     있다는 점은 좋았지만, 처음 켠 사람은 **그런 탭이 있다는 것부터** 모른다
-     — 배지 하나로는 "이걸 눌러야 게임을 배울 수 있다" 가 전해지지 않았다.
-
-     그래서 탭을 없애고 화면 오른쪽 레일 맨 위로 꺼냈다. 지금 할 일 한
-     가지만 서 있고, 마지막 단계를 끝내면 카드째로 사라진다. 끝나면 사라질
-     것이므로 건너뛰기도 다시 보지 않기도 필요 없다 — 접기 하나면 된다.
-
-     여기는 HUD 갱신 때마다 도는 자리라, 단계가 그대로면 DOM 을 건드리지
-     않는다. */
-  renderTutor() {
-    const g = this.g;
-    const card = $('tutor');
-    if (!card) return null;
-    const step = g.tutorialStep();
-    document.body.classList.toggle('has-tutor', !!step && !this.inArena());
-    if (!step) { this._tuSig = null; return null; }
-    if (this._tuSig === step.id) return step;
-    this._tuSig = step.id;
-
-    const at = TUTORIAL.indexOf(step);
-    $('tuStep').textContent = `${at + 1} / ${TUTORIAL.length}`;
-    $('tuTitle').textContent = step.title;
-    $('tuBody').innerHTML = step.body;
-    const go = $('tuGo');
-    if (go) go.onclick = () => this.openTab(step.tab);
-    return step;
-  }
-
-  /* 접기. 개발 중에는 오른쪽 레일이 진행판·판매까지 함께 쌓이므로, 이미
-     아는 사람은 이 카드를 눕혀 둘 수 있어야 한다. 상태는 남긴다. */
-  _wireTutor() {
-    const h = $('tuHead');
-    if (!h) return;
-    try { this._tuFold = localStorage.getItem('socialdev3d.tufold') === '1'; } catch (e) { this._tuFold = false; }
-    const apply = () => {
-      const card = $('tutor');
-      if (card) card.classList.toggle('fold', !!this._tuFold);
-      h.setAttribute('aria-expanded', this._tuFold ? 'false' : 'true');
-      this.measureRail();
-    };
-    h.onclick = () => {
-      this._tuFold = !this._tuFold;
-      try { localStorage.setItem('socialdev3d.tufold', this._tuFold ? '1' : '0'); } catch (e) { /* private mode */ }
-      apply();
-    };
-    apply();
   }
 
   /* A weekly event with a choice holds the week until it is answered.
@@ -1840,11 +1845,10 @@ export class UI {
     const g = this.g;
     const running = g.sales && !g.sales.ended ? g.sales.id : null;
     this.renderBuff();
-    const tutor = this.renderTutor();
     // 상태에서 바로 읽는다. body 클래스를 보면 renderHUD 가 먼저 도는
     // 프레임에서 한 박자 늦게 반영된다.
     const buff = !!(g.company.buff && g.company.buff.weeks > 0);
-    const on = !!tutor || buff || !!g.project || !!g.sales
+    const on = buff || !!g.project || !!g.sales
       || g.managed().some((r) => r.id !== running);
     document.body.classList.toggle('has-rail', on && !this.inArena());
     // 카드가 서고 눕는 자리다. 넘치면 레일이 손가락을 받아야 스크롤이 된다.
@@ -2242,8 +2246,17 @@ export class UI {
     bgm.onclick = () => { setMusic(!musicOn()); this._syncMusic(); this.renderPanel(); };
     box.appendChild(bgm);
     box.appendChild(el('div', 'item',
-      '<div class="d">개발 현장에서는 긴장되는 곡이, 마지막 <b>버그 보스</b> 앞에서는 더 빠른 곡이 돕니다. '
-      + '시상식에는 시상식 곡이 따로 있습니다.</div>'));
+      '<div class="d">사무실에는 얌전한 곡이, 개발 현장에서는 긴장되는 곡이, 마지막 <b>버그 보스</b> 앞에서는 '
+      + '더 빠른 곡이 돕니다. 시상식에는 시상식 곡이 따로 있습니다.</div>'));
+    /* ── "켜 뒀는데 안 들려요" 의 자리 ──
+       소리가 안 나는 이유는 대개 이 게임 밖에 있다. 오디오가 아직 안 열렸거나,
+       아이폰 옆면 스위치가 무음이거나. 화면이 스스로 그 사실을 말하지 않으면
+       사람은 켬/꺼짐 버튼만 몇 번 누르다 만다. */
+    if (soundOn() && soundState() !== 'running') {
+      box.appendChild(el('div', 'item',
+        '<div class="d" style="color:var(--bad)">아직 소리가 열리지 않았습니다. 화면을 한 번 누르면 열립니다. '
+        + '아이폰이라면 옆면의 <b>무음 스위치</b>와 볼륨도 확인하세요.</div>'));
+    }
 
     /* 1인칭 */
     box.appendChild(el('h4', 'sec', '1인칭 둘러보기'));
@@ -3834,9 +3847,13 @@ export class UI {
     }
     this.modalOnOk = onOk || null;
     $('modal').classList.add('show');
+    // 창이 뜨고 닫히는 것도 사건이다. 소리가 없으면 화면이 통째로 바뀌는데
+    // 귀에는 아무 일도 안 일어난 것이 된다.
+    sfx('open');
   }
 
   closeModal() {
+    if ($('modal').classList.contains('show')) sfx('close');
     $('modal').classList.remove('show');
     // 닫히고 나면 줄에서 다음 것을 꺼낸다. 다음 틱으로 미루는 이유는 이
     // 함수를 부른 쪽이 곧바로 또 다른 모달을 열 수 있기 때문이다

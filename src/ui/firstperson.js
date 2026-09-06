@@ -13,6 +13,7 @@
    an interaction is reported to `onInteract` and the caller decides. */
 
 import { clamp } from '../core/math.js';
+import { sfx } from './sound.js';
 
 const EYE = 5.4;          // ~1.7 m at this world scale (a desk top is 2.42)
 const SPEED = 12.0;
@@ -181,7 +182,14 @@ export class FirstPerson {
       const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
       const rx = -Math.cos(this.yaw), rz = Math.sin(this.yaw);
       this.moveBy((fx * mz + rx * mx) * spd, (fz * mz + rz * mx) * spd);
+      const wasBob = this.bob;
       this.bob += len * spd * 0.55;
+      /* 발소리. 카메라가 위아래로 흔들리는 그 주기(sin(bob*2.1))의 바닥마다
+         한 걸음이다 — 흔들림과 소리가 같은 시계를 보므로 어긋나지 않는다.
+         걷지 않을 때도 bob 은 도는데, 그건 서서 숨 쉬는 흔들림이라 여기
+         움직이는 동안에만 세는 자리에 둔다. */
+      const half = Math.PI / 2.1;
+      if (Math.floor(this.bob / half) !== Math.floor(wasBob / half)) sfx('step');
     } else {
       this.bob += dt * 0.6;
     }

@@ -18,7 +18,7 @@ import './world/palette.js';                  // registers the hex -> material m
 import { buildOffice, BUILDING, FLOOR_PLANS, STOREY, placeZones, inPlaceZone } from './world/office.js';
 import { buildPlaced, buildGhost } from './world/placed.js';
 import { loadKit } from './world/kit.js';
-import { initSound } from './ui/sound.js';
+import { initSound, sfx } from './ui/sound.js';
 import { FURNITURE_BY_ID, footprint } from './game/furniture.js';
 import { Crew, Agent, ST, homeState } from './world/agents.js';
 import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, stageSetOf, tauntFor } from './world/boss.js';
@@ -1209,6 +1209,7 @@ class View {
   /* ---- per-frame ---- */
   update(dt) {
     this.time += dt;
+    this.ambience(dt);
     this.fp.update(dt);
     for (const s of this.game.staff) {
       const a = this.crew.get(s.id);
@@ -1247,6 +1248,21 @@ class View {
         this.effects.splice(i, 1);
       }
     }
+  }
+
+  /* ---- 사무실의 소리 ----
+     창밖에 도시가 있다. 차가 지나가고 가끔 경적이 울린다 — 아주 작게, 아주
+     드물게. 이 한 줄이 "3D 모형" 과 "창밖이 있는 방" 을 가른다.
+
+     세트장에서는 울리지 않는다. 거기는 사무실이 아니고, 마지막 공정의
+     음악 위에 경적이 얹히면 그건 분위기가 아니라 사고다. */
+  ambience(dt) {
+    if (this.arena || document.body.classList.contains('meeting')) { this._hornIn = 0; return; }
+    this._hornIn = (this._hornIn || 0) - dt;
+    if (this._hornIn > 0) return;
+    // 12~34초에 한 번. 규칙적이면 그건 배경이 아니라 신호로 들린다.
+    this._hornIn = 12 + this.rnd() * 22;
+    sfx('horn');
   }
 
   /* ---- DOM overlays ---- */
@@ -2049,6 +2065,10 @@ function firstGesture() {
   // 두는 이유는, 첫 제스처가 이미 지나간 뒤에 들어온 터치도 컨텍스트를
   // 되살릴 수 있어야 하기 때문이다 (탭을 오래 두면 suspended 로 돌아간다).
   initSound();
+  /* 오디오가 열린 그 순간에 배경음악도 붙인다. 여기서 안 부르면 화면이
+     바뀌기 전까지는 음악이 없다 — 첫 터치 뒤로 한참을 사무실에 서 있는
+     사람에게는 그게 "배경음악이 없다" 이다. */
+  if (window.__ui && window.__ui.syncMusic) window.__ui.syncMusic();
   if (gestureUsed) return;
   gestureUsed = true;
   if (isTouch()) goFullscreen();

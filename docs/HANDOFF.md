@@ -56,7 +56,7 @@ src/
             arena                                 보스별 전용 세트장 (지오메트리만)
   game/     data state staff project economy dialogue events
                                                   순수 시뮬레이션 (DOM/WebGL 없음)
-            furniture monsters tutorial           가구 카탈로그 · 몬스터 정의 · 튜토리얼
+            furniture monsters                    가구 카탈로그 · 몬스터 정의
             mail                                  편지함 (창업 축하 · 유저 편지 · DL 기념비)
             awards                                매달 시상식 · 두 달마다 게임덱스
             rivals                                경쟁사와 주간 판매 차트
@@ -101,6 +101,7 @@ tools/      balance sloppy flow meeting probe     테스트 하네스
 | 경쟁사·차트 | `game/rivals.js` (라이벌 정의·차트 계산) · 주간 훅은 `state._tickRivals()` · 화면은 `hud.panelChart()` |
 | 도우미 | `game/helpers.js` (정의·효과·뽑기) · 상태는 `state.helperBonus/drawHelperGacha/toggleHelper` · 화면은 `hud.panelHelpers()` |
 | 효과음 | `ui/sound.js` 의 `SOUNDS` 표 하나. 붙이는 곳은 `hud._onGameEvent` 와 `_arenaImpact` |
+| 배경음악 | `ui/sound.js` 의 `TRACKS`. 어느 화면에 무엇이 도는지는 `hud._syncMusic` 한 곳 |
 | 창밖 도시 | `world/city.js` (배치) + `assets/city/*.json` (모델). 새 모델은 `tools/kit.mjs city` 로 뽑는다 |
 | 실시간 스태미나 | `game/state.js` 의 `STAMINA_REGEN` · `tickClock()` · 시계는 `main.js` `tick()` 이 초당 한 번 부른다 |
 | 다음 주 값 | `game/state.js` 의 `WEEK_COIN` / `FREE_WEEK_SKIPS` / `weekCoinCost()` |
@@ -108,7 +109,6 @@ tools/      balance sloppy flow meeting probe     테스트 하네스
 | 살 수 있는 가구 | `game/furniture.js` (값·효과) + `world/placed.js` (`DRAW` 표) |
 | 배치 가능 구역 | `world/office.js` 의 `PLACE_ZONES` |
 | 보스 몬스터 | `game/monsters.js` (정의·등급) + `world/boss.js` (연출) |
-| 튜토리얼 문구·순서 | `game/tutorial.js` |
 | 창업 지원금 · 긴급 지원금 | `game/data.js` 의 `STARTUP_GRANT` · `rescueAmount()` |
 | 직원 걷기/회의 행동 | `world/agents.js` |
 | 회의 대사 | `game/dialogue.js` |

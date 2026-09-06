@@ -19,7 +19,6 @@ import {
 import {
   FURNITURE_BY_ID, RESELL, comfortScore, comfortLevel, footprint, overlaps,
 } from './furniture.js';
-import { TUTORIAL, tutorialStep } from './tutorial.js';
 import {
   rollCandidates, proposalPower, giveItem, promote, canPromote,
   reincarnate, canReincarnate, addMotivation, abilities, power, role, seedIds, itemCost,
@@ -135,7 +134,6 @@ export class Game {
       placed: [],
       rescues: 0,                   // how many emergency grants have been taken
       founded: false,               // the naming + grant ceremony has happened
-      tutorialDone: false,
       recentCombos: [],             // the last few genre|content keys shipped
       tasksDone: {},                // sales tasks already paid out
       eventsSeen: 0,
@@ -241,11 +239,6 @@ export class Game {
     this.emit('founded', { name: c.name, grant: STARTUP_GRANT });
     return { ok: true, name: c.name, grant: STARTUP_GRANT };
   }
-
-  /* ---------- 안내 ----------
-     건너뛰기는 없앴다. 안내는 화면에 떠 있지 않고 '❓ 안내' 탭에서 열리므로,
-     지울 이유도 없고 지울 수단도 필요 없다. */
-  tutorialStep() { return tutorialStep(this); }
 
   note(text, kind = 'info') {
     this.log.unshift({ text, kind, at: this.dateLabel() });
@@ -1101,7 +1094,10 @@ export class Game {
       if (!s) continue;
       s.gamesShipped += 1;
       const up = gainExp(s, xp);
-      if (up) this.note(`${s.name} 경험치 상승 → Lv.${s.level}`, 'good');
+      if (up) {
+        this.note(`${s.name} 경험치 상승 → Lv.${s.level}`, 'good');
+        this.emit('levelup', { id: s.id, name: s.name, level: s.level });
+      }
     }
     // 도감: 이 아이디어를 잡았다. 최고 점수와 최단 턴이 남는다.
     const dex = this.company.dex.bosses;
@@ -1439,7 +1435,9 @@ export class Game {
 
     this.company.bag[id] = this.bagCount(id) - 1;
     if (msg) this.note(msg, 'good');
-    this.emit('bag', { id, n: -1 });
+    // 무엇을 썼는지까지 실어 보낸다. 화면 쪽이 밥과 음료와 선물을 서로 다른
+    // 소리로 낼 수 있어야 "썼다" 가 아니라 "무엇을 썼다" 가 귀에 온다.
+    this.emit('bag', { id, n: -1, used: item.kind });
     return { ok: true, item };
   }
 
@@ -1456,7 +1454,7 @@ export class Game {
     this.company.bag[id] = this.bagCount(id) - 1;
     this.note(`${item.emoji} ${st.name}에게 ${item.ko} 지급 — ${item.desc}`, 'good');
     this.emit('staff', null);
-    this.emit('bag', { id, n: -1 });
+    this.emit('bag', { id, n: -1, used: 'gear' });
     return { ok: true };
   }
 
@@ -2253,7 +2251,6 @@ export class Game {
       c.placed = c.placed || [];
       c.rescues = c.rescues || 0;
       c.founded = c.founded ?? true;
-      c.tutorialDone = c.tutorialDone ?? false;
       c.recentCombos = c.recentCombos || [];
       c.tasksDone = c.tasksDone || {};
       c.eventsSeen = c.eventsSeen || 0;
@@ -2415,6 +2412,6 @@ export {
   STATS, JOBS, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, RESEARCH, CONTRACTS, MARKETING,
   SHOP,
   abilities, power, role, rankInfo, RANK_UP_FANS, itemCost, trainStamina, floorCost,
-  expToNext, STARTUP_GRANT, TUTORIAL, TASKS, rewardText,
+  expToNext, STARTUP_GRANT, TASKS, rewardText,
   hpRatio, isTired, isSpent, gearOf, basePower, shopItem, GEAR_SLOTS,
 };

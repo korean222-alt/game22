@@ -162,11 +162,36 @@ export const STAGE_SPECIES = [
   ['bug', 'bugBee'],
 ];
 
-export function rollStageSpecies(i, rnd) {
+export function rollStageSpecies(i, rnd, used = null) {
   const pool = STAGE_SPECIES[Math.max(0, Math.min(STAGE_SPECIES.length - 1, i))];
   if (!pool || !pool.length) return 'cat';
+  /* 이미 이번 판에 쓴 **몸**은 피한다. 종족 id 가 아니라 파일로 세는 것이
+     요령이다 — 'bug' 와 'cat' 은 이름이 다르지만 같은 cat.glb 를 입는다.
+     그래서 이 검사가 없으면 마지막 공정의 버그 보스가 첫 보스와 똑같은
+     모습으로 서고, 화면에는 "다 잡았는데 1번이 또 나왔다" 로 보인다. */
+  const free = used ? pool.filter((id) => !used.has(fileOf(id))) : pool;
+  const from = free.length ? free : pool;
   const r = typeof rnd === 'function' ? rnd() : Math.random();
-  return pool[Math.floor(r * pool.length) % pool.length];
+  return from[Math.floor(r * from.length) % from.length];
+}
+
+function fileOf(id) {
+  const def = MONSTER_BY_ID.get(id);
+  return def ? def.file : id;
+}
+
+/* 한 판의 네 칸을 한꺼번에 뽑는다. 칸마다 따로 뽑으면 첫 칸의 냥이와
+   마지막 칸의 버그가 같은 몸을 입을 수 있다 — 넷을 함께 뽑아야 "이번 판에
+   이미 나온 몸" 을 알 수 있다. */
+export function rollStageLineup(rnd) {
+  const used = new Set();
+  const out = [];
+  for (let i = 0; i < STAGE_SPECIES.length; i++) {
+    const id = rollStageSpecies(i, rnd, used);
+    used.add(fileOf(id));
+    out.push(id);
+  }
+  return out;
 }
 
 /* A short line for the moment the fight starts, and for the moment it ends. */

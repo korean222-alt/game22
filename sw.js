@@ -12,7 +12,7 @@
    handler below caches each on first use — so a first launch on mobile data
    stays small and the monster is instant every time after. */
 
-const CACHE = 'sds3d-v11';
+const CACHE = 'sds3d-v12';
 
 const ASSETS = [
   "./",
@@ -39,7 +39,6 @@ const ASSETS = [
   "./src/game/rivals.js",
   "./src/game/staff.js",
   "./src/game/state.js",
-  "./src/game/tutorial.js",
   "./src/main.js",
   "./src/render/camera.js",
   "./src/render/renderer.js",
@@ -104,6 +103,33 @@ self.addEventListener('fetch', (e) => {
         return fresh;
       } catch (err) {
         return (await caches.match('./index.html')) || Response.error();
+      }
+    })());
+    return;
+  }
+
+  /* ── 코드는 네트워크가 먼저다 ──
+     예전에는 여기도 캐시 우선이었다. 배포가 나가도 폰에 깔린 예전 .js 가
+     그대로 돌고, 새 파일은 **다음 실행**에나 붙는다는 뜻이다. 소리를 넣은
+     판을 올려도 그 폰에서는 며칠째 무음이었던 것이 정확히 이 자리다.
+
+     그래서 소스와 스타일만 네트워크를 먼저 본다. 1.5초 안에 안 오면 캐시로
+     되돌아가므로 지하철에서도 예전처럼 열린다 — 오프라인에서 여는 값은
+     그대로 두고, "고쳤는데 안 고쳐졌다" 만 없앤다. 모델·아이콘 같은 큰
+     파일은 내용이 안 바뀌므로 예전대로 캐시가 먼저다. */
+  const isCode = /\.(js|css|mjs)$/.test(url.pathname) || url.pathname.endsWith('/index.html');
+  if (isCode) {
+    e.respondWith((async () => {
+      const c = await caches.open(CACHE);
+      try {
+        const fresh = await Promise.race([
+          fetch(req),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), 1500)),
+        ]);
+        if (fresh && fresh.ok) { c.put(req, fresh.clone()); return fresh; }
+        throw new Error('bad');
+      } catch (err) {
+        return (await caches.match(req)) || fetch(req).catch(() => Response.error());
       }
     })());
     return;

@@ -242,22 +242,6 @@
      세로 흐름에 넣으면 셋이 동시에 떠도 서로를 가리지 않는다. -->
 <div id="rrail">
 
-<!-- ══ 튜토리얼 ══
-     탭 안에 있던 안내를 화면 오른쪽으로 꺼냈다. 탭이면 찾아 들어가야 하고,
-     처음 하는 사람은 그런 탭이 있다는 것부터 모른다. 지금 할 일 한 가지가
-     항상 화면 구석에 서 있다가, 다 끝나면 카드째로 사라진다 — 끝나고 나서
-     지울 것을 남길 이유가 없으므로 '건너뛰기' 도 '다시 보지 않기' 도 없다. -->
-<div id="tutor" class="card">
-  <button class="tuh" id="tuHead" type="button" aria-expanded="true">
-    <span class="tuk">할 일</span><b id="tuStep">1 / 1</b><i class="tucar">▾</i>
-  </button>
-  <div class="tubody">
-    <div class="tut" id="tuTitle">—</div>
-    <div class="tub" id="tuBody"></div>
-    <button class="btn sm primary wide" id="tuGo">그 탭으로</button>
-  </div>
-</div>
-
 <!-- ══ 개발 진행 상황 — 화면 오른쪽에 붙는 실시간 점수판 ══ -->
 <div id="prog" class="card">
   <div class="pgh"><b id="pgTitle">—</b><span id="pgTurn"></span></div>
@@ -455,7 +439,22 @@
   // stop the game itself from booting.
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      navigator.serviceWorker.register('./sw.js').catch(function () {});
+    });
+    /* 새 워커가 자리를 넘겨받으면 화면을 한 번 새로 고친다.
+
+       이게 없으면 이런 일이 생긴다: 새 코드가 배포되고 워커도 갈렸는데,
+       지금 열려 있는 화면은 여전히 낡은 .js 로 돌고 있다. 고친 것이 폰에
+       닿기까지 한 번의 실행이 통째로 밀리는 것이고, "고쳤다는데 그대로예요"
+       가 그 자리에서 나온다. 무한 새로고침을 막으려고 한 번만 돈다. */
+    var hadWorker = !!navigator.serviceWorker.controller;
+    var swapped = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      // 첫 방문에는 원래 컨트롤러가 없다. 그때의 인수인계는 '갱신' 이 아니므로
+      // 새로고침하지 않는다 — 안 그러면 처음 열자마자 화면이 한 번 깜빡인다.
+      if (!hadWorker || swapped) return;
+      swapped = true;
+      location.reload();
     });
   }
 </script>

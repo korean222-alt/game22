@@ -241,6 +241,22 @@ await step('보스는 칸마다 후보 안에서 뽑힌다', async () => {
   return got.join(' → ');
 });
 
+/* 네 칸이 **서로 다른 몸**을 입는가.
+
+   'bug' 와 'cat' 은 이름이 다르지만 같은 cat.glb 를 쓴다. 칸마다 따로
+   뽑던 시절에는 1번에 냥이가 서고 4번에 버그가 서면 화면에 똑같은 놈이
+   두 번 나왔고, 그것이 "다 잡았는데 갑자기 첫 번째 보스가 나온다" 였다. */
+await step('네 칸이 서로 다른 몸으로 선다', async () => {
+  const r = await page.evaluate(async () => {
+    const m = await import('./src/game/monsters.js');
+    const p = window.__game.project;
+    const files = p.stages.map((s) => m.MONSTER_BY_ID.get(s.species).file);
+    return { files, uniq: new Set(files).size };
+  });
+  if (r.uniq !== 4) throw new Error('같은 몸이 두 번 섰다: ' + r.files.join(', '));
+  return r.files.map((f) => f.split('/').pop()).join(' → ');
+});
+
 await step('아레나에서 나오면 사무실로 돌아온다', async () => {
   await page.evaluate(() => window.__ui.exitArena());
   await page.waitForTimeout(600);

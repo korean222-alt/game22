@@ -60,9 +60,22 @@ export function setMusic(on) {
   return musicEnabled;
 }
 
+/* ── 아이폰의 무음 스위치 ──
+   iOS 사파리는 WebAudio 를 **벨소리** 취급한다. 옆면 스위치가 무음이면
+   게임 소리도 통째로 안 난다 — 코드는 멀쩡히 도는데 아무 소리도 안 들리는,
+   가장 알아채기 어려운 종류의 무음이다. iOS 16.4 부터 오디오 세션의 종류를
+   직접 정할 수 있으므로, 여기서 '재생' 이라고 못 박는다. 없는 브라우저에서는
+   그냥 아무 일도 안 일어난다. */
+function claimPlayback() {
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  } catch (e) { /* 지원하지 않는 브라우저 */ }
+}
+
 /* 첫 제스처에서 부른다. 여기 말고 다른 곳에서 컨텍스트를 만들면
    브라우저가 정지 상태로 만들어 놓고, 그 뒤로는 영영 안 울린다. */
 export function initSound() {
+  claimPlayback();
   if (ctx) {
     if (ctx.state === 'suspended') ctx.resume();
     // 탭을 오래 두면 컨텍스트가 잠든다. 깨어난 김에 돌던 음악도 되살린다.
@@ -74,15 +87,38 @@ export function initSound() {
   try {
     ctx = new AC();
     master = ctx.createGain();
-    master.gain.value = 0.28;      // 게임 소리는 배경이다. 크면 바로 끈다.
-    master.connect(ctx.destination);
+    /* 0.28 이었다. 소리표의 한 방이 0.15 안팎이므로 스피커에 닿는 것은
+       0.04 — 조용한 방에서 이어폰을 꽂아야 겨우 들리는 크기였고, 폰
+       스피커로는 사실상 무음이었다. 게임 소리는 배경이지만, 들려야 배경이다. */
+    master.gain.value = 0.62;
+    /* 소리를 키운 만큼 겹칠 때가 무섭다. 자동 전투는 타격·번뜩임·상자·콤보가
+       같은 0.1초 안에 겹쳐 나가고, 그 합이 1을 넘으면 스피커에서 지직거린다.
+       리미터 한 장을 물려 두면 무엇을 얼마나 겹쳐 내든 그 위로는 안 올라간다 —
+       소리표를 손볼 때마다 총합을 계산하지 않아도 된다는 뜻이다. */
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -8;
+    limiter.knee.value = 6;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.18;
+    master.connect(limiter);
+    limiter.connect(ctx.destination);
     musicBus = ctx.createGain();
     musicBus.gain.value = 0.0001;  // 트랙이 붙을 때 페이드인한다
     musicBus.connect(ctx.destination);
+    /* 컨텍스트가 정지 상태로 태어나는 경우가 있다(제스처 밖에서 불렸거나,
+       사파리가 늦게 붙잡을 때). 조용히 두면 그 판 내내 무음이므로 바로 깨운다. */
+    if (ctx.state === 'suspended') ctx.resume().catch(() => { /* 다음 터치에서 다시 */ });
     loadExternal();
     if (wantTrack) music(wantTrack, true);
   } catch (e) { ctx = null; }
   return ctx;
+}
+
+/* 살아 있는가. 설정 화면이 "소리가 왜 안 나지" 를 스스로 답할 수 있어야 한다. */
+export function soundState() {
+  if (!ctx) return 'off';
+  return ctx.state;
 }
 
 /* ── 재료 ── */
@@ -154,6 +190,17 @@ const SOUNDS = {
   place: { min: 0.06, play: () => { noise({ d: 0.07, gain: 0.14, hp: 200, lp: 2600 }); tone({ freq: 150, to: 90, type: 'sine', d: 0.09, gain: 0.14 }); } },
   // 페이지·목록이 스르륵 넘어갈 때.
   swipe: { min: 0.05, play: () => noise({ d: 0.13, gain: 0.07, hp: 900, lp: 7000 }) },
+  // 가방에서 무엇을 꺼내 쓸 때 — 밥, 음료, 장난감.
+  eat: { min: 0.08, play: () => { noise({ d: 0.09, gain: 0.11, hp: 300, lp: 3200 }); tone({ freq: 260, to: 420, type: 'triangle', d: 0.12, gain: 0.13, at: 0.05 }); } },
+  drink: { min: 0.08, play: () => { noise({ d: 0.14, gain: 0.07, hp: 1400, lp: 8000 }); tone({ freq: 700, to: 1100, type: 'sine', d: 0.16, gain: 0.13, at: 0.06 }); } },
+  // 장비를 채운다. 금속이 걸리는 소리.
+  equip: { min: 0.1, play: () => { tone({ freq: 1400, type: 'square', d: 0.04, gain: 0.09 }); tone({ freq: 700, to: 980, type: 'triangle', d: 0.13, gain: 0.14, at: 0.04 }); } },
+  // 연구가 끝났다. 기계가 한 칸 돌아가는 소리.
+  research: { min: 0.3, play: () => { [440, 587, 740].forEach((f, i) => tone({ freq: f, type: 'square', d: 0.11, gain: 0.11, at: i * 0.06 })); noise({ d: 0.2, gain: 0.05, hp: 2000, lp: 9000, at: 0.1 }); } },
+  // 1인칭으로 걸을 때의 한 걸음. 카펫 위라 마르고 낮다.
+  step: { min: 0.16, play: () => { noise({ d: 0.045, gain: 0.06 + Math.random() * 0.02, hp: 260, lp: 1700 }); tone({ freq: 96 + Math.random() * 22, to: 58, type: 'sine', d: 0.06, gain: 0.05 }); } },
+  // 외주 계약서에 도장을 찍는다.
+  stamp: { min: 0.2, play: () => { noise({ d: 0.05, gain: 0.2, hp: 150, lp: 2000 }); tone({ freq: 120, to: 60, type: 'sine', d: 0.12, gain: 0.16 }); } },
 
   // ── 개발 배틀 ──
   // 던지기. 타격이 나기 전에 뭔가가 날아간다는 것을 귀가 먼저 안다.
@@ -362,6 +409,21 @@ const TRACKS = {
     bpm: 76, gain: 0.14,
     bass: [3, null, null, null, null, null, null, null, 8, null, null, null, null, null, null, null],
     lead: [27, null, null, 31, null, null, 34, null, 32, null, null, 34, null, null, 39, null],
+    hat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    kick: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    leadType: 'sine', bassType: 'triangle',
+  },
+  /* 사무실. 게임의 절반은 여기서 흐른다 — 책상을 놓고, 사람을 뽑고,
+     기획서를 뽑고, 정산을 읽는다. 그 시간이 통째로 무음이었다.
+
+     그래서 가장 얌전한 트랙이다: 베이스는 두 마디에 한 번만 자리를 옮기고,
+     리드는 넉 칸에 하나씩 떨어지고, 킥도 하이햇도 없다. 일하는 동안 계속
+     도는 음악은 눈에 띄면 지는 것이라, "있다는 것을 모르는 채로 있는" 쪽을
+     노렸다. */
+  office: {
+    bpm: 84, gain: 0.10,
+    bass: [0, null, null, null, null, null, null, null, -5, null, null, null, null, null, 3, null],
+    lead: [19, null, null, null, 22, null, null, 24, null, null, 19, null, null, null, 15, null],
     hat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     kick: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     leadType: 'sine', bassType: 'triangle',

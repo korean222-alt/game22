@@ -64,7 +64,6 @@ const state = () => page.evaluate(() => {
     desks: g.deskCount(), freeDesks: g.freeDesks(),
     founded: g.company.founded, rescues: g.company.rescues,
     placing: !!v.place, boss: v.boss ? v.boss.def.id : null,
-    tut: g.tutorialStep() ? g.tutorialStep().id : null,
   };
 });
 /* The modal is either a choice list (idea cards, confirms) or a plain OK box. */
@@ -137,34 +136,13 @@ await step('설치 안내를 닫는다', async () => {
   if (still) throw new Error('닫기를 눌러도 안 닫힘');
   return '닫기';
 });
-/* 안내는 탭이 아니라 화면 오른쪽 레일의 카드 한 장이다. 지금 할 일 하나만
-   서 있고, 마지막 단계를 끝내면 카드째로 사라진다. */
-await step('튜토리얼 탭은 없다', async () => {
-  const stray = await page.evaluate(() => !!document.querySelector('.tabbtn[data-tab="guide"]'));
-  if (stray) throw new Error('옛 안내 탭이 아직 있음');
-  const open = await page.evaluate(() => document.querySelector('#panel .gstep'));
-  if (open) throw new Error('안내가 패널에 떠 있음');
-  return '탭에서 빠졌다';
-});
-await step('오른쪽에 지금 할 일이 서 있다', async () => {
-  const s = await state();
-  if (s.tut !== 'desk') throw new Error('첫 단계가 desk 가 아님: ' + s.tut);
-  const r = await page.evaluate(() => ({
-    on: document.body.classList.contains('has-tutor'),
-    title: document.getElementById('tuTitle').textContent.trim(),
-    step: document.getElementById('tuStep').textContent.trim(),
-    body: document.getElementById('tuBody').textContent.trim().length,
-  }));
-  if (!r.on) throw new Error('튜토리얼 카드가 안 보임');
-  if (!r.title || !r.body) throw new Error('내용이 비어 있음');
-  const skip = await page.evaluate(() =>
-    [...document.querySelectorAll('#tutor button')].some((b) => b.textContent.includes('건너뛰기')));
-  if (skip) throw new Error('건너뛰기 버튼이 남아 있음');
-  /* 9번(선물) 단계는 뺐다. 선물은 상점에서 사거나 상자에서 나오는데 둘 다
-     안 나온 사람에게는 영원히 지워지지 않는 줄이었다 — 끝낼 방법이 손에
-     없는 안내는 안내가 아니다. */
-  if (r.step !== '1 / 11') throw new Error('단계 수가 11이 아님: ' + r.step);
-  return `${r.step} · ${r.title}`;
+/* 안내 카드는 없앴다. 열 번째 줄이 지워지지 않아 영영 남는 자리였고,
+   할 일은 운영 탭의 '할 일' 목록이 이미 세고 있다. */
+await step('안내 카드도 안내 탭도 없다', async () => {
+  const stray = await page.evaluate(() => !!document.querySelector('.tabbtn[data-tab="guide"]')
+    || !!document.getElementById('tutor') || !!document.querySelector('#panel .gstep'));
+  if (stray) throw new Error('안내가 아직 남아 있음');
+  return '완전히 빠졌다';
 });
 
 console.log('\n── 2. 회사 탭 (외주 · 연구 · 저장) ──');
@@ -542,13 +520,16 @@ await step('아이디어 몬스터가 소환된다', async () => {
       id: b.def.id, ko: b.def.ko,
       joints: b.model.jointCount, prims: b.model.prims.length,
       clips: [...b.model.clips.keys()],
+      // 서 있는 클립의 이름은 몸마다 다르다. 벌은 Idle 이 없어서 Flying 이
+      // 그 자리에 선다 — 이름을 여기 박아 두면 벌이 뽑힌 판에서만 터진다.
+      idle: b.def.idle,
       scale: +b.scale.toFixed(2),
       floor: b.floor,
     };
   });
   if (!r) throw new Error('보스가 소환되지 않음 (glb 로드 실패?)');
   if (!r.prims) throw new Error('메시가 비어 있음');
-  if (!r.clips.includes('Idle')) throw new Error('Idle 클립이 없음: ' + r.clips);
+  if (!r.clips.includes(r.idle)) throw new Error(`서 있는 클립(${r.idle})이 없음: ` + r.clips);
   return `${r.ko} · 조인트 ${r.joints} · 클립 ${r.clips.length} · ×${r.scale}`;
 });
 await step('보스 HP 바가 화면에 뜬다', async () => {

@@ -19,7 +19,7 @@ import {
 } from './data.js';
 import { JOBS, JOB_ABILITY } from './data.js';
 import { helperSkill } from './helpers.js';
-import { rollStageSpecies, MONSTER_BY_ID } from './monsters.js';
+import { rollStageLineup, MONSTER_BY_ID } from './monsters.js';
 import {
   power, basePower, ability, motivationMult, traitMult, traitAdd, hasTrait, traitsOf,
   gearAxis, drainHp, hpRatio, syncHp, healHp, upSpeedMult, upCritAdd,
@@ -196,12 +196,15 @@ export function expectedRoundDamage(team) {
 export function raidPlan({ genreId, platformId, grade, seriesN = 1, team, rnd = null }) {
   const rounds = raidRounds({ genreId, platformId, grade, seriesN });
   const total = Math.max(60, Math.round(expectedRoundDamage(team) * rounds));
+  /* 네 칸을 **한꺼번에** 뽑는다. 칸마다 따로 뽑으면 마지막 버그 보스가 첫
+     보스와 같은 몸을 입을 수 있고(둘 다 cat.glb 를 쓴다), 그러면 다 잡고
+     나서 1번이 다시 선 것처럼 보인다. rnd 를 안 주면(착수 전 미리보기)
+     기본값 그대로다 — 고르는 화면에서 상대가 매번 흔들리면 그건 정보가 아니다. */
+  const lineup = rnd ? rollStageLineup(rnd) : null;
   const stages = BOSS_STAGES.map((st, i) => ({
     index: i,
     ko: st.ko,
-    /* 칸마다 후보 중 하나를 뽑는다. rnd 를 안 주면(착수 전 미리보기) 기본값
-       그대로다 — 고르는 화면에서 상대가 매번 흔들리면 그건 정보가 아니다. */
-    species: rnd ? rollStageSpecies(i, rnd) : st.species,
+    species: lineup ? lineup[i] : st.species,
     // 무대는 몬스터가 아니라 **공정**의 것이라 뽑지 않는다.
     set: st.set || st.species,
     dmg: st.dmg,
