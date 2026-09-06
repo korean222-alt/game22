@@ -791,6 +791,92 @@ class View {
     });
   }
 
+  /* ---- 창립 영상 ----
+     게임을 처음 켜면 이름을 적고, 그 다음에 이 장면이 돈다. 예전에는
+     이름을 적자마자 지원금 팝업과 튜토리얼 카드가 동시에 떴고, 그러면
+     플레이어가 만든 회사가 **글자로만** 존재했다 — 사무실은 뒤에 있는데
+     한 번도 보지 못한 채 안내부터 읽게 된다.
+
+     그래서 카메라가 도시에서 시작해 건물로 내려앉고, 빈 1층에 멈춘다.
+     세 줄이 지나가는 동안 화면에 있는 것은 "아직 아무도 없는 사무실"
+     하나뿐이고, 그것이 이 게임이 시작하는 자리다.
+
+     건너뛰기 버튼은 없다. 9초는 한 번쯤 볼 만한 길이고, 버튼을 달면
+     대부분은 그 버튼을 누르며 자기 회사가 세워지는 장면을 안 본다. */
+  playFounding(name) {
+    const cx = BUILDING.x1 / 2, cz = BUILDING.z1 / 2;
+    const box = document.getElementById('cine');
+    const line = document.getElementById('cineTx');
+    const sub = document.getElementById('cineSub');
+    if (!box || !line || !sub) return Promise.resolve();
+
+    // 1인칭으로 서 있는 채로 카메라를 뺏으면 어지럽다. 그럴 일은 없지만
+    // (창립은 첫 프레임이다) 규칙은 여기 한 줄로 둔다.
+    if (this.fp && this.fp.on) this.fp.exit();
+    if (this.arena) this.exitArena();
+
+    const top = (this.floorCount - 1) * STOREY;
+    return new Promise((resolve) => {
+      const timers = [];
+      let spin = null;
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        for (const t of timers) clearTimeout(t);
+        if (spin) clearInterval(spin);
+        document.body.classList.remove('cine');
+        box.classList.remove('show');
+        this.setFloor(0);
+        resolve();
+      };
+
+      const say = (at, text, small) => timers.push(setTimeout(() => {
+        line.innerHTML = text;
+        sub.innerHTML = small || '';
+        box.classList.remove('beat');
+        void box.offsetWidth;
+        box.classList.add('beat');
+      }, at));
+
+      document.body.classList.add('cine');
+      box.classList.add('show');
+      line.innerHTML = '';
+      sub.innerHTML = '';
+
+      /* 1) 도시. 건물 꼭대기 너머로 멀리서 시작한다. */
+      cam.lookAt(cx, top + 8, cz);
+      cam.goalDist = 188;
+      cam.el = 0.30;
+      cam.az = 2.9;
+      cam.snap();
+      // 아주 천천히 돈다. 멈춰 있는 그림은 사진이지 영상이 아니다.
+      spin = setInterval(() => { cam.az -= 0.0016; }, 16);
+
+      say(300, '어느 도시의 작은 사무실 하나');
+
+      /* 2) 건물로 내려앉는다. */
+      timers.push(setTimeout(() => {
+        cam.lookAt(cx, STOREY * 1.4, cz);
+        cam.goalDist = 96;
+        cam.el = 0.44;
+      }, 2600));
+      say(2900, `「${name}」`, '오늘, 문을 열었습니다');
+
+      /* 3) 빈 1층. 책상도 사람도 없는 그 화면이 첫 과제다. */
+      timers.push(setTimeout(() => {
+        this.setFloor(0);
+        cam.lookAt(cx, 6, cz);
+        cam.goalDist = 48;
+        cam.el = 0.36;
+      }, 5400));
+      say(5700, '직원 0명 · 책상 0개',
+        '앉을 자리를 만드는 것부터가 사장의 일입니다');
+
+      timers.push(setTimeout(finish, 9200));
+    });
+  }
+
   skipMeeting() { if (this._skip) this._skip(); }
 
   focusMeeting(mtg) {

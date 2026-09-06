@@ -12,7 +12,7 @@
    handler below caches each on first use — so a first launch on mobile data
    stays small and the monster is instant every time after. */
 
-const CACHE = 'sds3d-v9';
+const CACHE = 'sds3d-v10';
 
 const ASSETS = [
   "./",

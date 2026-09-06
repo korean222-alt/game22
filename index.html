@@ -106,6 +106,8 @@
     <div class="stab tabbtn" data-tab="live"><span class="si">📈</span><span class="sk">운영</span></div>
     <div class="stab tabbtn" data-tab="mail"><span class="si">✉️</span><span class="sk">편지</span><i class="sbadge" id="tbMail" hidden></i></div>
     <div class="stab tabbtn" data-tab="event"><span class="si">🏆</span><span class="sk">행사</span><i class="sbadge" id="tbEvent" hidden></i></div>
+    <!-- 안내는 자동으로 뜨지 않는다. 필요할 때 여기서 연다. -->
+    <div class="stab tabbtn" data-tab="guide"><span class="si">❓</span><span class="sk">안내</span><i class="sbadge" id="tbGuide" hidden></i></div>
   </div>
 </div>
 
@@ -297,8 +299,17 @@
   </div>
 </div>
 
-<!-- ══ 튜토리얼: 다음에 할 일 한 줄 ══ -->
-<div id="tut" class="card"></div>
+<!-- ══ 창립 영상 ══
+     회사를 세우는 순간에만 한 번 돈다. 카메라가 도시에서 건물로 내려앉는
+     동안 이 층이 레터박스와 자막을 얹는다. -->
+<div id="cine">
+  <div class="cbar top"></div>
+  <div class="cbar bot"></div>
+  <div class="ctx">
+    <div class="ct" id="cineTx"></div>
+    <div class="cs" id="cineSub"></div>
+  </div>
+</div>
 
 <!-- ══ 배치 모드 툴바: 패널이 닫힌 채로 바닥을 보며 쓴다 ══ -->
 <div id="placebar" class="card"></div>

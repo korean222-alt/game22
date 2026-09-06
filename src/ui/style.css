@@ -316,15 +316,33 @@ body.panel-hidden #side{
 .helper .ht b i{font-size:9.5px;font-style:normal;color:var(--dim);font-weight:700}
 .helper .hd{font-size:10px;color:var(--dim)}
 
-/* 개발 화면 아래의 도우미 줄. 지금 누가 붙어 있는지가 전투 중에 보여야
-   장착이 선택이 된다. */
-#aHelp{display:flex;gap:5px;justify-content:center;margin-bottom:4px}
+/* 개발 화면 아래의 도우미 줄.
+
+   글자가 아니라 **버튼**이다. 보스 한 마리에 한 번, 누르면 그 자리에서
+   버그가 줄거나 축이 뛴다. 쓰고 나면 흐려진 채로 다음 공정을 기다리므로,
+   "남았나 썼나" 가 색 하나로 읽혀야 한다. */
+#aHelp{display:flex;gap:6px;justify-content:center;margin-bottom:5px;flex-wrap:wrap}
 #aHelp .ah{
-  display:flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px;
-  background:rgba(232,176,85,.16);border:1px solid rgba(232,176,85,.32);
-  font-size:9.5px;font-weight:800;color:#ffe6a0;
+  display:flex;align-items:center;gap:4px;padding:4px 10px;border-radius:999px;
+  font-size:9.5px;font-weight:800;color:#ffe6a0;cursor:pointer;
+  background:rgba(232,176,85,.18);border:1px solid rgba(232,176,85,.42);
+  transition:transform .09s ease, background .15s ease, opacity .15s ease;
 }
-#aHelp .ah b{font-size:13px;font-weight:400;line-height:1}
+#aHelp .ah b{font-size:16px;font-weight:400;line-height:1}
+#aHelp .ah .ahn{letter-spacing:-.2px}
+#aHelp .ah.rdy{box-shadow:0 0 0 1px rgba(232,176,85,.22), 0 3px 10px rgba(0,0,0,.35)}
+#aHelp .ah.rdy:active{transform:scale(.94)}
+#aHelp .ah.used{
+  cursor:default;background:rgba(255,255,255,.06);
+  border-color:rgba(255,255,255,.16);color:rgba(255,255,255,.42);
+}
+#aHelp .ah.used b{opacity:.45}
+#aHelp .ah.fire{animation:ahfire .5s ease}
+@keyframes ahfire{
+  0%{transform:scale(1)}
+  30%{transform:scale(1.28);background:rgba(255,226,150,.55);color:#2a1c06}
+  100%{transform:scale(1)}
+}
 body.arena.party-fold #aHelp{display:none}
 
 /* ── 주간 판매 차트 ──
@@ -541,27 +559,22 @@ body.arena #toast,body.arena.in-battle #toast{
 }
 body.in-battle #hint,body.placing #hint,body.picking #hint{display:none}
 
-/* ── tutorial line ──
-   One instruction at a time, above the panel. It never blocks anything: the
-   step it names comes from committed state, so a player who works ahead simply
-   finds it has moved on. */
-#tut{
-  position:fixed;
-  left:calc(var(--sal) + var(--panel-cur) + var(--gap)*2);
-  top:calc(var(--sat) + var(--hud-h) + var(--gap)*2);
-  /* 오른쪽 레일(진행·판매 카드)이 서 있으면 그만큼 비켜선다. 예전에는
-     레일 위에 겹쳐서 판매 카드의 머리말을 통째로 덮었다. */
-  right:calc(var(--sar) + var(--rail-w) + var(--gap) + var(--rail-cur));
-  margin:0 auto;max-width:430px;z-index:12;padding:10px 13px;
-  display:none;
-  transition:left .26s cubic-bezier(.2,.85,.25,1),right .26s cubic-bezier(.2,.85,.25,1);
+/* ── 안내 패널 ──
+   화면에 떠 있던 튜토리얼 줄을 걷어내고 '❓ 안내' 탭으로 옮겼다. 순서 전체가
+   한 번에 보이고, 지금 할 일에만 표시가 붙는다. */
+.gstep{
+  padding:8px 10px;margin-bottom:6px;border-radius:9px;
+  background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.06);
 }
-#tut.show{display:block}
-#tut .tt{font-size:12.5px;font-weight:800;color:var(--gold);margin-bottom:3px;display:flex;align-items:center;gap:6px}
-#tut .tt .tn{margin-left:auto;font-size:9.5px;color:var(--dim);font-weight:700;font-variant-numeric:tabular-nums}
-#tut .tb{font-size:10.5px;color:var(--dim);line-height:1.55}
-#tut .trow{display:flex;gap:6px;margin-top:8px}
-body.placing #tut,body.picking #tut,body.in-battle #tut{display:none}
+.gstep .gt{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:var(--fg)}
+.gstep .gt .gk{width:12px;color:var(--dim);font-size:10px}
+.gstep .gb{font-size:10.5px;color:var(--dim);line-height:1.55;margin-top:4px}
+.gstep.done{opacity:.5}
+.gstep.done .gt{color:var(--dim)}
+.gstep.now{background:rgba(232,176,85,.10);border-color:rgba(232,176,85,.34)}
+.gstep.now .gt{color:var(--gold)}
+.gstep.now .gt .gk{color:var(--gold)}
+.gstep.now .btn{margin-top:7px}
 
 /* ── placement toolbar ──
    Takes the battle bar's slot: the two never run at once, and it is the one
@@ -1003,7 +1016,7 @@ body.touch #fpHelp{display:none}
 body.arena #arena{display:block}
 /* 아레나에서는 경영 UI 가 전부 비켜선다. */
 body.arena #side,body.arena #battle,body.arena #prog,body.arena #brand,
-body.arena #floors,body.arena #hint,body.arena #tut,body.arena #menuBtn,
+body.arena #floors,body.arena #hint,body.arena #menuBtn,
 body.arena #fpBtn{display:none !important}
 /* 3D 위에 뜨는 작은 보스 이름표는 위의 큰 체력 바와 같은 말을 두 번 한다. */
 body.arena .bosstag{display:none !important}
@@ -1761,3 +1774,35 @@ body.arena #buff,body.fp #buff,body.meeting #buff{display:none !important}
 }
 #buff b{display:block;font-size:11.5px;font-weight:800}
 #buff .bfv{display:block;color:#ffd9a0;font-weight:800;font-variant-numeric:tabular-nums}
+
+
+/* ══ 창립 영상 ══
+   레터박스 두 줄과 자막. 이 층이 떠 있는 동안 나머지 UI 는 전부 비켜선다 —
+   화면에 있어야 하는 것은 이제 막 세운 회사의 빈 사무실 하나뿐이다. */
+#cine{position:fixed;inset:0;z-index:120;pointer-events:none;opacity:0;transition:opacity .25s ease}
+#cine.show{opacity:1}
+#cine .cbar{position:absolute;left:0;right:0;height:11vh;background:#07080a}
+#cine .cbar.top{top:0}
+#cine .cbar.bot{bottom:0}
+#cine .ctx{
+  position:absolute;left:0;right:0;bottom:15vh;text-align:center;opacity:1;
+  padding:0 24px;text-shadow:0 2px 18px rgba(0,0,0,.9);
+}
+#cine .ct{
+  font-size:clamp(20px,3.4vw,38px);font-weight:900;color:#fff;letter-spacing:-.5px;
+  line-height:1.25;
+}
+#cine .cs{font-size:clamp(10px,1.3vw,14px);color:#cfd4dc;margin-top:8px;font-weight:700}
+/* 자막은 **투명도를 건드리지 않고** 살짝 올라오기만 한다. 애니메이션으로
+   나타나게 하면, 프레임이 굶는 기기에서 글자가 몇 초 동안 안 보인다 —
+   연출 하나 때문에 읽어야 할 문장이 사라지는 것은 어떤 이유로도 안 된다. */
+#cine.beat .ctx{animation:cbeat .5s ease}
+@keyframes cbeat{
+  from{transform:translateY(14px)}
+  to{transform:none}
+}
+body.cine #hud,body.cine #brand,body.cine #side,body.cine #floors,body.cine #campad,
+body.cine #menuBtn,body.cine #fpBtn,body.cine #fsBtn,body.cine #rrail,body.cine #modal,
+body.cine #ov{
+  opacity:0;pointer-events:none;transition:opacity .25s ease;
+}

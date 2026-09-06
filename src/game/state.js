@@ -29,6 +29,7 @@ import {
 } from './staff.js';
 import {
   generateProposal, startProject, battleTurn, battleTick, chooseCard, finishProject, debug,
+  useHelperSkill,
   turnCost, seedProjectIds, previewQuality, previewBugs, funScore,
   ensureStages, currentStage, raidProgress, teamDown, advanceStage, stageName,
   forfeitStage, completion, projectQuality,
@@ -40,8 +41,8 @@ import {
   buildChart, myBestRank, CHART_FAN_BONUS,
 } from './rivals.js';
 import {
-  HELPERS, HELPER_BY_ID, HELPER_GACHA, helperSlots, helperBonus, helperLevel,
-  drawHelper,
+  HELPERS, HELPER_BY_ID, helperSlots, helperBonus, helperLevel,
+  helperSkillText, drawHelper,
 } from './helpers.js';
 import {
   MAIL_CAP, welcomeMail, fanMail, fanMailChance, dlMail, DL_MARKS,
@@ -91,20 +92,6 @@ export const STAMINA_REGEN = 180;       // 초/1점
    탈진한 팀을 영원히 못 일으키면 그것이 막다른 길이다. 주간 회복(78%)에
    비하면 한참 느리다 — 밥과 휴식을 대체하지 않을 만큼만. */
 const HP_REGEN_PER_TICK = 0.020;        // 한 점 찰 때마다 최대 체력의 2%
-
-/* ---------- 다음 주로 넘기기 ----------
-   달력을 미는 데 값이 붙는다. 예전에는 공짜라서, 무엇을 만들든 상관없이
-   버튼을 연타하는 것이 시상식·계약·판매를 가장 빨리 굴리는 방법이었다.
-   코인은 출시·수상·편지·태스크에서만 나오므로, 이제 시간을 미는 것은
-   **게임을 만들어서 번 것을 쓰는** 행동이다. */
-export const WEEK_COIN = 1;
-/* 값이 붙지 않는 넘김의 수. 지난번 넘김 이후에 회사가 뭐라도 했으면
-   (돈을 썼거나 스태미나를 썼으면) 카운터가 0 으로 돌아가므로, 평범하게
-   플레이하는 사람은 이 값을 절대 안 넘긴다. 값을 무는 것은 **아무것도
-   안 하고 달력만 미는** 연속 넘김뿐이다 — 그게 상을 빨리 받으려고
-   버튼을 연타하던 그 행동이다. */
-export const FREE_WEEK_SKIPS = 1;
-export const MAX_WEEK_COIN = 3;
 
 export class Game {
   constructor(seed = Date.now() & 0x7fffffff) {
@@ -170,8 +157,6 @@ export class Game {
          (STAMINA_REGEN 초에 1). 게임을 꺼 둔 사이에도 차므로 벽시계를
          저장하고, 돌아올 때 그동안 지난 만큼 한 번에 넣는다. */
       stamAt: Date.now(),
-      // 아무것도 하지 않고 연속으로 넘긴 주의 수. 무엇이든 하면 0 이 된다.
-      weekRun: 0,
       /* ---- 경쟁사 ----
          라이벌이 낸 게임들과, 우리가 차트에서 몇 위였나. 지난주 순위를
          들고 있어야 "1위를 뺏겼다" 를 말할 수 있다. */
@@ -184,7 +169,6 @@ export class Game {
          helpers 는 { id: 보유 수 }, helperSlots 는 지금 낀 id 목록. */
       helpers: {},
       helperSlots: [],
-      helperPulls: 0,
       /* 축별 최고 기록. 개발 중인 점수가 이 값을 넘으면 화면이 금색이 된다 —
          "지금 만들고 있는 게 우리 회사 역사상 제일 좋은 것" 이 실시간으로
          보이는 것이, 자동 전투를 끝까지 보게 만드는 유일한 이유다. */
@@ -258,13 +242,10 @@ export class Game {
     return { ok: true, name: c.name, grant: STARTUP_GRANT };
   }
 
-  /* ---------- tutorial ---------- */
+  /* ---------- 안내 ----------
+     건너뛰기는 없앴다. 안내는 화면에 떠 있지 않고 '❓ 안내' 탭에서 열리므로,
+     지울 이유도 없고 지울 수단도 필요 없다. */
   tutorialStep() { return tutorialStep(this); }
-
-  skipTutorial() {
-    this.company.tutorialDone = true;
-    this.emit('tutorial', null);
-  }
 
   note(text, kind = 'info') {
     this.log.unshift({ text, kind, at: this.dateLabel() });
@@ -307,28 +288,61 @@ export class Game {
       }));
   }
 
-  /* 코인으로 한 마리. 이미 있는 것이 나오면 레벨이 오른다 — 뽑기가 손해로
-     끝나는 순간이 없어야 두 번째를 돌린다. */
-  drawHelperGacha() {
+  /* ---------- 도우미는 뽑는 것이 아니라 찾아오는 것 ----------
+     코인을 넣으면 나오는 자판기였을 때, 도우미는 "코인이 남으면 돌리는 것"
+     이었다. 지금은 행사와 사건만이 데려온다 — 게임덱스 부스, 시상식, 주간
+     사건, 팬 편지. 그래서 도우미 한 마리는 회사가 바깥과 만난 흔적이 되고,
+     같은 이유로 언제 올지는 고를 수 없다.
+
+     `luck` 은 그 자리의 씀씀이다. 게임덱스에 큰돈을 쓰면 좋은 쪽이 잘 나온다. */
+  grantHelper(luck = 1, from = '') {
     const c = this.company;
-    const cost = HELPER_GACHA.coins;
-    if (c.coins < cost) return { ok: false, why: `코인이 부족합니다 (🪙 ${cost} 필요)` };
-    c.coins -= cost;
-    c.helperPulls = (c.helperPulls || 0) + 1;
-    const def = drawHelper(this.rnd);
+    const def = drawHelper(this.rnd, luck);
     c.helpers = c.helpers || {};
     const had = c.helpers[def.id] || 0;
     c.helpers[def.id] = had + 1;
-    // 첫 마리는 자리가 비어 있으면 알아서 낀다. 뽑고 나서 어디에 넣는지를
-    // 또 찾아야 하면, 뽑은 순간의 기쁨이 심부름으로 바뀐다.
+    const level = helperLevel(had + 1);
+    // 첫 마리는 자리가 비어 있으면 알아서 낀다. 받고 나서 어디에 넣는지를
+    // 또 찾아야 하면, 받은 순간의 기쁨이 심부름으로 바뀐다.
     c.helperSlots = c.helperSlots || [];
     if (!had && c.helperSlots.length < this.helperSlotCount()) c.helperSlots.push(def.id);
+    const where = from ? `${from}에서 ` : '';
     this.note(had
-      ? `${def.icon} ${def.ko} — 레벨 ${helperLevel(had + 1)}!`
-      : `${def.icon} ${def.ko} 합류!`, def.star >= 4 ? 'good' : '');
-    this.emit('helper', { def, level: helperLevel(had + 1), isNew: !had });
+      ? `${where}${def.icon} ${def.ko} — 레벨 ${level}! (${helperSkillText(def, level)})`
+      : `${where}${def.icon} ${def.ko} 합류! ${helperSkillText(def, level)}`,
+    def.star >= 4 ? 'good' : '');
+    this.emit('helper', { def, level, isNew: !had, from });
+    return { ok: true, def, level, isNew: !had, from };
+  }
+
+  /* 사건이 도우미를 데려올 확률. 이미 다 모았으면 겹쳐서 레벨이 오르므로
+     확률을 낮추지 않는다 — 도우미는 열두 마리뿐이고, 레벨 5 까지가 끝이다. */
+  maybeGrantHelper(p, luck = 1, from = '') {
+    if (this.rnd() >= p) return null;
+    return this.grantHelper(luck, from);
+  }
+
+  /* ---------- 능력을 쓴다 ----------
+     보스 한 마리에 한 번. 개발 현장의 얼굴을 누르면 여기로 온다. */
+  useHelper(id) {
+    const p = this.project;
+    if (!p) return { ok: false, why: '개발 중이 아닙니다' };
+    const entry = this.helperBonus().list.find((h) => h.id === id);
+    if (!entry) return { ok: false, why: '끼지 않은 도우미' };
+    const r = useHelperSkill(p, entry, this.rnd, this.ctx({ staffById: this.staffById() }));
+    if (!r.ok) return r;
+    this.note(`${entry.def.icon} ${entry.def.ko} · ${r.skill.ko} — ${r.text}`, 'good');
+    this._battleEvents(p, r.events);
     this.save();
-    return { ok: true, def, level: helperLevel(had + 1), isNew: !had };
+    return r;
+  }
+
+  /* 이 도우미를 지금 쓸 수 있나. 개발 현장의 버튼이 이걸 보고 흐려진다. */
+  helperReady(id) {
+    const p = this.project;
+    if (!p || p.done) return false;
+    if (p.pendingCards) return false;
+    return (p.helperUsed || {})[id] !== (p.stage || 0);
   }
 
   toggleHelper(id) {
@@ -589,7 +603,6 @@ export class Game {
     if (this.company.money < n) return false;
     this.company.money -= n;
     // 돈이 나갔다 = 회사가 뭔가 했다. 연속 넘김 카운터가 풀린다.
-    this._acted();
     return true;
   }
 
@@ -778,7 +791,6 @@ export class Game {
     const cost = itemCost(s, item);
     if (!this.spend(cost)) return { ok: false, why: '자금 부족' };
     this.company.stamina -= stam;
-    this._acted();
     const r = giveItem(s, itemId, this.company.rank);
     if (!r.ok) { this.company.money += cost; this.company.stamina += stam; return r; }
     this.note(`${s.name}에게 ${item.ko} 지급 → Lv.${s.level}`, 'good');
@@ -827,7 +839,6 @@ export class Game {
   makeProposal() {
     if (this.company.stamina < 1) return { ok: false, why: '스태미나 부족' };
     this.company.stamina -= 1;
-    this._acted();
     // The staffer with the most planning weight is credited as the author, and
     // is the one who gains motivation if the game ships.
     let author = null, best = -1;
@@ -886,7 +897,6 @@ export class Game {
     }
     if (!this.spend(p.devCost)) return { ok: false, why: `개발비 부족 (₩${p.devCost.toLocaleString()})` };
     this.company.stamina -= p.devStamina;
-    this._acted();
 
     this.proposals = this.proposals.filter((x) => x.id !== proposalId);
     this.project = p;
@@ -1121,6 +1131,8 @@ export class Game {
     this.emit('proposals', null);
     this.emit('finished', p);
     this.checkTasks();
+    // 만드는 데 걸린 시간이 여기서 달력에 실린다. 큰 기획일수록 오래 걸린다.
+    this.advanceWeeks(this.devWeeksOf(p), `「${p.title}」 개발 완료`);
   }
 
   debugProject() {
@@ -1128,7 +1140,6 @@ export class Game {
     if (!p || p.bugs <= 0) return { ok: false, why: '고칠 버그가 없다' };
     if (this.company.stamina < 1) return { ok: false, why: '스태미나 부족' };
     this.company.stamina -= 1;
-    this._acted();
     const wasHof = p.hallOfFame;
     const r = debug(p, this.staffById(), this.rnd);
     const gained = r.gained > 0 ? ` · 평론가 +${r.gained}점 (${p.criticTotal}점)` : '';
@@ -1257,12 +1268,14 @@ export class Game {
     return s;
   }
 
-  /* 정산을 확인했다. 여기서부터 다시 게임을 만들 수 있다. */
+  /* 정산을 확인했다. 여기서부터 다시 게임을 만들 수 있다. 출시 뒷정리에
+     한 주가 간다 — 달력이 움직이는 세 자리 중 하나다. */
   closeSalesRun() {
     if (!this.sales) return null;
     const s = this.sales;
     this.sales = null;
     this.emit('sales', null);
+    this.advanceWeeks(1, `「${s.title}」 출시 정리`);
     this.save();
     return s;
   }
@@ -1617,11 +1630,14 @@ export class Game {
     if (this.company.contract) return { ok: false, why: '이미 계약을 진행 중' };
     if (this.company.stamina < c.stamina) return { ok: false, why: '스태미나 부족' };
     this.company.stamina -= c.stamina;
-    this._acted();
     const pay = contractPay(c, this.company.rank);
     this.company.contract = { id, ko: c.ko, weeksLeft: c.weeks, pay, research: c.research };
-    this.note(`${c.ko} 수주. ${c.weeks}주 뒤 ₩${pay.toLocaleString()} 입금.`);
+    this.note(`${c.ko} 수주. ${c.weeks}주 동안 팀이 남의 일을 한다.`);
     this.emit('contract', this.company.contract);
+    /* 계약은 그 자리에서 기간이 흐른다. 달력을 미는 버튼이 없어졌으므로,
+       개발할 돈이 없는 회사가 시간을 흘릴 수 있는 유일한 길이 여기다 —
+       이 자리가 막히면 "돈이 없어서 아무것도 못 한다" 가 영구히 남는다. */
+    this.advanceWeeks(c.weeks, `${c.ko} 진행`);
     return { ok: true };
   }
 
@@ -1693,6 +1709,8 @@ export class Game {
     this.emit('event', { ...ev, resolved: true, line });
     this.emit('staff', null);
     this.checkTasks();
+    // 사건이 붙들고 있던 나머지 주를 마저 흘린다.
+    this._drainWeeks();
     return { ok: true, line };
   }
 
@@ -1887,6 +1905,10 @@ export class Game {
         wins.map((w) => `${w.icon} ${w.catKo} ${w.grade.ko} — 「${w.title}」 (${w.statKo} ${w.value})`).join('\n')
         + `\n\n상금 ${rewardText(totals)} 은(는) 이미 계좌로 보냈습니다.`,
         this.dateLabel(), '🏆'));
+      // 금상은 사람을 부른다. 시상식에서 만난 누군가가 따라오기도 한다.
+      const top = wins.some((w) => w.grade.id === 'gold') ? 0.5
+        : wins.some((w) => w.grade.id === 'silver') ? 0.25 : 0.12;
+      this.maybeGrantHelper(top, 1.3, '시상식');
       this._maybeRankUp();
     }
     this.pendingAward = { year: c.year, month: c.month, wins, totals, near, entries: entries.length };
@@ -1948,9 +1970,14 @@ export class Game {
       + `팬 +${res.fans.toLocaleString('ko-KR')}명\n`
       + `${res.weeks}주 동안 다운로드 ${Math.round((res.dl - 1) * 100)}% 증가`,
       this.dateLabel(), '🎪'));
+    /* 부스에 서 있다 보면 누군가 따라온다. 크게 차린 부스일수록 잘 따라오고,
+       좋은 쪽이 나온다 — 도우미를 얻는 가장 확실한 자리가 여기다. */
+    const luck = { small: 1.0, mid: 1.2, big: 1.55 }[plan.id] || 1;
+    const chance = { small: 0.30, mid: 0.55, big: 0.90 }[plan.id] || 0.3;
+    const got = this.maybeGrantHelper(chance, luck, '게임덱스');
     this._maybeRankUp();
     this.checkTasks();
-    const out = { ok: true, plan, visitors, note, ...res };
+    const out = { ok: true, plan, visitors, note, helper: got, ...res };
     this.emit('expoDone', out);
     return out;
   }
@@ -1961,49 +1988,56 @@ export class Game {
     return b && b.weeks > 0 ? b.dl : 1;
   }
 
-  /* ---------- the week clock ---------- */
-  /* 이번 주를 넘기는 데 드는 코인.
+  /* ══════════════════════ 달력 ══════════════════════
 
-     한 번은 언제나 공짜다. 값이 붙는 것은 **연속으로** 넘길 때뿐이고,
-     그 사이에 무엇이든 하면(기획서·개발·디버그·계약·채용·구매 — 돈이나
-     스태미나가 나가는 모든 행동) 카운터가 0 으로 돌아간다.
+     "다음 주로 넘기기" 버튼은 없앴다. 그 버튼이 있는 동안 최적의 플레이는
+     언제나 같았다 — 아무것도 만들지 않고 달력만 연타하면 시상식도 계약도
+     판매도 알아서 굴러왔다. 코인 값을 붙여 막아 봤지만, 그건 연타를 막은
+     것이지 연타가 이득이라는 사실을 없앤 것은 아니었다.
 
-     이 규칙이 없으면 둘 중 하나가 된다: 공짜면 버튼 연타가 언제나 최적이고
-     (상도 계약도 판매도 달력만 밀면 굴러온다), 매번 코인을 받으면 코인이
-     마른 회사가 시간을 못 흘려 아무것도 못 하게 된다. */
-  weekCoinCost() {
-    const n = this.company.weekRun || 0;
-    if (n < FREE_WEEK_SKIPS) return 0;
-    return Math.min(MAX_WEEK_COIN, WEEK_COIN * (n - FREE_WEEK_SKIPS + 1));
+     이제 시간은 **게임을 만들면 흐른다.**
+       · 게임을 완성하면  기획서 등급만큼 (★1 한 주 → ★5 세 주)
+       · 판매 정산을 확인하면  한 주
+       · 계약을 받으면  그 계약의 기간만큼 그 자리에서
+
+     그래서 달력은 누르는 것이 아니라 **일한 결과**가 되고, 한 해에 몇
+     작품을 낼 수 있는가가 곧 회사의 속도가 된다.
+
+     `weeksDue` 는 아직 못 흘린 주다. 주간 사건이 답을 기다리는 동안에는
+     달력이 멈춰야 하므로(사건의 요점이 그것이다), 남은 주는 여기 쌓였다가
+     답을 하는 순간 마저 흐른다. */
+
+  /* 완성한 게임이 잡아먹은 개발 기간. */
+  devWeeksOf(project) {
+    const grade = (project && project.proposal && project.proposal.grade) || 1;
+    return 1 + Math.floor(grade / 2);
   }
 
-  canNextWeek() {
-    if (this.pendingEvent) return { ok: false, why: '이번 주 사건을 먼저 처리하세요' };
-    const cost = this.weekCoinCost();
-    if (this.company.coins < cost) {
-      return { ok: false, why: `코인 ${cost} 필요 (보유 ${this.company.coins})` };
+  advanceWeeks(n, why = '') {
+    const c = this.company;
+    c.weeksDue = (c.weeksDue || 0) + Math.max(0, Math.round(n));
+    if (why) this.note(`${why} — ${Math.max(0, Math.round(n))}주가 지났다.`);
+    return this._drainWeeks();
+  }
+
+  /* 쌓인 주를 흘린다. 사건이 걸리면 거기서 멈추고, 답을 하면 이어서 흐른다. */
+  _drainWeeks() {
+    const c = this.company;
+    let ran = 0;
+    let guard = 0;
+    while ((c.weeksDue || 0) > 0 && !this.pendingEvent && guard++ < 64) {
+      c.weeksDue -= 1;
+      this.nextWeek();
+      ran += 1;
     }
-    return { ok: true, cost };
+    return { weeks: ran, left: c.weeksDue || 0 };
   }
-
-  /* 회사가 무엇이든 했다. 연속 넘김 카운터를 되돌린다. */
-  _acted() { if (this.company) this.company.weekRun = 0; }
 
   nextWeek() {
     const c = this.company;
     // An unanswered event blocks the week: the whole point of a choice is that
     // the world waits for it.
     if (this.pendingEvent) { this.emit('event', this.pendingEvent); return { blocked: true }; }
-
-    /* 달력을 미는 값. 코인이 없으면 주는 넘어가지 않는다 — 대신 스태미나가
-       실시간으로 차므로 기다리는 동안에도 게임은 굴러간다. */
-    const cost = this.weekCoinCost();
-    if (c.coins < cost) {
-      this.note(`연속으로 넘기려면 코인 ${cost}개가 필요합니다. 무엇이든 하면 다시 무료입니다.`, 'bad');
-      return { blocked: true, why: `코인 ${cost} 필요` };
-    }
-    if (cost) c.coins -= cost;
-    c.weekRun = (c.weekRun || 0) + 1;
 
     /* 팀이 전부 쓰러진 채로 주를 넘기면, 그 단계는 거기서 마감된다.
 
@@ -2078,9 +2112,12 @@ export class Game {
       }
     }
 
-    // 한 주가 지나면 스태미나는 가득 찬다. 코인을 낸 대가가 이것이다.
+    /* 한 주가 지나면 스태미나가 조금 찬다. 예전에는 가득 찼는데, 그건
+       버튼을 누른 대가였다. 이제 주는 일한 결과로 흐르므로 가득 채우면
+       계약 한 건이 스태미나 자판기가 된다. 주력은 실시간 회복이고,
+       한 주는 거기에 얹히는 보너스다. */
     c.staminaMax = this.info().staminaMax;
-    c.stamina = c.staminaMax;
+    c.stamina = Math.min(c.staminaMax, c.stamina + Math.max(2, Math.round(c.staminaMax * 0.25)));
     c.stamAt = Date.now();
     c.overtimeUsed = false;
 
@@ -2106,7 +2143,10 @@ export class Game {
     if (c.money < 0) this._rescue();
 
     if (income > 0) this.note(`주간 정산: 매출 ₩${income.toLocaleString()} / 비용 ₩${costs.toLocaleString()}`);
-    if (this.rnd() > 0.72) this.rollCandidates();
+    // 주가 예전만큼 자주 넘어가지 않는다(달력이 일한 결과로만 흐른다).
+    // 명단이 새로 들어오는 빈도는 그만큼 올려 준다 — 사람을 못 뽑아서
+    // 회사가 멈추는 것은 판단이 아니라 대기다.
+    if (this.rnd() > 0.45) this.rollCandidates();
 
     this.emit('week', { income, costs });
     this.checkTasks();
@@ -2262,7 +2302,7 @@ export class Game {
       // 실시간 스태미나·최고 기록이 없던 세이브. 시계는 지금부터 돌고,
       // 기록은 이미 출시한 게임들에서 되짚는다.
       c.stamAt = c.stamAt || Date.now();
-      c.weekRun = c.weekRun || 0;
+      c.weeksDue = c.weeksDue || 0;
       c.rivalGames = Array.isArray(c.rivalGames) ? c.rivalGames : [];
       c.rivalSeq = c.rivalSeq || 0;
       c.chartRank = c.chartRank || 0;
@@ -2270,7 +2310,6 @@ export class Game {
       c.helpers = (c.helpers && typeof c.helpers === 'object') ? c.helpers : {};
       c.helperSlots = Array.isArray(c.helperSlots)
         ? c.helperSlots.filter((id) => HELPER_BY_ID.has(id) && c.helpers[id]) : [];
-      c.helperPulls = c.helperPulls || 0;
       c.staminaMax = rankInfo(c.rank).staminaMax;
       c.stamina = Math.min(c.stamina || 0, c.staminaMax);
       if (!c.best || typeof c.best !== 'object') {

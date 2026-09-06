@@ -8,7 +8,7 @@
 import {
   PLATFORMS, MONETIZE, STATS, rankInfo, RANK_UP_FANS, MARKETING,
   researchEffect, TREND_BONUS, TREND_PENALTY, FLOOR_UPKEEP, floorCost,
-  SALE_EVENTS, REACH, FAN_PULL, ARPU_SOCIAL,
+  SALE_EVENTS, REACH, FAN_PULL, ARPU_SOCIAL, returnCap,
 } from './data.js';
 import { traitMult } from './staff.js';
 
@@ -82,7 +82,21 @@ export function releaseGame(project, company, rnd, ctx = {}) {
   const growth = 1.34 + Math.min(0.5, q.craze / 900) + Math.min(0.25, q.social / 1200);
   const startUsers = Math.max(200, Math.round(users * 0.42));
 
-  const arpu = money.arpu * (1 + q.social / ARPU_SOCIAL) * platform.share * (0.9 + rnd() * 0.2);
+  let arpu = money.arpu * (1 + q.social / ARPU_SOCIAL) * platform.share * (0.9 + rnd() * 0.2);
+
+  /* ---------- 초반의 천장 ----------
+     이 게임이 평생 벌어들일 돈을 주사위 없이 미리 굴려 보고, 그것이
+     들인 돈(개발비 + 홍보비)의 몇 배를 넘으면 객단가를 그만큼 낮춘다.
+     유저 수가 아니라 객단가를 깎는 이유는, 유저 수가 곧 팬이고 랭크이고
+     다음 작품의 바닥이기 때문이다 — 성장은 그대로 두고 **이번 판의
+     현금**만 묶는다. */
+  const spent = (project.devCost || 0) * (1 + (mk.cost || 0));
+  const cap = returnCap(company.rank) * spent;
+  if (Number.isFinite(cap) && cap > 0) {
+    const shape = { peakWeek, growth, decay };
+    const est = lifetimeEstimate(startUsers, arpu, shape);
+    if (est > cap) arpu *= cap / est;
+  }
 
   const rel = {
     id: project.id,
@@ -143,6 +157,18 @@ export function releaseGame(project, company, rnd, ctx = {}) {
   // release and is what actually drives rank.
   const fansGained = Math.round(users * 0.11 * (project.hallOfFame ? 1.5 : 1) * mk.fans * starMult);
   return { release: rel, fansGained };
+}
+
+/* 주사위 없이 굴려 본 평생 매출. 판매 곡선과 정확히 같은 식을 쓰되 잡음과
+   사건만 뺀다 — 두 식이 갈라지면 천장이 실제와 다른 것을 재게 된다. */
+function lifetimeEstimate(startUsers, arpu, shape) {
+  let users = startUsers, total = 0;
+  for (let w = 1; w <= 30; w++) {
+    total += users * arpu * 0.7;
+    users = Math.round(users * weekMult({ weeks: w, ...shape }));
+    if (users < 60 && w > shape.peakWeek) break;
+  }
+  return total;
 }
 
 /* 이번 주의 유저 배율. 정점 전에는 입소문으로 올라가고, 지나면 식는다.

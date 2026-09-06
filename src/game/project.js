@@ -18,6 +18,7 @@ import {
   devStamina, EXHAUST, strainOf, TREASURE, rollStar, lootPool, starOf,
 } from './data.js';
 import { JOBS, JOB_ABILITY } from './data.js';
+import { helperSkill } from './helpers.js';
 import {
   power, basePower, ability, motivationMult, traitMult, traitAdd, hasTrait, traitsOf,
   gearAxis, drainHp, hpRatio, syncHp, healHp, upSpeedMult, upCritAdd,
@@ -104,9 +105,13 @@ export function completion(project) {
 export function projectQuality(project) {
   const n = strikeCount(project);
   const comp = completion(project);
+  const qb = project.qBonus || null;
   const out = {};
   for (const st of STATS) {
-    out[st] = Math.max(1, Math.round(qualityCurve(project.raw[st] / n) * comp));
+    // 도우미가 얹은 점수는 완성도로 깎지 않는다. 밖에서 들어온 도움이지
+    // 팀이 만들다 만 부분이 아니다.
+    const add = qb ? (qb[st] || 0) : 0;
+    out[st] = Math.max(1, Math.min(QCAP, Math.round(qualityCurve(project.raw[st] / n) * comp + add)));
   }
   return out;
 }
@@ -265,6 +270,15 @@ export function startProject({ proposal, platformId, monetizeId, team, rank, ser
     lootTotal: 0,
     bugExtra: 0,                 // 보스의 반격이 남긴 버그
     critBonus: 0,                // 네잎클로버 같은 도구가 얹는 번뜩임 확률
+    /* ---- 도우미 능력이 남기는 것 ----
+       qBonus 는 축에 그대로 더해지는 점수, bugCut 은 완성 시 버그를 깎는
+       비율, critBuff/critBuffT 는 잠깐 도는 번뜩임 버프다. helperUsed 는
+       "이 도우미를 이번 보스에서 이미 썼다" 를 기억한다 — 능력은 보스
+       한 마리에 한 번이고, 그 한 번을 어디에 쓸지가 이 시스템의 전부다. */
+    qBonus: { craze: 0, usability: 0, impact: 0, social: 0, retention: 0 },
+    bugCut: 0,
+    critBuff: 0, critBuffT: 0,
+    helperUsed: {},
     lastGain: null,              // 직전 라운드에 오른 품질 (진행 패널의 +표시)
     lastDamage: 0,
     attacks: 0,
@@ -529,7 +543,8 @@ export function staffStrike(project, s, rnd, ctx = {}) {
 
   const critChance = 0.06 + Math.min(0.30, (s.motivation + teamMood * 2) * 0.006)
     + traitAdd(s, 'crit') + upCritAdd(s) + (project.critBonus || 0)
-    + comboCrit(project) + (help.crit || 0);
+    + comboCrit(project) + (help.crit || 0)
+    + ((project.critBuffT || 0) > 0 ? (project.critBuff || 0) : 0);
   const crit = rnd() < critChance;
   const roll = 1 - variance + rnd() * variance * 2;
   const fan = hasTrait(s, 'genreFan') && s.favGenre === project.genreId
@@ -689,6 +704,12 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
 
   const step = Math.min(0.25, Math.max(0, dt));
   project.elapsed = (project.elapsed || 0) + step;
+  // 도우미가 걸어 둔 번뜩임 버프는 벽시계가 아니라 전투 시계로 식는다 —
+  // 배속을 올리면 그만큼 빨리 지나가는 것이 눈에 맞는다.
+  if ((project.critBuffT || 0) > 0) {
+    project.critBuffT = Math.max(0, project.critBuffT - step);
+    if (project.critBuffT === 0) project.critBuff = 0;
+  }
 
   /* 콤보는 손을 놓으면 식는다. 식는 순간을 이벤트로 알리는 이유는, 배율이
      사라진 것을 화면이 조용히 처리하면 플레이어에게는 "갑자기 약해졌다" 로
@@ -771,6 +792,99 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
   }
   return out;
 }
+
+/* ══════════════════════ 도우미 능력 ══════════════════════
+
+   보스 한 마리에 한 번. 누르는 순간 결과가 나오고, 그 결과가 개발 화면의
+   숫자에 바로 보인다 — 버그 줄이 반으로 줄고, 축 하나가 50 뛰고, 남은
+   작업량이 한 뭉치 사라진다.
+
+   왜 여기 있는가: 능력이 남은 작업량을 깎으면 그 자리에서 보스가 죽을 수
+   있고, 죽음 뒤의 처리(카드·다음 스테이지·완성)는 stageCleared 하나만
+   알고 있다. 상태 기계를 두 벌 만들지 않으려면 이 함수가 그 옆에 있어야
+   한다. */
+export function useHelperSkill(project, entry, rnd, ctx = {}) {
+  ensureStages(project);
+  if (!project || project.done) return { ok: false, why: '지금은 쓸 수 없다' };
+  if (project.pendingCards) return { ok: false, why: '아이디어를 먼저 고르세요' };
+  const { def, level } = entry;
+  const stage = project.stage || 0;
+  project.helperUsed = project.helperUsed || {};
+  if (project.helperUsed[def.id] === stage) {
+    return { ok: false, why: `${def.ko} 은(는) 이번 공정에서 이미 썼습니다` };
+  }
+  const s = helperSkill(def, level);
+  const events = [];
+  const lines = [];
+
+  const bumpStat = (st, v) => {
+    project.qBonus = project.qBonus || {};
+    const add = Math.round(v);
+    project.qBonus[st] = (project.qBonus[st] || 0) + add;
+    lines.push(`${STAT_KO_LOCAL[st] || st} +${add}`);
+  };
+  const cutBugs = (v) => {
+    project.bugCut = 1 - (1 - (project.bugCut || 0)) * (1 - v);
+    lines.push(`버그 ${Math.round(v * 100)}% 감소`);
+  };
+  const hitBoss = (v) => {
+    const dmg = Math.max(1, Math.round((project.hpMax || 1) * v));
+    applyDamage(project, dmg);
+    lines.push(`작업량 -${dmg.toLocaleString('ko-KR')}`);
+    events.push({
+      kind: 'helperHit', helperId: def.id, icon: def.icon, name: def.ko,
+      damage: dmg, bossHp: project.hp, bossHpMax: project.hpMax,
+    });
+  };
+  const healTeam = (v) => {
+    let n = 0;
+    for (const id of project.team) {
+      const st = ctx.staffById ? ctx.staffById.get(id) : null;
+      if (!st) continue;
+      syncHp(st);
+      healHp(st, st.hpMax * v);
+      if (project.down) project.down[id] = 0;
+      n += 1;
+    }
+    lines.push(`팀 ${n}명 체력 +${Math.round(v * 100)}%`);
+  };
+
+  switch (s.kind) {
+    case 'bug': cutBugs(s.value); break;
+    case 'stat': bumpStat(s.stat, s.value); break;
+    case 'stats': for (const st of STATS) bumpStat(st, s.value); break;
+    case 'dmg': hitBoss(s.value); break;
+    case 'heal': healTeam(s.value); break;
+    case 'crit':
+      project.critBuff = s.value;
+      project.critBuffT = s.secs;
+      lines.push(`${s.secs}초간 번뜩임 +${Math.round(s.value * 100)}%p`);
+      break;
+    case 'all':
+      for (const st of STATS) bumpStat(st, s.value);
+      cutBugs(s.bug);
+      hitBoss(s.dmg);
+      break;
+    default: return { ok: false, why: '알 수 없는 능력' };
+  }
+
+  project.helperUsed[def.id] = stage;
+  events.unshift({
+    kind: 'helper', helperId: def.id, icon: def.icon, name: def.ko,
+    skillKo: s.ko, level, text: lines.join(' · '),
+  });
+
+  // 능력 한 방에 보스가 죽었으면, 평소 죽음과 같은 길로 보낸다.
+  if (project.hp <= 0) {
+    for (const ev of stageCleared(project, rnd, { ...ctx })) events.push(ev);
+  }
+  return { ok: true, events, text: lines.join(' · '), def, level, skill: s };
+}
+
+const STAT_KO_LOCAL = {
+  craze: '화제성', usability: '조작성', impact: '임팩트',
+  social: '소셜', retention: '지속성',
+};
 
 /* ---------- 한 라운드 ----------
    팀 전원이 한 번씩 친다. 자동 전투가 표준이 된 뒤로 UI 는 이걸 부르지
@@ -904,7 +1018,10 @@ function bugCount(project, quality, staffById, ctx = {}) {
     }
     bugs *= Math.max(0.35, Math.min(2.2, tm));
   }
-  return bugs + (project.bugExtra || 0) + (project.rushBugs || 0);
+  const total = bugs + (project.bugExtra || 0) + (project.rushBugs || 0);
+  // 디버그 오리가 지운 만큼. 개발 중에 눌렀으므로 반격이 나중에 남긴
+  // 버그까지 같이 줄어드는데, 그게 "일찍 부른 QA" 의 뜻과도 맞는다.
+  return total * (1 - Math.max(0, Math.min(0.9, project.bugCut || 0)));
 }
 
 /* 뽑아서 가진 소재만 카드로 나온다. `owned` 가 없으면 (헤드리스 밸런스

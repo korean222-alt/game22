@@ -505,6 +505,26 @@ export const MARKETING = [
    무조건 이득이라 고민할 자리가 아니었다. */
 /* Cost is a multiple of the project's development cost, so promotion always
    scales with the size of what you are promoting. */
+/* ---------- 초반 수익의 천장 ----------
+
+   데뷔작 한 편이 개발비의 열 배를 벌면, 그 뒤의 모든 판단은 의미가 없다 —
+   무엇을 만들든 돈이 남으니 상점도 계약도 연구도 볼 이유가 없고, 회사를
+   키우는 게임이 첫 게임에서 끝난다.
+
+   그래서 **초반에는 한 편이 개발비의 1.5배까지만 남긴다.** 이 배수는 랭크가
+   오를수록 풀리고, 랭크 7 부터는 아예 걸리지 않는다. 회사를 키우는 것이
+   돈을 버는 유일한 길이 되게 하는 장치다.
+
+   홍보비는 천장의 기준에 같이 들어간다. 홍보를 건 게임이 그만큼 더 벌 수
+   없다면 홍보는 그냥 손해이고, 그러면 그 칸은 누르지 않는 칸이 된다. */
+export const EARLY_RETURN = { base: 1.5, perRank: 0.6, freeRank: 7 };
+
+export function returnCap(rank) {
+  const r = Math.max(1, rank || 1);
+  if (r >= EARLY_RETURN.freeRank) return Infinity;
+  return EARLY_RETURN.base + (r - 1) * EARLY_RETURN.perRank;
+}
+
 export function marketingCost(mk, devCost) {
   return Math.round(devCost * mk.cost);
 }

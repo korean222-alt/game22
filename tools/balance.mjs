@@ -62,10 +62,17 @@ function furnish(id) {
 function syncDesks() { g.assignDesks(buildPlaced(g.company.placed).desks); }
 syncDesks();
 
+/* 달력을 미는 버튼은 없어졌다. 시간은 게임을 완성하고, 정산을 확인하고,
+   계약을 받을 때 흐른다 — 그러니 이 루프도 주를 밀지 않고 **한 번 놀아 본다**.
+   아무 일도 못 한 바퀴에는 스태미나만 채운다: 브라우저에서는 실시간으로
+   차는 그 회복이고, 시계가 없는 여기서는 이렇게 흉내 낸다. */
 const rows = [];
 const bugSamples = [], dbgSamples = [];
-for (let week = 0; week < YEARS * 48; week++) {
+let lastYear = 1, stall = 0;
+for (let loop = 0; loop < YEARS * 48 * 20; loop++) {
   const c = g.company;
+  if (c.year > YEARS) break;
+  const weekBefore = ((c.year - 1) * 12 + (c.month - 1)) * 4 + c.week;
 
   // ── grow the office when it comfortably pays for itself ──
   if (g.canBuyFloor().ok && c.money > g.nextFloorCost() * 3.2) {
@@ -176,7 +183,13 @@ for (let week = 0; week < YEARS * 48; week++) {
       g.pickCard(best.id);
       continue;
     }
-    if (!g.devTurn().ok) break;
+    const t = g.devTurn();
+    if (t.ok) continue;
+    /* 팀이 전부 쓰러졌다. 브라우저에서는 개발 현장의 유예 시간이 지나면
+       이 단계가 자동으로 마감되는데, 시계가 없는 여기서는 그 자리를
+       직접 눌러 준다 — 안 그러면 시뮬레이션이 쓰러진 팀 앞에서 멈춘다. */
+    if (t.exhausted && g.wrapUpStage().ok) continue;
+    break;
   }
   // Train the CORE team, not whoever happens to be furthest behind: spreading
   // gifts across the whole roster means nobody ever reaches a higher tier.
@@ -192,11 +205,17 @@ for (let week = 0; week < YEARS * 48; week++) {
   // A weekly event with a choice holds the calendar until it is answered; the
   // AI always takes the first affordable option.
   if (g.pendingEvent) g.answerEvent(0);
-  g.nextWeek();
-  if (g.pendingEvent) g.answerEvent(0);
+  const weekAfter = ((c.year - 1) * 12 + (c.month - 1)) * 4 + c.week;
+  if (weekAfter === weekBefore) {
+    // 달력이 안 움직였다 = 할 수 있는 일이 없었다. 기다린 셈 치고 스태미나만
+    // 채운다. 그래도 계속 제자리면 회사가 막힌 것이므로 거기서 끊는다.
+    c.stamina = c.staminaMax;
+    if (++stall > 400) { console.log('  (막혔다 — 더 진행할 수 없음)'); break; }
+  } else stall = 0;
 
-  if (week % 48 === 47) {
+  if (c.year !== lastYear) {
     const last = g.releases[0];
+    lastYear = c.year;
     rows.push({
       year: g.company.year - 1,
       rank: c.rank,

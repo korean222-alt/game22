@@ -18,7 +18,7 @@ import {
   shopItem,
   EXHAUST, ABILITY_KO, starText, starOf, weaponFor,
 } from '../game/data.js';
-import { HELPER_GACHA } from '../game/helpers.js';
+import { helperSkillText } from '../game/helpers.js';
 import {
   FURNITURE, FURNITURE_BY_ID, FURNITURE_CATS, RESELL, comfortLabel,
 } from '../game/furniture.js';
@@ -337,6 +337,11 @@ export class UI {
     } else if (ev.kind === 'comboEnd') {
       // 배율이 조용히 사라지면 "갑자기 약해졌다" 로 보인다. 한 줄로 알린다.
       if (ev.combo >= 3) this.arenaLog(`${ev.combo}연속 종료`, 'bad');
+    } else if (ev.kind === 'helperHit') {
+      // 도우미가 친 한 방. 직원의 타격과 같은 자리에서 터져야 "지금 이게
+      // 통했다" 가 눈에 남는다.
+      this._flash();
+      sfx('clear');
     } else if (ev.kind === 'loot') {
       this.arenaLog(`🎁 ${starText(ev.star)} ${ev.emoji} ${ev.ko}`,
         ev.star >= 4 ? 'big' : 'good');
@@ -592,17 +597,42 @@ export class UI {
     this.renderCombo(this.g.project);
   }
 
-  /* 개발 화면의 도우미 줄. 목록이 바뀔 때만 다시 짓는다 — 여기는 초당
-     스무 번 돈다. */
+  /* 개발 화면의 도우미 줄.
+
+     예전에는 "지금 이런 보너스가 걸려 있습니다" 를 알리는 글자였다. 지금은
+     **버튼**이다 — 누르면 그 자리에서 버그가 반으로 줄고, 축이 뛰고, 남은
+     작업량이 한 뭉치 사라진다. 보스 한 마리에 한 번이므로, 쓰고 나면 흐려진
+     채로 다음 공정을 기다린다.
+
+     여기는 초당 스무 번 도는 자리라 내용이 그대로면 DOM 을 건드리지 않는다. */
   renderHelpers() {
     const box = $('aHelp');
     if (!box) return;
-    const list = this.g.helperBonus().list;
-    const sig = list.map((h) => h.id + h.level).join(',');
+    const g = this.g;
+    const list = g.helperBonus().list;
+    const sig = list.map((h) => h.id + h.level + (g.helperReady(h.id) ? '1' : '0')).join(',');
     if (box._sig === sig) return;
     box._sig = sig;
-    box.innerHTML = list.map((h) =>
-      `<span class="ah"><b>${h.def.icon}</b>${h.def.ko}${h.level > 1 ? ` Lv.${h.level}` : ''}</span>`).join('');
+    box.innerHTML = '';
+    for (const h of list) {
+      const ready = g.helperReady(h.id);
+      const b = el('button', 'ah' + (ready ? ' rdy' : ' used'),
+        `<b>${h.def.icon}</b><span class="ahn">${h.def.skill.ko}</span>`);
+      b.title = `${h.def.ko} Lv.${h.level} — ${helperSkillText(h.def, h.level)}`;
+      b.onclick = () => this.useHelper(h.id, b);
+      box.appendChild(b);
+    }
+  }
+
+  /* 능력을 쓴다. 규칙은 game 이 갖고 있고 여기서는 손끝의 반응만 만든다. */
+  useHelper(id, btn) {
+    const r = this.g.useHelper(id);
+    if (!r.ok) { this.toast(r.why || '지금은 쓸 수 없다', 'bad'); return; }
+    sfx('crit');
+    if (btn) { btn.classList.remove('fire'); void btn.offsetWidth; btn.classList.add('fire'); }
+    // 로그는 game 의 note() 가 이미 아레나 리본으로 흘려보냈다. 여기서 또
+    // 찍으면 같은 줄이 두 번 지나간다.
+    this.renderHelpers();
   }
 
   /* 콤보 표시. 0 이면 통째로 비켜선다 — 아무것도 안 하고 있을 때 화면
@@ -704,10 +734,13 @@ export class UI {
     if (!ok) return;
     ok.style.touchAction = 'manipulation';
     ok.onclick = () => {
+      // 정산을 확인하면 한 주가 지나간다. 그 주에 시상식이나 게임덱스가
+      // 걸리면 팝업이 먼저 서므로, 판매 결과도 같은 줄에 세운다 —
+      // 안 그러면 결과 창이 시상식 위에 덮여서 둘 다 못 읽는다.
       const s = this.g.closeSalesRun();
       if (!s) return;
       const rel = this.g.releases.find((r) => r.id === s.id);
-      if (rel) this.showRelease(rel, s);
+      if (rel) this._pop(() => this.showRelease(rel, s));
     };
   }
 
@@ -942,6 +975,11 @@ export class UI {
     // 달이 바뀌며 열리는 것들. 한꺼번에 여러 개가 뜰 수 있으므로 줄을
     // 세운다 — 시상식 결과 위에 게임덱스 초대장이 덮이면 둘 다 못 읽는다.
     if (type === 'award') this._pop(() => this.showAwards(payload));
+    // 도우미가 합류했다. 개발 현장 아래의 얼굴 줄도 같이 새로 짓는다.
+    if (type === 'helper') {
+      this.renderHelpers();
+      if (payload && payload.def && !this.inArena()) this._pop(() => this.rollHelper(payload));
+    }
     if (type === 'expo') this._pop(() => this.showExpo(payload));
     if (type === 'milestone') this._pop(() => this.showMilestone(payload));
     if (type === 'mail') this.renderBadges();
@@ -962,7 +1000,6 @@ export class UI {
     this.renderProgress();
     this.renderSales();
     if (type !== 'log') this.renderPanel();
-    this.renderTutorial();
     this._cardFlow();
   }
 
@@ -1047,7 +1084,7 @@ export class UI {
      founded skips straight past. */
   openingFlow() {
     const c = this.g.company;
-    if (c.founded) { this.renderTutorial(); return; }
+    if (c.founded) return;
     this.askCompanyName();
   }
 
@@ -1064,10 +1101,15 @@ export class UI {
     $('mOpts').innerHTML = '';
     $('mOk').style.display = '';
     $('mOk').textContent = '설립하기';
-    this.modalOnOk = () => {
+    this.modalOnOk = async () => {
       const input = $('coInput');
       const name = (input && input.value.trim()) || pick;
       this.g.found(name);
+      // 이름을 적고 나면 창립 영상이 돈다. 지원금 팝업은 그 뒤다 —
+      // 회사가 세워지는 장면보다 숫자가 먼저 뜨면 순서가 거꾸로다.
+      this.busy = true;
+      try { await this.view.playFounding(name); } catch (e) { /* 영상이 실패해도 게임은 시작한다 */ }
+      this.busy = false;
       this.showGrant(name);
     };
     $('modal').classList.add('show');
@@ -1084,7 +1126,6 @@ export class UI {
          지금은 <b>신입 할인</b> 기간이라 채용비가 ${Math.round((1 - hireDiscount(1)) * 100)}% 쌉니다.</p>`,
       null, () => {
         this.openTab('office');
-        this.renderTutorial();
         // 창업이 끝나고 나서야 '홈 화면에 추가' 안내가 뜬다.
         const f = this.onFounded; this.onFounded = null;
         if (f) f();
@@ -1102,33 +1143,63 @@ export class UI {
          지원금에 기대는 것보다 언제나 쌉니다.</p>`);
   }
 
-  /* ---------- tutorial ----------
-     A single line above the panel naming the next thing to do. It is not a
-     wizard and it blocks nothing: the step it shows is derived from committed
-     state, so doing things out of order simply skips ahead. */
-  renderTutorial() {
-    const box = $('tut');
-    if (!box) return;
-    const step = this.g.tutorialStep();
-    if (!step || !this.g.company.founded) { box.classList.remove('show'); return; }
-    box.classList.add('show');
-    // 몇 단계 중 몇 번째인지. 끝이 안 보이는 안내는 읽다 말게 된다.
-    const i = TUTORIAL.indexOf(step) + 1;
-    box.innerHTML = `<div class="tt">${step.title}<span class="tn">${i} / ${TUTORIAL.length}</span></div>`
-      + `<div class="tb">${step.body}</div>`;
-    const go = el('button', 'btn sm primary', '이동');
-    go.onclick = () => this.openTab(step.tab);
-    const skip = el('button', 'btn sm', '건너뛰기');
-    skip.onclick = () => { this.g.skipTutorial(); this.renderTutorial(); };
-    const row = el('div', 'trow');
-    row.append(go, skip);
-    box.appendChild(row);
+  /* ---------- 안내 ----------
+     예전에는 게임을 켜자마자 화면 오른쪽에 안내 카드가 떠 있었고, 옆에
+     '건너뛰기' 가 붙어 있었다. 둘 다 없앴다.
+
+     띄워 두면: 처음 보는 사람은 사무실을 보기도 전에 글자부터 읽게 되고,
+     아는 사람은 매번 닫는다. 건너뛰기가 있으면: 대부분은 그걸 누르고,
+     그러면 안내는 애초에 없는 것과 같다. 그래서 안내는 **찾아오는 것**이
+     됐다 — 오른쪽 레일의 ❓ 안내를 누르면 전체 순서가 열리고, 지금 할
+     일이 표시된다. 언제든 다시 열 수 있으니 지울 이유도 없다. */
+  panelGuide(box) {
+    const g = this.g;
+    const step = g.tutorialStep();
+    const at = step ? TUTORIAL.indexOf(step) : TUTORIAL.length;
+
+    box.appendChild(el('h4', 'sec', `안내 ${Math.min(at + 1, TUTORIAL.length)} / ${TUTORIAL.length}`));
+    if (!step) {
+      box.appendChild(el('div', 'item',
+        '<div class="d">기본은 다 보셨습니다. 아래 순서는 언제든 다시 읽을 수 있습니다.</div>'));
+    }
+
+    TUTORIAL.forEach((st, i) => {
+      const done = i < at;
+      const now = step && st.id === step.id;
+      const it = el('div', 'gstep' + (done ? ' done' : '') + (now ? ' now' : ''));
+      it.innerHTML = `<div class="gt"><span class="gk">${done ? '✓' : now ? '▶' : i + 1}</span>
+        <b>${st.title}</b></div>
+        <div class="gb">${st.body}</div>`;
+      if (now) {
+        const go = el('button', 'btn sm primary', '그 탭으로');
+        go.onclick = () => this.openTab(st.tab);
+        it.appendChild(go);
+      }
+      box.appendChild(it);
+    });
+
+    box.appendChild(el('h4', 'sec', '기억할 것'));
+    box.appendChild(el('div', 'item',
+      '<div class="d">· <b>시간</b>은 일하면 흐릅니다. 게임을 완성하고, 정산을 확인하고, 계약을 받을 때.<br>'
+      + '· <b>스태미나</b>는 실시간으로 찹니다. 게임을 꺼 둔 사이에도 찹니다.<br>'
+      + '· <b>도우미</b>는 사거나 뽑는 것이 아니라 행사와 사건이 데려옵니다. 능력은 개발 현장에서 보스마다 한 번.<br>'
+      + '· <b>초반</b>에는 한 작품이 개발비의 1.5배까지만 남습니다. 회사를 키워야 그 천장이 올라갑니다.</div>'));
   }
 
-  /* A weekly event with a choice holds the week until it is answered. */
+  /* A weekly event with a choice holds the week until it is answered.
+
+     달력이 버튼이 아니라 일한 결과로 흐르게 되면서, 답을 못 받은 사건은
+     시간을 통째로 멈춰 세운다. 그래서 화면이 바쁠 때(회의·룰렛·창립 영상)
+     이 창을 그냥 버리지 않고 다시 줄을 선다 — 예전에는 여기서 return 하면
+     팝업이 사라지고 사건만 남았다. */
   _eventFlow() {
     const ev = this.g.pendingEvent;
-    if (!ev || this.busy) return;
+    if (!ev) return;
+    if (this.busy) {
+      if (this._evRetry) return;
+      this._evRetry = setTimeout(() => { this._evRetry = null; this._pop(() => this._eventFlow()); }, 700);
+      return;
+    }
     this.openModal(`이번 주 · ${ev.ko}`, `${ev.icon || ''} ${ev.ko}`, ev.text,
       ev.options.map((o, i) => ({
         name: o.ko,
@@ -1577,6 +1648,7 @@ export class UI {
       office: () => this.panelOffice(box),
       mail: () => this.panelMail(box),
       event: () => this.panelEvents(box),
+      guide: () => this.panelGuide(box),
     }[this.tab];
     if (fn) fn();
     box.scrollTop = scroll;
@@ -1606,32 +1678,21 @@ export class UI {
       ['누적 매출', won(c.totalEarned)],
     ]) box.appendChild(el('div', 'row', `<span>${k}</span><b>${v}</b>`));
 
-    box.appendChild(el('h4', 'sec', '주간 진행'));
-    /* 달력을 미는 데 코인이 든다. 공짜였을 때는 무엇을 만들든 상관없이
-       이 버튼을 연타하는 것이 시상식·판매·계약을 가장 빨리 굴리는 길이었다.
-       스태미나는 이제 실시간으로 차므로, 코인이 없어도 게임은 굴러간다. */
-    const wkChk = g.canNextWeek();
-    const wkCost = g.weekCoinCost();
-    const wk = el('button', 'btn primary wide',
-      g.pendingEvent ? '이번 주 사건을 먼저 처리하세요'
-        : (wkCost
-          ? `다음 주로 · 🪙 ${wkCost} (연속 넘김)`
-          : '다음 주로 (스태미나 · 체력 회복)'));
-    wk.disabled = !wkChk.ok && !g.pendingEvent;
-    wk.onclick = () => {
-      if (g.pendingEvent) { this._eventFlow(); return; }
-      const r = g.nextWeek();
-      if (r && r.blocked && r.why) this.toast(r.why, 'bad');
-      g.save();
-    };
-    box.appendChild(wk);
-    if (wkCost && !g.pendingEvent) {
-      box.appendChild(el('div', 'item',
-        `<div class="d" style="color:var(--warn)">${wkChk.ok
-          ? `아무것도 하지 않고 <b>${c.weekRun}주</b>를 연달아 넘겼습니다. 이번 주는 코인 ${wkCost}개.`
-          : `코인이 모자랍니다 (보유 ${c.coins}).`}<br>
-         기획서를 쓰거나 개발에 들어가거나 계약을 받으면 <b>다시 무료</b>가 됩니다.
-         스태미나는 <b>${Math.round(STAMINA_REGEN / 60)}분에 1</b>씩 저절로 차니 기다려도 됩니다.</div>`));
+    box.appendChild(el('h4', 'sec', '달력'));
+    /* '다음 주로 넘기기' 버튼이 있던 자리다. 그 버튼이 있는 동안에는
+       아무것도 만들지 않고 달력만 미는 것이 언제나 가장 빨랐다. 이제
+       시간은 일한 결과로만 흐르고, 여기에는 무엇이 시간을 미는지가 적힌다. */
+    box.appendChild(el('div', 'item',
+      `<div class="t"><span class="n">📅 ${g.dateLabel()}</span></div>
+       <div class="d">시간은 <b>일하면</b> 흐릅니다.<br>
+       · 게임을 완성하면 기획서 등급만큼 (★1 한 주 → ★5 세 주)<br>
+       · 판매 정산을 확인하면 한 주<br>
+       · 계약 일감을 받으면 그 계약의 기간만큼<br>
+       스태미나는 <b>${Math.round(STAMINA_REGEN / 60)}분에 1씩 저절로</b> 찹니다. 게임을 꺼 둔 사이에도 찹니다.</div>`));
+    if (g.pendingEvent) {
+      const evb = el('button', 'btn primary wide', '이번 주 사건을 처리하세요');
+      evb.onclick = () => this._eventFlow();
+      box.appendChild(evb);
     }
 
     /* 세일즈 태스크 — the standing checklist */
@@ -1662,7 +1723,7 @@ export class UI {
     box.appendChild(ot);
     box.appendChild(el('div', 'item',
       `<div class="d">스태미나는 <b>${Math.round(STAMINA_REGEN / 60)}분에 1씩 저절로</b> 차고,
-       <b>다음 주</b>·<b>야근</b>·<b>상점의 음료</b>로도 채운다. 게임을 꺼 둔 사이에도 찬다.
+       <b>야근</b>·<b>상점의 음료</b>로도 채운다. 주가 넘어갈 때도 조금 찬다.
        체력은 주간 휴식과 <b>음식</b>으로 회복한다.</div>`));
 
     /* 계약 — the safety net */
@@ -1672,7 +1733,9 @@ export class UI {
         `<div class="t"><span class="n">${c.contract.ko}</span><span class="j">${c.contract.weeksLeft}주 남음</span></div>
          <div class="d">납품 시 ${won(c.contract.pay)} · 연구 +${c.contract.research}</div>`));
     } else {
-      box.appendChild(el('div', 'item', '<div class="d">자금이 마르면 계약 일감으로 버틸 수 있다. 스태미나를 쓰지만 확실한 수입이다.</div>'));
+      box.appendChild(el('div', 'item',
+        '<div class="d">자금이 마르면 계약 일감으로 버틸 수 있다. 스태미나를 쓰고 <b>그 기간만큼 시간이 흐른다</b> — '
+        + '개발할 돈이 없을 때 달력을 미는 유일한 길이다.</div>'));
       for (const ct of CONTRACTS) {
         const b = el('button', 'btn sm',
           `${ct.ko} · ${won(g.contractPayFor(ct.id))} · 스태미나 -${ct.stamina}`);
@@ -2016,7 +2079,7 @@ export class UI {
         '<div class="d" style="color:var(--warn)">빈 책상이 없습니다. 사무실 탭에서 책상을 사서 배치하면 채용할 수 있습니다.</div>'));
     }
     if (!g.candidates.length) {
-      box.appendChild(el('div', 'item', '<div class="d">지금은 지원자가 없다. 다음 주에 다시 확인하세요.</div>'));
+      box.appendChild(el('div', 'item', '<div class="d">지금은 지원자가 없다. 게임을 완성하거나 계약을 받아 주가 넘어가면 새 명단이 들어온다.</div>'));
     }
     for (const cand of g.candidates) {
       const ab = abilities(cand);
@@ -2037,7 +2100,6 @@ export class UI {
       b.onclick = () => {
         const r = g.hire(cand.id);
         if (!r.ok) this.toast(r.why, 'bad');
-        this.renderTutorial();
         g.save();
       };
       it.appendChild(b);
@@ -2244,7 +2306,7 @@ export class UI {
           const s = g.closeSalesRun();
           if (!s) return;
           const rel = g.releases.find((r) => r.id === s.id);
-          if (rel) this.showRelease(rel, s);
+          if (rel) this._pop(() => this.showRelease(rel, s));
         };
         box.appendChild(ok);
       }
@@ -2269,12 +2331,11 @@ export class UI {
     box.appendChild(mk);
     box.appendChild(el('div', 'row', `<span>회사 기획력</span><b>${Math.round(g.totalPlanPower())}</b>`));
 
+    // 기획서가 없어도 아래의 도우미 줄은 서야 한다. 예전에는 여기서 곧장
+    // 돌아섰고, 그래서 첫 게임을 뽑기 전에는 도우미를 볼 길이 없었다.
     if (!g.proposals.length) {
       box.appendChild(el('div', 'item', '<div class="d">기획서가 없습니다. 위 버튼으로 뽑으세요. 기획자를 3층(기획실)에 앉히면 등급이 올라갑니다.</div>'));
-      return;
-    }
-
-    for (const pr of g.proposals) {
+    } else for (const pr of g.proposals) {
       const gen = GENRES.find((x) => x.id === pr.genreId);
       const hot = g.company.trends && g.company.trends.genreId === pr.genreId;
       const it = el('div', 'item click' + (this.draft && this.draft.proposalId === pr.id ? ' on' : ''));
@@ -2295,6 +2356,12 @@ export class UI {
       box.appendChild(it);
       if (this.draft && this.draft.proposalId === pr.id) this.renderDraft(box, pr);
     }
+
+    /* 누구를 데리고 들어갈까. 도우미는 상점에서 파는 물건이 아니라 개발
+       현장에서 쓰는 능력이므로, 고르는 자리도 착수하는 탭이 맞다. 맨 위가
+       아닌 이유는 이 탭의 첫 줄이 언제나 '기획서' 여야 하기 때문이다 —
+       도우미 넉 줄이 그 위를 덮으면 눌러야 할 버튼이 화면 밖으로 밀린다. */
+    this.panelHelpers(box);
   }
 
   renderDraft(box, pr) {
@@ -2398,7 +2465,6 @@ export class UI {
       this.draft = null;
       this.view.startWork(g.project.team);
       this._kickoff(g.project);
-      this.renderTutorial();
       g.save();
     };
     box.appendChild(go);
@@ -2684,8 +2750,6 @@ export class UI {
   panelShop(box) {
     const g = this.g, c = g.company;
     box.appendChild(this._bagLink('산 물건은 🎒 가방 탭에 쌓입니다.'));
-    // 도우미가 맨 위다. 상점 물건 스무 줄 아래에 두면 아무도 못 찾는다.
-    this.panelHelpers(box);
     /* 분류 */
     box.appendChild(el('h4', 'sec', `상점 · 보유 ${won(c.money)}`));
     const cats = el('div', 'shopcat');
@@ -2720,75 +2784,59 @@ export class UI {
   }
 
   /* ---------- 도우미 ----------
-     코인으로 뽑아 모으는 마스코트들. 낀 도우미는 개발 배틀의 숫자를 조금씩
-     밀어 주고, 겹쳐 뽑으면 레벨이 오른다.
-
-     자리 수를 랭크가 여는 것이 이 화면의 핵심이다 — 처음부터 셋을 다 끼면
-     뽑기의 재미가 첫 판에 끝난다. */
+     행사와 사건이 데려오는 마스코트들. 뽑기가 아니므로 여기에는 살 버튼이
+     없고, 대신 **누가 무엇을 할 수 있는가**가 적힌다 — 능력은 개발 현장에서
+     보스 한 마리에 한 번 쓰는 것이고, 그러니 이 화면의 일은 "어느 셋을
+     데리고 들어갈까" 하나뿐이다. */
   panelHelpers(box) {
     const g = this.g, c = g.company;
     const slots = g.helperSlotCount();
     const list = g.helperList();
-    const bonus = g.helperBonus();
 
     box.appendChild(el('h4', 'sec',
       `도우미 <span class="hint">${(c.helperSlots || []).length} / ${slots} 자리</span>`));
 
-    const pull = el('button', 'btn primary wide',
-      `🎁 도우미 뽑기 · 🪙 ${HELPER_GACHA.coins}`);
-    pull.disabled = c.coins < HELPER_GACHA.coins;
-    pull.onclick = () => {
-      const r = g.drawHelperGacha();
-      if (!r.ok) { this.toast(r.why, 'bad'); return; }
-      this.rollHelper(r);
-    };
-    box.appendChild(pull);
-
     if (!list.length) {
       box.appendChild(el('div', 'item',
-        '<div class="d">아직 도우미가 없습니다. 뽑으면 개발 현장 아래에 함께 서고, '
-        + '한 방·번뜩임·보물상자를 조금씩 밀어 줍니다.</div>'));
+        '<div class="d">아직 도우미가 없습니다. 도우미는 돈으로 사는 것이 아니라 '
+        + '<b>게임덱스 부스</b>·<b>시상식</b>·<b>주간 사건</b>에서 찾아옵니다. '
+        + '데려오면 개발 현장 아래에 서고, <b>보스 한 마리에 한 번</b> 능력을 씁니다.</div>'));
       return;
     }
-
-    const eff = [];
-    if (bonus.dmg > 1) eff.push(`한 방 +${Math.round((bonus.dmg - 1) * 100)}%`);
-    if (bonus.crit > 0) eff.push(`번뜩임 +${(bonus.crit * 100).toFixed(1)}%p`);
-    if (bonus.loot > 1) eff.push(`상자 +${Math.round((bonus.loot - 1) * 100)}%`);
-    if (bonus.plan > 1) eff.push(`기획 +${Math.round((bonus.plan - 1) * 100)}%`);
-    if (bonus.urge < 1) eff.push(`재촉 -${Math.round((1 - bonus.urge) * 100)}%`);
-    if (bonus.heal > 0) eff.push('개발 중 회복');
-    box.appendChild(el('div', 'row',
-      `<span>지금 효과</span><b>${eff.length ? eff.join(' · ') : '없음'}</b>`));
 
     for (const h of list) {
       const it = el('div', 'helper' + (h.equipped ? ' on' : ''));
       it.innerHTML = `<span class="hi">${h.def.icon}</span>
         <span class="ht"><b>${h.def.ko} <i>Lv.${h.level}</i></b>
-        <span class="hd">${starText(h.def.star)} · ${h.def.desc}</span></span>`;
+        <span class="hd">${starText(h.def.star)} · <b>${h.def.skill.ko}</b> — ${helperSkillText(h.def, h.level)}</span></span>`;
       const b = el('button', 'btn sm' + (h.equipped ? ' primary' : ''), h.equipped ? '해제' : '장착');
       b.onclick = () => {
         const r = g.toggleHelper(h.def.id);
         if (!r.ok) this.toast(r.why, 'bad');
         this.renderPanel();
+        this.renderHelpers();
       };
       it.appendChild(b);
       box.appendChild(it);
     }
     box.appendChild(el('div', 'item',
-      `<div class="d">자리는 랭크가 엽니다 — 랭크 5에 두 자리, 랭크 12에 세 자리. 같은 도우미를 또 뽑으면 레벨이 오릅니다.</div>`));
+      '<div class="d">능력은 <b>개발 현장</b>에서 얼굴을 눌러 씁니다. 보스 한 마리에 한 번, '
+      + '공정이 넘어가면 다시 찹니다. 자리는 랭크가 엽니다 — 랭크 4에 두 자리, 랭크 10에 세 자리. '
+      + '같은 도우미가 또 오면 레벨이 올라 능력이 세집니다.</div>'));
   }
 
-  /* 도우미 뽑기 결과. 룰렛과 같은 연출을 쓴다 — 결과는 이미 정해져 있고,
-     이건 그 결과를 보여주는 방식이다. */
+  /* 도우미가 합류했다. 행사나 사건이 데려온 순간에 뜬다. */
   rollHelper(r) {
+    const skill = helperSkillText(r.def, r.level);
     this.openModal('도우미', r.isNew ? '새 도우미!' : `${r.def.ko} 레벨 ${r.level}`,
       `<div style="text-align:center;padding:6px 0">
          <div style="font-size:52px;line-height:1.1">${r.def.icon}</div>
          <div style="font-size:15px;font-weight:900;margin-top:4px">${r.def.ko}</div>
-         <div style="font-size:12px;color:var(--gold);margin-top:2px">${starText(r.def.star)}</div>
-         <div style="font-size:12px;color:var(--dim);margin-top:6px">${r.def.desc}</div>
-         ${r.isNew ? '' : `<div style="font-size:11.5px;color:var(--good);margin-top:6px">겹쳐서 레벨 ${r.level} — 효과가 세집니다</div>`}
+         <div style="font-size:12px;color:var(--gold);margin-top:2px">${starText(r.def.star)}${r.from ? ' · ' + r.from : ''}</div>
+         <div style="font-size:12.5px;margin-top:8px"><b>${r.def.skill.ko}</b></div>
+         <div style="font-size:12px;color:var(--dim);margin-top:2px">${skill}</div>
+         <div style="font-size:11.5px;color:var(--dim);margin-top:8px">개발 현장에서 보스 한 마리에 한 번 쓸 수 있습니다.</div>
+         ${r.isNew ? '' : `<div style="font-size:11.5px;color:var(--good);margin-top:6px">겹쳐서 레벨 ${r.level} — 능력이 세집니다</div>`}
        </div>`, null, () => this.renderPanel());
   }
 
@@ -3273,7 +3321,6 @@ export class UI {
         this.g.save();
         this.renderPlaceBar();
         this.renderPanel();
-        this.renderTutorial();
         this.toast('배치했습니다.', 'good');
       };
       const cancel = el('button', 'btn sm danger', '취소');
@@ -3353,6 +3400,11 @@ export class UI {
     }
     const ev = $('tbEvent');
     if (ev) ev.hidden = !(g.expoOpen && g.expoOpen());
+    /* 안내는 이제 저절로 뜨지 않는다. 그러면 처음 켠 사람이 그 탭이
+       있다는 사실을 영영 모를 수 있으므로, 아직 안 끝난 동안에는 점을
+       하나 켜 둔다. 열어 보는 순간 그 탭이 켜져 있으니 점은 물러난다. */
+    const gd = $('tbGuide');
+    if (gd) gd.hidden = this.tab === 'guide' || !g.tutorialStep();
   }
 
   confirm(title, body, onYes, onAlso) {

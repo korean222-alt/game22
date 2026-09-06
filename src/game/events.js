@@ -240,6 +240,41 @@ export const EVENTS = [
     },
   },
   {
+    id: 'stray',
+    ko: '문 앞의 상자',
+    icon: '📦',
+    text: '아침에 나와 보니 사무실 문 앞에 상자가 하나 놓여 있습니다. 안에서 뭔가 움직입니다.',
+    choices: [
+      {
+        ko: '열어 본다',
+        desc: '도우미 한 명이 합류할지도 모른다.',
+        apply: (g) => {
+          const r = g.grantHelper(1, '');
+          return `${r.def.icon} ${r.def.ko} ${r.isNew ? '합류!' : `레벨 ${r.level}`}`;
+        },
+      },
+      {
+        ko: '경비실에 맡긴다',
+        desc: '남의 물건일지도 모른다. 대신 인사는 잘 받는다.',
+        apply: (g) => {
+          for (const s of g.staff) addMotivation(s, 1, g.company.rank);
+          return '팀 의욕 +1';
+        },
+      },
+    ],
+  },
+  {
+    id: 'devroom',
+    ko: '개발실의 인기척',
+    icon: '👀',
+    text: '아무도 없는 개발실에서 자꾸 소리가 납니다. 누가 밤새 일을 도와주고 간 것 같기도 하고.',
+    when: (g) => g.company.shipped > 0,
+    apply: (g) => {
+      const r = g.grantHelper(1.15, '');
+      return `${r.def.icon} ${r.def.ko} ${r.isNew ? '합류!' : `레벨 ${r.level}`} — ${r.def.skill.desc}`;
+    },
+  },
+  {
     id: 'aircon',
     ko: '에어컨 고장',
     icon: '🥵',

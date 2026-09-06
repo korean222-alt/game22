@@ -100,6 +100,8 @@ await step('회사 이름 팝업 → 지원금', async () => {
   if (!asked) throw new Error('창업 팝업이 뜨지 않음');
   await page.fill('#coInput', '플로우 스튜디오');
   await page.click('#mOk');
+  // 이름을 적으면 창립 영상이 돈다. 영상이 끝나야 지원금 팝업이 뜬다.
+  await page.waitForFunction(() => !document.body.classList.contains('cine'), { timeout: 30000 });
   await page.waitForTimeout(400);
   const grant = await page.evaluate(() => document.getElementById('mTitle').textContent);
   if (!grant.includes('플로우 스튜디오')) throw new Error('설립 팝업에 회사 이름이 없음: ' + grant);
@@ -126,29 +128,54 @@ await step('설치 안내를 닫는다', async () => {
   if (still) throw new Error('닫기를 눌러도 안 닫힘');
   return '닫기';
 });
-await step('튜토리얼이 첫 단계를 가리킨다', async () => {
+/* 안내는 저절로 뜨지 않는다. 오른쪽 레일의 ❓ 안내를 눌러야 열린다. */
+await step('안내는 저절로 뜨지 않는다', async () => {
+  const stray = await page.evaluate(() => !!document.getElementById('tut'));
+  if (stray) throw new Error('옛 튜토리얼 배너가 아직 있음');
+  const open = await page.evaluate(() => document.querySelector('#panel .gstep'));
+  if (open) throw new Error('안내가 저절로 떠 있음');
+  return '화면이 깨끗함';
+});
+await step('❓ 안내를 누르면 지금 할 일이 뜬다', async () => {
   const s = await state();
   if (s.tut !== 'desk') throw new Error('첫 단계가 desk 가 아님: ' + s.tut);
-  const shown = await page.evaluate(() => document.getElementById('tut').classList.contains('show'));
-  if (!shown) throw new Error('튜토리얼 배너가 보이지 않음');
-  return '책상을 사세요';
+  await openTab('guide'); await page.waitForTimeout(250);
+  const r = await page.evaluate(() => {
+    const now = document.querySelector('#panel .gstep.now');
+    return { n: document.querySelectorAll('#panel .gstep').length, now: now ? now.textContent.trim().slice(0, 12) : null };
+  });
+  if (!r.now) throw new Error('지금 할 일이 표시되지 않음');
+  if (r.n < 5) throw new Error(`안내 단계가 ${r.n}개뿐`);
+  const skip = await page.evaluate(() => [...document.querySelectorAll('#panel button')].some((b) => b.textContent.includes('건너뛰기')));
+  if (skip) throw new Error('건너뛰기 버튼이 남아 있음');
+  return `${r.n}단계 · 지금: ${r.now}`;
 });
 
 console.log('\n── 2. 회사 탭 (계약 · 연구 · 저장) ──');
 await openTab('company'); await page.waitForTimeout(250);
-await step('계약 수주', async () => {
-  await tap('QA 대행'); await page.waitForTimeout(200);
-  const s = await state();
-  if (!s.contract) throw new Error('계약이 걸리지 않음');
-  return '계약 진행 중';
+/* 계약은 받는 순간 그 기간만큼 시간이 흐르고 납품까지 끝난다. '다음 주로'
+   버튼이 없어졌으므로, 개발할 돈이 없는 회사가 달력을 미는 길이 여기다. */
+await step('계약 수주 = 그 자리에서 납품 · 달력이 흐른다', async () => {
+  const b = await page.evaluate(() => ({
+    money: window.__game.company.money,
+    w: window.__game.dateLabel(),
+  }));
+  await tap('QA 대행'); await page.waitForTimeout(400);
+  const a = await page.evaluate(() => ({
+    money: window.__game.company.money,
+    w: window.__game.dateLabel(),
+    contract: !!window.__game.company.contract,
+  }));
+  if (a.contract) throw new Error('납품되지 않음');
+  if (a.w === b.w) throw new Error('달력이 그대로: ' + a.w);
+  if (a.money <= b.money) throw new Error('입금되지 않음');
+  return `${b.w} → ${a.w} · ₩${(a.money - b.money).toLocaleString()} 입금`;
 });
-await step('계약 납품 (주간 진행)', async () => {
-  const before = (await state()).money;
-  await tap('다음 주로'); await page.waitForTimeout(300);
-  const s = await state();
-  if (s.contract) throw new Error('1주 뒤에도 미납품');
-  if (s.money <= before) throw new Error('입금되지 않음');
-  return `₩${(s.money - before).toLocaleString()} 입금 · 연구 ${s.research}P`;
+await step("'다음 주로' 버튼은 없다", async () => {
+  const found = await page.evaluate(() =>
+    [...document.querySelectorAll('#panel button')].some((b) => b.textContent.includes('다음 주로')));
+  if (found) throw new Error('버튼이 아직 있음');
+  return '달력은 일한 결과로만 흐른다';
 });
 await step('연구 구매', async () => {
   await page.evaluate(() => { window.__game.company.researchPts = 500; window.__ui.renderPanel(); });
