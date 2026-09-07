@@ -79,6 +79,21 @@ const aliasContent = (id) => CONTENT_ALIAS[id] || id;
    모양이 한 화면에 다 들어온다. 주당 1.5초면 막대가 서는 것이 눈에 보인다. */
 const SALES = { secs: 18, weeks: 12 };
 
+/* 출시작이 운영 칸을 붙들고 있는 기간(주).
+
+   1 이다. 게임을 내면 실시간 판매 카드가 그 판의 전부를 보여주고, 정산을
+   확인한 뒤 한 주가 지나면 서비스가 닫힌다. 예전에는 유저가 60명 밑으로
+   빠질 때까지 — 잘 만든 게임이면 반년 넘게 — 칸을 붙들고 있었고, 세 칸이
+   차면 새 게임을 못 냈다. 그 상태에서 개발 탭은 이미 출시 화면에 가 있어서
+   내릴 방법이 화면에 없었다. 파는 기간을 짧게 못 박는 편이, 화면 어딘가에
+   '내리기' 를 찾아 헤매게 하는 것보다 낫다. */
+const RELEASE_SALE_WEEKS = 1;
+
+/* 시상식이 심사하는 기간(주). 두 달 = 8주.
+   행사 주기를 두 달로 늘렸으므로 심사 창도 같이 늘린다 — 안 그러면 행사가
+   없는 달에 낸 게임은 영영 심사를 못 받는다. */
+const AWARD_WINDOW_WEEKS = 8;
+
 /* ---------- 실시간 스태미나 ----------
    3분에 한 점. 게임을 닫아 둔 사이에도 차므로 계산은 벽시계로 한다.
 
@@ -183,7 +198,7 @@ export class Game {
       totalDl: 0,
       dlMarks: {},                  // 이미 축하받은 자릿수
       /* ---- 행사 ----
-         시상식은 매달, 게임덱스는 두 달마다. 마지막으로 연 달을 적어 두는
+         시상식은 짝수 달, 게임덱스는 홀수 달. 마지막으로 연 달을 적어 두는
          것으로 중복 개최를 막는다 — 주를 여러 번 넘겨도 달이 같으면 한 번. */
       lastAwardKey: null,
       lastExpoKey: null,
@@ -645,11 +660,15 @@ export class Game {
     const def = FURNITURE_BY_ID.get(item.id);
     if (!def) return { ok: false, why: '없는 가구' };
     if (floor >= this.company.floors) return { ok: false, why: '입주하지 않은 층' };
+    /* 발자국의 중심은 놓는 점이 아니다. 책상은 의자가 한쪽으로 나와 있어서
+       모델의 한가운데가 상판의 한가운데보다 뒤에 있다 — 그 어긋남을 무시하면
+       화면의 의자는 통로에 나와 있는데 판정은 통과한다. */
     const f = footprint(def, rot);
-    if (checks.zoneOk && !checks.zoneOk(floor, x, z, f.w, f.d)) {
+    const fx = x + f.ox, fz = z + f.oz;
+    if (checks.zoneOk && !checks.zoneOk(floor, fx, fz, f.w, f.d)) {
       return { ok: false, why: '배치할 수 없는 자리 (파란 구역 안에만)' };
     }
-    if (checks.clearOfWalls && !checks.clearOfWalls(floor, x, z, f.w, f.d)) {
+    if (checks.clearOfWalls && !checks.clearOfWalls(floor, fx, fz, f.w, f.d)) {
       return { ok: false, why: '벽이나 기존 설비와 겹칩니다' };
     }
     // A rug lies on the floor and is walked over, so it only fights other rugs.
@@ -1147,12 +1166,27 @@ export class Game {
      아니라 잡일이었고, 스태미나까지 먹고 있었다. 손으로 고치는 길은 상점의
      디버그 킷 하나로 남는다. */
 
+  /* ══ 출시 ══
+
+     예전에는 여기서 막았다: 동시 운영이 3작품까지고, 네 번째를 내려면 먼저
+     하나를 서비스 종료해야 했다. 그런데 그 '종료' 버튼은 운영 탭에 있고,
+     게임을 다 만든 사람의 개발 탭은 이미 **홍보·출시** 화면에 가 있다.
+     즉 다 만들어 놓고 출시를 눌렀는데 "하나를 내리세요" 만 뜨고, 어디서
+     내리는지는 화면에 없는 상태가 된다 — 실제로 진행이 막혔다.
+
+     이제 출시작은 판매가 끝나면 스스로 서비스를 접는다(_retireRelease).
+     그래서 칸이 찰 일이 사실상 없지만, 옛 세이브처럼 이미 세 개가 차 있는
+     회사도 있다. 그런 경우에는 **가장 오래된 것을 자동으로 접고** 출시를
+     그대로 진행한다. 막다른 길을 만들지 않는다는 원칙(HANDOFF 3.6)이
+     이 자리에서는 이 뜻이다. */
   release() {
     const p = this.finished;
     if (!p) return { ok: false, why: '출시할 게임이 없다' };
-    const active = this.managed();
-    if (active.length >= this.info().managedCap) {
-      return { ok: false, why: `동시 운영은 ${this.info().managedCap}작품까지. 하나를 서비스 종료하세요.` };
+    let active = this.managed();
+    while (active.length >= this.info().managedCap) {
+      const oldest = active[active.length - 1];
+      this._retireRelease(oldest, '새 작품 출시로 서비스 종료');
+      active = this.managed();
     }
     const mk = MARKETING.find((x) => x.id === this.company.marketingId) || MARKETING[0];
     const mkCost = marketingCost(mk, p.devCost);
@@ -1273,9 +1307,44 @@ export class Game {
     const s = this.sales;
     this.sales = null;
     this.emit('sales', null);
+    /* ── 판매는 여기서 끝난다 ──
+       이 게임의 출시는 "한 주 동안 파는 것" 이다. 실시간 판매 카드가 그
+       한 주의 전부를 보여주고, 정산을 확인하면 서비스가 닫힌다. 운영 칸에
+       계속 쌓이지 않으므로 다음 게임을 낼 때 아무것도 내릴 필요가 없다. */
+    const rel = this.releases.find((r) => r.id === s.id);
+    if (rel) this._retireRelease(rel, '판매 종료');
     this.advanceWeeks(1, `「${s.title}」 출시 정리`);
     this.save();
     return s;
+  }
+
+  /* 한 작품의 서비스를 닫는다. 이유는 로그에만 남는다 — 자동으로 닫힌
+     것과 플레이어가 닫은 것이 규칙상 같은 일이라야 나중에 헷갈리지 않는다. */
+  _retireRelease(rel, why = '서비스 종료') {
+    if (!rel || !rel.managing) return false;
+    rel.managing = false;
+    rel.retiredAt = this.dateLabel();
+    this.note(`「${rel.title}」 ${why}. 누적 매출 ₩${(rel.earned || 0).toLocaleString()}`);
+    /* 'release' 가 아니라 'retired' 다. 출시는 회사에 몇 번 없는 좋은 소식이라
+       화면에 종이가 쏟아지는데(hud 의 confetti), 서비스가 닫히는 것은 그
+       반대다. 한 주마다 닫히게 된 지금 같은 이벤트를 쓰면 판매가 끝날 때마다
+       축하 종이가 쏟아진다. */
+    this.emit('retired', rel);
+    return true;
+  }
+
+  /* 출시하고 한 주가 지난 작품은 스스로 닫힌다.
+
+     정산 창을 닫는 자리(closeSalesRun)가 정상 경로이지만, 그 창을 못 보고
+     넘어가는 길이 몇 개 있다 — 판매 중에 새로고침, 세이브를 옮긴 폰, 아주
+     옛 세이브. 달력이 도는 자리에서 한 번 더 걸러 두면 어느 경로로 와도
+     운영 칸이 차서 출시가 막히는 일은 없다. */
+  _retireStaleReleases() {
+    for (const r of this.releases) {
+      if (!r.managing || !r.at) continue;
+      if (this.sales && this.sales.id === r.id && !this.sales.ended) continue;
+      if (this._weeksSince(r.at) >= RELEASE_SALE_WEEKS) this._retireRelease(r, '판매 기간 종료');
+    }
   }
 
   selling() { return !!this.sales; }
@@ -1283,9 +1352,7 @@ export class Game {
   endService(releaseId) {
     const r = this.releases.find((x) => x.id === releaseId);
     if (!r || !r.managing) return { ok: false };
-    r.managing = false;
-    this.note(`「${r.title}」 서비스 종료. 누적 매출 ₩${r.earned.toLocaleString()}`);
-    this.emit('release', r);
+    this._retireRelease(r, '서비스 종료');
     return { ok: true };
   }
 
@@ -1889,15 +1956,18 @@ export class Game {
   }
 
   /* ══════════════════════════ 시상식 ══════════════════════════
-     매달 첫 주에 지난달 출시작을 심사한다. 상금은 그 자리에서 들어간다 —
-     결과 창을 닫아 버린 플레이어가 상금을 못 받으면 그건 벌칙이다. */
+     두 달에 한 번, 짝수 달 첫 주에 지난 두 달의 출시작을 심사한다. 상금은
+     그 자리에서 들어간다 — 결과 창을 닫아 버린 플레이어가 상금을 못 받으면
+     그건 벌칙이다. */
   _runAwards() {
     const c = this.company;
     const key = `${c.year}-${c.month}`;
     if (c.lastAwardKey === key) return null;
     c.lastAwardKey = key;
-    // 지난 한 달(4주) 안에 낸 게임. 날짜가 없는 옛 세이브의 출시작은 뺀다.
-    const entries = this.releases.filter((r) => r.at && this._weeksSince(r.at) <= 4);
+    // 지난 두 달(8주) 안에 낸 게임. 날짜가 없는 옛 세이브의 출시작은 뺀다.
+    // `<` 이다. `<=` 면 시상식과 같은 주에 낸 게임이 8주 뒤 시상식에도 다시
+    // 걸려서 같은 작품이 두 번 심사받는다.
+    const entries = this.releases.filter((r) => r.at && this._weeksSince(r.at) < AWARD_WINDOW_WEEKS);
     /* 우리가 낸 게임이 없어도 시상식은 열린다.
 
        예전에는 여기서 돌아섰다. 그러면 데뷔 전의 몇 달과 개발이 길어진 달에는
@@ -2106,6 +2176,9 @@ export class Game {
       }
     }
 
+    // 한 주 판 작품은 여기서 닫힌다.
+    this._retireStaleReleases();
+
     const wasMonth = c.month;
     c.week += 1;
     if (c.week > 4) { c.week = 1; c.month += 1; }
@@ -2117,13 +2190,17 @@ export class Game {
     }
 
     /* ---- 달이 바뀌었다 ----
-       시상식은 매달, 게임덱스는 홀수 달(1·3·5…)마다. 둘을 같은 달에 겹치지
-       않게 하려면 하나를 짝수 달로 밀면 되지만, 그러면 시상식이 없는 달이
-       생긴다 — 매달 있어야 "이번 달 안에 낸다" 가 목표가 된다. 겹치는 달에는
-       시상식 결과를 먼저 보여주고 초대장은 행사 탭에 남는다. */
+       시상식은 짝수 달(2·4·6…), 게임덱스는 홀수 달(1·3·5…)에 열린다.
+
+       예전에는 시상식이 **매달**이었다. 무대가 1분 가까이 서는 행사가 매달
+       열리면 그건 사건이 아니라 통행료가 된다 — 개발 한 판이 서너 주니까,
+       게임 하나를 만드는 동안 시상식을 두 번 앉아서 보게 된다. 두 달에 한
+       번이면 무대는 그대로 사건이고, 심사 대상도 넉넉히 두 달치가 쌓인다.
+
+       두 행사가 서로 다른 홀짝에 서므로 한 달에 두 개가 겹치는 일도 없다. */
     if (c.month !== wasMonth) {
-      this._runAwards();
-      if ((c.month - 1) % 2 === 0) this._openExpo();
+      if (c.month % 2 === 0) this._runAwards();
+      else this._openExpo();
     }
 
     // 게임덱스가 남긴 화제는 몇 주 만에 식는다.

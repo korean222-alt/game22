@@ -276,3 +276,96 @@ export function buildGhost(id, floor, x, z, rot) {
   liftInto(m, sub, floor * STOREY);
   return m;
 }
+
+/* ══════════════════════ 발자국 재기 ══════════════════════
+
+   "책상 중에 몇 개가 면적은 좁은데 설치할 땐 넓게 되어서 안 되는 경우가
+   있다" — 그 말이 정확했다.
+
+   카탈로그(game/furniture.js)의 `w`·`d` 는 손으로 적은 값이고, 화면에 그려지는
+   것은 아래 DRAW 의 함수들이다. 둘이 어긋난 자리가 여럿 있었다:
+
+     파티션    0.34 두께의 칸막이인데 3.2 × 3.8 의 덩어리로 적혀 있었다
+     책장      모델은 1.6 폭 × 7.0 길이인데 카탈로그는 7.2 × 1.6 — 축이 바뀜
+     화이트보드 모델은 1.0 × 5.4 인데 카탈로그는 6.0 × 1.0 — 축이 바뀜
+     사물함·비품 선반 같은 이유로 뒤집혀 있었다
+     스탠딩 책상 의자가 없는데 의자 자리(4.4)까지 잡고 있었다
+
+   축이 뒤집힌 것이 특히 나빴다. 벽에 붙이려고 회전시키면 화면의 가구는
+   벽과 나란한데 판정은 벽을 파고들어, 어느 각도로도 안 들어가는 자리가
+   생긴다.
+
+   그래서 값을 하나하나 고쳐 적는 대신 **모델에서 직접 잰다**. 부팅할 때
+   각 가구를 한 번씩 원점에 그려 보고, 정점의 최소·최대로 발자국을 얻어
+   카탈로그에 써넣는다. 이러면 카탈로그와 화면이 어긋날 수 있는 여지 자체가
+   사라진다 — 모델을 고치면 발자국도 같이 따라온다.
+
+   모델이 원점에 대칭이 아닌 것도 있다(책상은 의자가 한쪽으로 나와 있다).
+   그래서 크기만이 아니라 **중심의 어긋남**(ox·oz)도 같이 적어 둔다.
+   game/furniture.js 의 footprint() 가 회전에 맞춰 그 어긋남을 돌린다. */
+
+/* 한 가구의 실제 크기와 중심. 그릴 수 없으면(키트 모델이 아직 안 왔거나
+   그리는 함수가 없으면) null 이다 — 그 경우 카탈로그 값을 그대로 둔다. */
+export function measureFootprint(id) {
+  const draw = DRAW[id];
+  if (!draw) return null;
+  const m = new MeshBuilder();
+  m.noSolid = true;
+  try { draw(m, 0, 0, 0, 0); } catch (e) { return null; }
+  const p = m.p;
+  if (!p.length) return null;
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i < p.length; i += 3) {
+    const x = p[i], z = p[i + 2];
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (z < z0) z0 = z;
+    if (z > z1) z1 = z;
+  }
+  if (!Number.isFinite(x0) || !Number.isFinite(z0)) return null;
+  return { w: x1 - x0, d: z1 - z0, ox: (x0 + x1) / 2, oz: (z0 + z1) / 2 };
+}
+
+/* 카탈로그의 발자국을 모델에서 잰 값으로 맞춘다. 부팅에서 한 번, 키트가
+   도착한 뒤에 부른다 (키트 가구는 그 전에는 아무것도 안 그린다).
+
+   규칙이 둘이다.
+
+   1) **축이 뒤집혀 있으면 바로잡는다.** 화이트보드는 모델이 1.0 × 5.4 인데
+      카탈로그에는 6.0 × 1.0 으로 적혀 있었다. 벽에 붙이려고 회전시키면
+      화면의 가구는 벽과 나란한데 판정은 벽을 파고들어, 어느 각도로도 안
+      들어가는 자리가 생긴다. 잰 값과 적힌 값을 그대로 대 봤을 때와
+      뒤집어 대 봤을 때 중 더 잘 맞는 쪽을 고른다.
+
+   2) **줄이기만 한다.** 잰 값이 적힌 값보다 크면 적힌 값을 그대로 둔다.
+      고친 것은 "면적은 좁은데 설치할 땐 넓게 잡히는" 가구이지, 지금까지
+      놓이던 자리에 이제 안 들어가는 가구를 만드는 일이 아니다. 책상은
+      의자까지 재면 5.0 깊이인데 카탈로그는 4.6 이다 — 그 0.4 는 사람이
+      의자를 빼고 앉는 자리이지 가구가 늘 차지하는 자리가 아니다.
+
+   중심의 어긋남(ox·oz)도 같은 규칙을 받는다: 줄어든 만큼만 움직인다.
+   그래야 어느 방향으로도 예전보다 더 넓은 자리를 요구하지 않는다. */
+export function calibrateFootprints() {
+  let n = 0;
+  for (const def of FURNITURE_BY_ID.values()) {
+    const f = measureFootprint(def.id);
+    if (!f) continue;
+    // 정점 하나까지 자리를 요구하면 나란히 붙여 놓은 두 가구가 겹친다고
+    // 나온다. 눈으로는 닿아 있는 것이 맞는 배치다.
+    const mw = Math.max(1.2, f.w - 0.24), md = Math.max(1.2, f.d - 0.24);
+    let dw = def.w, dd = def.d, ox = f.ox, oz = f.oz;
+    // 1) 축이 뒤집혀 적혀 있나.
+    const asIs = Math.abs(mw - dw) + Math.abs(md - dd);
+    const swapped = Math.abs(mw - dd) + Math.abs(md - dw);
+    if (swapped < asIs) { const t = dw; dw = dd; dd = t; }
+    // 2) 줄이기만.
+    const w = Math.min(dw, mw), d = Math.min(dd, md);
+    const okX = Math.max(0, (dw - w) / 2), okZ = Math.max(0, (dd - d) / 2);
+    def.w = Math.round(w * 10) / 10;
+    def.d = Math.round(d * 10) / 10;
+    def.ox = Math.round(Math.max(-okX, Math.min(okX, ox)) * 10) / 10;
+    def.oz = Math.round(Math.max(-okZ, Math.min(okZ, oz)) * 10) / 10;
+    n++;
+  }
+  return n;
+}

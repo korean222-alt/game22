@@ -105,7 +105,19 @@ export function initSound() {
     limiter.connect(ctx.destination);
     musicBus = ctx.createGain();
     musicBus.gain.value = 0.0001;  // 트랙이 붙을 때 페이드인한다
-    musicBus.connect(ctx.destination);
+    /* 음악에도 리미터를 한 장 물린다. 화음 한 겹이 붙은 뒤로는 베이스·리드·
+       화음·북이 같은 칸에서 겹치는 트랙이 생겼고, 그 합은 폰 스피커에서
+       지직거릴 만큼 커진다. 효과음 쪽과 따로 두는 이유는, 한 리미터를
+       나눠 쓰면 타격음이 터질 때마다 배경음악이 같이 눌려서 숨을 쉬기
+       때문이다. */
+    const mLim = ctx.createDynamicsCompressor();
+    mLim.threshold.value = -10;
+    mLim.knee.value = 8;
+    mLim.ratio.value = 10;
+    mLim.attack.value = 0.006;
+    mLim.release.value = 0.25;
+    musicBus.connect(mLim);
+    mLim.connect(ctx.destination);
     /* 컨텍스트가 정지 상태로 태어나는 경우가 있다(제스처 밖에서 불렸거나,
        사파리가 늦게 붙잡을 때). 조용히 두면 그 판 내내 무음이므로 바로 깨운다. */
     if (ctx.state === 'suspended') ctx.resume().catch(() => { /* 다음 터치에서 다시 */ });
@@ -133,8 +145,16 @@ function env(node, t0, a, d, peak, bus) {
   return g;
 }
 
-function tone({ freq = 440, to = null, type = 'sine', a = 0.004, d = 0.12, gain = 0.5, at = 0, bus = null, detune = 0 }) {
-  const t0 = (at > 1e6 ? at : ctx.currentTime + at);   // 큰 값은 절대 시각으로 읽는다
+/* `at` 은 지금부터의 상대 초, `at0` 은 오디오 시계의 절대 시각이다.
+
+   예전에는 이 둘을 `at > 1e6` 하나로 갈랐다 — "큰 값은 절대 시각" 이라는
+   뜻이었는데, 오디오 시계는 페이지를 열 때 0 에서 시작해서 1e6 초(11일)에
+   닿을 일이 없다. 그래서 배경음악이 넘기는 절대 시각(0.06, 1.2, 9.8 …)이
+   전부 **상대 오프셋**으로 읽혔고, 음 하나하나가 `지금 + 그 값` 에 예약됐다.
+   결과는 시간이 갈수록 커지는 지연과 반 박자로 늘어진 연주다. 10초쯤 지나면
+   방금 친 음이 20초 뒤에 울렸다 — 사람 귀에는 "배경음악이 안 나온다". */
+function tone({ freq = 440, to = null, type = 'sine', a = 0.004, d = 0.12, gain = 0.5, at = 0, at0 = null, bus = null, detune = 0 }) {
+  const t0 = (at0 !== null ? at0 : ctx.currentTime + at);
   const o = ctx.createOscillator();
   o.type = type;
   o.frequency.setValueAtTime(freq, t0);
@@ -156,8 +176,8 @@ function noiseBuffer() {
   return noiseBuf;
 }
 
-function noise({ d = 0.12, gain = 0.4, at = 0, hp = 400, lp = 6000, bus = null }) {
-  const t0 = (at > 1e6 ? at : ctx.currentTime + at);
+function noise({ d = 0.12, gain = 0.4, at = 0, at0 = null, hp = 400, lp = 6000, bus = null }) {
+  const t0 = (at0 !== null ? at0 : ctx.currentTime + at);
   const src = ctx.createBufferSource();
   src.buffer = noiseBuffer();
   const f1 = ctx.createBiquadFilter(); f1.type = 'highpass'; f1.frequency.value = hp;
@@ -354,7 +374,17 @@ const SOUNDS = {
 /* 소리 하나. 컨텍스트가 아직 없거나 꺼져 있으면 조용히 아무것도 안 한다 —
    부르는 쪽이 매번 확인해야 한다면 호출부가 전부 지저분해진다. */
 export function sfx(name, arg) {
-  if (!enabled || !ctx || ctx.state !== 'running') return;
+  if (!enabled || !ctx) return;
+  /* 정지 상태라고 돌아서지 않는다.
+
+     예전에는 `ctx.state !== 'running'` 이면 그냥 버렸다. 그런데 컨텍스트는
+     첫 제스처 **안에서** 만들어져도 브라우저에 따라 몇 밀리초 동안
+     'suspended' 로 있다가 깨어난다 — 그 사이에 들어온 소리는 통째로
+     사라졌고, 그게 정확히 "첫 몇 번은 아무 소리도 안 난다" 였다.
+     깨우기를 한 번 더 부르고, 소리는 그대로 예약한다. 정지된 컨텍스트에
+     예약한 음은 깨어나는 순간부터 울린다. */
+  if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* 다음 터치에서 */ } }
+  if (ctx.state === 'closed') return;
   const def = SOUNDS[name];
   if (!def) return;
   const now = ctx.currentTime;
@@ -385,56 +415,84 @@ const TRACKS = {
   /* 개발 현장. 단5음계 위를 8분음 베이스가 계속 민다 — 쉬는 칸이 없어야
      "지금 시간이 가고 있다" 가 들린다. */
   dev: {
-    bpm: 104, gain: 0.16,
+    bpm: 104, gain: 0.17,
     bass: [0, 0, null, 0, null, 0, null, 0, -4, -4, null, -4, null, -4, 3, 3],
     lead: [12, null, 15, null, 19, null, 15, null, 8, null, 12, null, 15, null, 12, 10],
     hat: [1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1],
     kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0],
     leadType: 'triangle', bassType: 'square',
   },
-  /* 마지막 공정. 반음 위아래로 흔들리는 베이스와 두 배로 빨라진 하이햇.
-     같은 조성인데 조여드는 느낌만 다르다 — 무대가 바뀐 것이 아니라
-     시간이 없어진 것이기 때문이다. */
+  /* ── 마지막 공정 ──
+     "보스땐 웅장하게" 가 이 트랙이 다시 쓰인 이유다. 예전 것은 빨랐지 크지
+     않았다 — 반음 위아래로 흔들리는 베이스와 16분 하이햇은 조여드는 느낌을
+     만들지만, 조여드는 것과 넓은 것은 다르다.
+
+     그래서 셋을 바꿨다. 박자를 늦추고(92), 마디마다 화음을 길게 깔고(pad),
+     베이스를 한 옥타브 아래로 겹쳤다(sub). 큰 소리는 빠른 음표가 아니라
+     **대역**이 만든다: 아래가 있고 가운데가 길게 남으면 폰 스피커에서도
+     "큰 것 앞에 서 있다" 가 된다. 심벌과 큰 북이 마디의 첫 칸을 친다. */
   boss: {
-    bpm: 132, gain: 0.18,
-    bass: [0, 0, 1, 0, 0, 0, 1, 0, -2, -2, -1, -2, -2, -2, -1, -2],
-    lead: [24, 23, 24, 27, 24, 23, 22, 20, 22, 20, 22, 24, 22, 20, 19, 17],
-    hat: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    kick: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1],
-    leadType: 'sawtooth', bassType: 'sawtooth',
+    bpm: 92, gain: 0.23, sub: true, bassD: 0.44,
+    bass: [0, null, null, null, 0, null, null, 0, -4, null, null, null, -2, null, null, -2],
+    lead: [24, null, 27, null, 31, null, null, 32, null, null, 32, null, 29, null, 26, null],
+    // A단 → F장 → G장. 세 화음이면 "무대가 돌아간다" 에 충분하고, 그 이상은
+    // 배경음악이 아니라 곡이 된다.
+    pad: [
+      [12, 15, 19, 24], null, null, null, null, null, null, null,
+      [8, 12, 15, 20], null, null, null, [10, 14, 17, 22], null, null, null,
+    ],
+    padType: 'sawtooth', padA: 0.14, padD: 1.7, padGain: 0.085,
+    hat: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1],
+    kick: [1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0],
+    boom: [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+    crash: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    leadType: 'square', bassType: 'sawtooth',
   },
   /* 시상식. 넓고 느리고 밝다. 베이스는 마디의 첫 칸에만 있고, 나머지는
-     종소리 하나가 천천히 떨어진다. */
+     종소리 하나가 천천히 떨어진다. 화음 한 겹이 그 아래를 받친다. */
   award: {
-    bpm: 76, gain: 0.14,
+    bpm: 76, gain: 0.16, bassD: 0.5,
     bass: [3, null, null, null, null, null, null, null, 8, null, null, null, null, null, null, null],
     lead: [27, null, null, 31, null, null, 34, null, 32, null, null, 34, null, null, 39, null],
-    hat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    kick: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    pad: [
+      [15, 19, 22], null, null, null, null, null, null, null,
+      [20, 24, 27], null, null, null, null, null, null, null,
+    ],
+    padType: 'triangle', padA: 0.4, padD: 2.4, padGain: 0.06,
     leadType: 'sine', bassType: 'triangle',
   },
-  /* 사무실. 게임의 절반은 여기서 흐른다 — 책상을 놓고, 사람을 뽑고,
-     기획서를 뽑고, 정산을 읽는다. 그 시간이 통째로 무음이었다.
+  /* ── 사무실 ──
+     게임 시간의 절반이 여기서 흐른다 — 책상을 놓고, 사람을 뽑고, 기획서를
+     뽑고, 정산을 읽는다. "사무실에선 잔잔하게" 가 이 트랙의 전부다.
 
-     그래서 가장 얌전한 트랙이다: 베이스는 두 마디에 한 번만 자리를 옮기고,
-     리드는 넉 칸에 하나씩 떨어지고, 킥도 하이햇도 없다. 일하는 동안 계속
-     도는 음악은 눈에 띄면 지는 것이라, "있다는 것을 모르는 채로 있는" 쪽을
-     노렸다. */
+     그래서 가장 얌전하다: 북도 하이햇도 없고, 베이스는 두 마디에 한 번만
+     자리를 옮기고, 리드는 넉 칸에 하나씩 떨어진다. 화음은 아주 여리게
+     길게 깔아서 방의 공기처럼만 남는다. 일하는 동안 계속 도는 음악은
+     눈에 띄면 지는 것이라, "있다는 것을 모르는 채로 있는" 쪽을 노렸다. */
   office: {
-    bpm: 84, gain: 0.10,
+    bpm: 74, gain: 0.13, bassD: 0.55,
     bass: [0, null, null, null, null, null, null, null, -5, null, null, null, null, null, 3, null],
     lead: [19, null, null, null, 22, null, null, 24, null, null, 19, null, null, null, 15, null],
-    hat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    kick: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    pad: [
+      [12, 16, 19], null, null, null, null, null, null, null,
+      [7, 12, 16], null, null, null, null, null, null, null,
+    ],
+    padType: 'sine', padA: 0.6, padD: 2.8, padGain: 0.05,
     leadType: 'sine', bassType: 'triangle',
   },
-  /* 게임덱스 부스. 밝고 바쁘다. */
+  /* 게임덱스 부스. 밝고 바쁘다. 사람이 몰리는 홀의 소리다. */
   expo: {
-    bpm: 118, gain: 0.13,
+    bpm: 118, gain: 0.16,
     bass: [3, null, 3, null, 10, null, 10, null, 8, null, 8, null, 5, null, 5, 7],
     lead: [15, 19, 22, 19, 15, 19, 27, 22, 20, 24, 27, 24, 20, 17, 15, 17],
+    pad: [
+      [15, 19, 22], null, null, null, null, null, null, null,
+      [20, 24, 27], null, null, null, [17, 20, 24], null, null, null,
+    ],
+    padType: 'triangle', padA: 0.16, padD: 1.1, padGain: 0.05,
     hat: [1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1],
     kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+    crash: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     leadType: 'triangle', bassType: 'triangle',
   },
 };
@@ -487,7 +545,9 @@ function fade(to, secs = 0.6) {
    영원히 첫 마디만 반복한다. */
 export function music(name, force = false) {
   wantTrack = name || null;
-  if (!ctx || ctx.state !== 'running') return;
+  if (!ctx || ctx.state === 'closed') return;
+  // 깨어나는 중일 수 있다. 트랙은 그대로 걸고, 스케줄러가 첫 칸부터 센다.
+  if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* 다음 터치에서 */ } }
   if (!musicEnabled || !name) { stopMusicNow(); return; }
   if (curTrack === name && !force && (timer || extSrc)) return;
   startTrack(name);
@@ -531,7 +591,7 @@ function startTrack(name) {
 /* 앞으로 0.4초치를 미리 예약한다. 40ms 마다 도므로 늦어도 열 번은 겹쳐 본다 —
    탭이 잠깐 멈춰도 박자가 끊기지 않는다. */
 function scheduler(def) {
-  if (!ctx || ctx.state !== 'running') return;
+  if (!ctx || ctx.state === 'closed') return;
   const spb = 60 / def.bpm / 4;                 // 16분음 한 칸의 길이
   /* 탭이 뒤로 가면 setInterval 이 초당 한 번으로 줄어든다. 그동안 밀린
      시간을 그대로 따라잡으려 들면, 돌아온 순간 수십 개의 음이 **전부 과거
@@ -549,16 +609,39 @@ function scheduler(def) {
 function playStep(def, i, t) {
   const b = def.bass[i];
   if (b !== null && b !== undefined) {
-    tone({ freq: semi(b), type: def.bassType, a: 0.008, d: 0.16, gain: 0.5, at: t, bus: musicBus });
+    tone({ freq: semi(b), type: def.bassType, a: 0.008, d: def.bassD || 0.16, gain: 0.5, at0: t, bus: musicBus });
+    /* 한 옥타브 아래를 겹치는 트랙이 있다. 같은 음을 두 옥타브로 깔면
+       스피커가 작은 폰에서도 '아래가 있다' 가 전해진다 — 웅장함은 음표가
+       아니라 대역이 만든다. */
+    if (def.sub) tone({ freq: semi(b - 12), type: 'sine', a: 0.01, d: (def.bassD || 0.16) * 1.6, gain: 0.42, at0: t, bus: musicBus });
   }
   const l = def.lead[i];
   if (l !== null && l !== undefined) {
-    tone({ freq: semi(l), type: def.leadType, a: 0.006, d: 0.2, gain: 0.22, at: t, bus: musicBus });
+    tone({ freq: semi(l), type: def.leadType, a: 0.006, d: 0.2, gain: 0.22, at0: t, bus: musicBus });
     // 아주 살짝 어긋난 한 겹을 더 얹는다. 한 겹이면 삐 소리, 두 겹이면 악기다.
-    tone({ freq: semi(l), type: def.leadType, a: 0.006, d: 0.2, gain: 0.12, at: t + 0.012, bus: musicBus, detune: 7 });
+    tone({ freq: semi(l), type: def.leadType, a: 0.006, d: 0.2, gain: 0.12, at0: t + 0.012, bus: musicBus, detune: 7 });
   }
-  if (def.hat[i]) noise({ d: 0.03, gain: 0.09, hp: 6000, lp: 15000, at: t, bus: musicBus });
-  if (def.kick[i]) {
-    tone({ freq: 110, to: 42, type: 'sine', a: 0.004, d: 0.12, gain: 0.7, at: t, bus: musicBus });
+  /* ── 화음 한 겹 ──
+     한 칸에 음 여럿을 길게 깐다. 베이스와 리드만으로는 아무리 세게 쳐도
+     '빠른 것' 이지 '큰 것' 이 아니다. 무대가 넓게 들리는 것은 길게 끄는
+     화음이 맡는다 — 보스전과 시상식이 이 줄을 쓴다. */
+  if (def.pad && def.pad[i]) {
+    for (const n of def.pad[i]) {
+      tone({ freq: semi(n), type: def.padType || 'triangle', a: def.padA || 0.08,
+        d: def.padD || 1.2, gain: def.padGain || 0.16, at0: t, bus: musicBus });
+    }
+  }
+  if (def.hat && def.hat[i]) noise({ d: 0.03, gain: 0.09, hp: 6000, lp: 15000, at0: t, bus: musicBus });
+  if (def.kick && def.kick[i]) {
+    tone({ freq: 110, to: 42, type: 'sine', a: 0.004, d: 0.12, gain: 0.7, at0: t, bus: musicBus });
+    // 큰 북. 아래로 더 내려가고 더 길게 남는다.
+    if (def.boom && def.boom[i]) {
+      tone({ freq: 74, to: 33, type: 'sine', a: 0.006, d: 0.5, gain: 0.8, at0: t, bus: musicBus });
+      noise({ d: 0.24, gain: 0.10, hp: 40, lp: 320, at0: t, bus: musicBus });
+    }
+  }
+  // 심벌. 마디의 첫 칸에만 얹어서 '한 판이 시작된다' 를 만든다.
+  if (def.crash && def.crash[i]) {
+    noise({ d: 1.1, gain: 0.09, hp: 3800, lp: 15000, at0: t, bus: musicBus });
   }
 }

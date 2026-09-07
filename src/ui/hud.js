@@ -107,7 +107,7 @@ const DEV_PHASES = [
   { ko: '기획', desc: '뼈대를 세우는 중 — 장르가 정해졌고 아직 형태가 없다' },
   { ko: '제작', desc: '살을 붙이는 중 — 고른 소재로 내용을 채운다' },
   { ko: '마감', desc: '출시 준비 중 — 남은 것을 밀어 넣고 다듬는다' },
-  { ko: '디버그', desc: '벌레를 터는 중 — 급하게 덮은 자리마다 한 마리씩 나온다' },
+  { ko: '디버그', desc: '벌레를 터는 중 — 크지만 반격은 없다. 끝까지 잡으면 버그 0개' },
 ];
 
 /* 공정마다 서는 놈의 얼굴. 화면 여러 곳(개발 탭·아레나·착수 미리보기)이
@@ -264,13 +264,15 @@ export class UI {
          <div><span class="k">체력 바</span><span class="v">남은 작업량</span></div>
          <div><span class="k">직원의 공격</span><span class="v">만들어 낸 분량</span></div>
          <div><span class="k">✨ 번뜩임</span><span class="v">좋은 아이디어 — 축 하나가 두 배로</span></div>
-         <div><span class="k">🐞 버그 보스</span><span class="v">마지막 공정. 잡으면 버그가 사라진다</span></div>
-         <div><span class="k">반격</span><span class="v">사양 변경 · 버그 · 납기 압박</span></div>
+         <div><span class="k">🐞 버그 보스</span><span class="v">마지막 공정. 끝까지 잡으면 버그가 0개가 된다</span></div>
+         <div><span class="k">반격</span><span class="v">사양 변경 · 버그 · 납기 압박 (버그 보스는 안 때린다)</span></div>
        </div>
        <p style="font-size:11.5px;line-height:1.7;color:var(--dim);margin-top:9px">
          공정은 <b>기획 → 제작 → 마감 → 디버그</b> 넷입니다. 팀의 체력이 다 떨어지면
          그 공정은 못 만든 채로 마감되고, 완성도가 그만큼 깎입니다.
-         상점의 <b>음식</b>으로 체력을 채워 주세요.</p>`,
+         상점의 <b>음식</b>으로 체력을 채워 주세요.<br>
+         마지막 <b>버그 보스</b>는 크지만 때리지 않습니다 — 끝까지 잡으면 버그가 0개,
+         중간에 마감하면 남은 버그는 <b>🧰 디버그 킷</b>으로 지웁니다.</p>`,
       null, () => {
         this.g.company.devIntroSeen = true;
         this.g.save();
@@ -310,6 +312,8 @@ export class UI {
      마지막 공정만 다른 트랙을 쓴다. 세 마리를 잡고 마지막 한 마리 앞에
      섰다는 것이 눈보다 귀에 먼저 와야 한다. */
   _syncMusic() {
+    // 무대가 서 있으면 그 무대의 곡이 이긴다.
+    if (this._expo) { music('expo'); return; }
     if (this._gala) { music('award'); return; }
     const p = this.g.project;
     if (this.inArena() && p && p.stages) {
@@ -1215,6 +1219,8 @@ export class UI {
        요소 서른 개고, 그 서른 개가 "지금 좋은 일이 일어났다" 를 팝업보다
        먼저 말한다. */
     if (type === 'release') this.confetti(34);
+    // 서비스가 닫혔다. 축하할 일이 아니므로 종이는 안 쏟아지고, 목록만 다시 짓는다.
+    if (type === 'retired') { this.renderSales(); this.renderHUD(); }
     if (type === 'rank') this.confetti(46, ['#ffd873', '#fff2cf', '#8fe0a0', '#e8b055']);
     if (type === 'milestone') this.confetti(40);
     if (type === 'discovery') this.confetti(24, ['#8fe0a0', '#cfe9ff', '#fff2cf']);
@@ -1326,7 +1332,8 @@ export class UI {
 
   async _galaShow(a) {
     const line = $('galaLine'), cat = $('galaCat'), env = $('galaEnv'),
-      win = $('galaWin'), tag = $('galaTag'), conf = $('galaConf');
+      win = $('galaWin'), tag = $('galaTag'), conf = $('galaConf'),
+      medal = $('galaMedal'), sum = $('galaSum'), mc = $('galaMc');
     if (!line) { this._galaFallback(a); return; }
 
     document.body.classList.add('gala');
@@ -1348,11 +1355,14 @@ export class UI {
       tapped = fin;
     });
 
-    /* 사회자의 한 줄. 한 글자씩 찍힌다 — 말은 한꺼번에 나오지 않는다. */
+    /* 사회자의 한 줄. 한 글자씩 찍히고, 찍히는 동안 사회자가 실제로 말한다 —
+       입이 움직이고 마이크 든 팔이 오르내린다. 글자가 멈추면 사람도 멈춘다.
+       말하는 중인지 아닌지가 화면에 없으면 이 층은 자막판일 뿐이다. */
     const say = async (text, hold = 700) => {
       if (skipped) { line.textContent = text; line.classList.add('done'); return; }
       line.classList.remove('done');
       line.textContent = '';
+      if (mc) mc.classList.add('talk');
       for (let i = 0; i < text.length; i++) {
         if (skipped) { line.textContent = text; break; }
         line.textContent = text.slice(0, i + 1);
@@ -1362,8 +1372,22 @@ export class UI {
       }
       line.textContent = text;
       line.classList.add('done');
+      if (mc) mc.classList.remove('talk');
       await beat(hold);
     };
+
+    /* 메달. 이름이 불린 순간에만 돌면서 내려온다. */
+    const showMedal = (grade, mine) => {
+      if (!medal) return;
+      medal.className = 'gmedal on ' + grade.id + (mine ? '' : ' rival');
+      const disc = medal.querySelector('.gmdisc');
+      if (disc) disc.textContent = { gold: '1', silver: '2', bronze: '3' }[grade.id] || '★';
+      // 애니메이션을 다시 태우려면 한 번 떼었다 붙여야 한다.
+      medal.style.animation = 'none';
+      void medal.offsetWidth;
+      medal.style.animation = '';
+    };
+    const hideMedal = () => { if (medal) medal.className = 'gmedal'; };
 
     const setWin = (html, kind) => {
       win.className = 'gwin on ' + (kind || '');
@@ -1374,6 +1398,8 @@ export class UI {
     tag.textContent = `${a.year}년차 ${a.month}월 · 게임 어워드`;
     cat.classList.remove('on');
     env.className = 'genv';
+    hideMedal();
+    if (sum) { sum.className = 'gsum'; sum.innerHTML = ''; }
     clearWin();
 
     await say('자, 여러분. 오래 기다리셨습니다.', 500);
@@ -1384,7 +1410,7 @@ export class UI {
        — 순서를 섞으면 "우리 차례가 언제 오나" 를 계속 기다리게 되기 때문이다.
 
        그 달에 우리가 한 편도 안 냈으면 남의 상은 **한 부문만** 부른다.
-       시상식은 매달 서는 무대라, 우리와 상관없는 발표를 셋씩 앉아서 보면
+       시상식은 두 달마다 서는 무대라, 우리와 상관없는 발표를 셋씩 앉아서 보면
        그건 사건이 아니라 통행료가 된다. 그래도 하나는 부른다 — 우리가
        쉬는 동안에도 업계는 돌고 있다는 것이 이 화면의 일이기 때문이다. */
     const others = (a.others || []).slice(0, a.entries ? 3 : 1);
@@ -1394,17 +1420,18 @@ export class UI {
     ];
 
     if (!a.entries) {
-      await say(`${a.studio}는 지난달 출시작이 없어 심사 대상이 아니었습니다.`, 700);
+      await say(`${a.studio}는 지난 두 달 출시작이 없어 심사 대상이 아니었습니다.`, 700);
     } else if (!(a.wins || []).length) {
-      await say('그런데… 이번 달은 기준선을 넘긴 작품이 한 편도 없었습니다.', 900);
+      await say('그런데… 이번 회차는 기준선을 넘긴 작품이 한 편도 없었습니다.', 900);
       const n = a.near;
       if (n) await say(`가장 가까웠던 것은 ${n.catKo} — 「${n.title}」 ${num(n.value)}점. 기준은 ${num(n.bar)}점이었습니다.`, 1200);
     }
-    if (!rows.length) await say('오늘은 부를 이름이 없습니다. 다음 달에 뵙겠습니다.', 900);
+    if (!rows.length) await say('오늘은 부를 이름이 없습니다. 두 달 뒤에 뵙겠습니다.', 900);
 
     for (const w of rows) {
       if (skipped) break;
       clearWin();
+      hideMedal();
       cat.classList.remove('on');
       await beat(120);
       cat.textContent = `${w.icon} ${w.catKo}`;
@@ -1417,6 +1444,8 @@ export class UI {
       env.className = 'genv on pop';
       sfx('envelope');
       await beat(340);
+      // 봉투가 사라진 자리에 메달이 내려온다. 등급이 색을 정한다.
+      showMedal(w.grade, w.mine);
       if (w.mine) {
         sfx('trophy');
         this._galaConfetti(conf);
@@ -1437,13 +1466,31 @@ export class UI {
     }
 
     clearWin();
+    hideMedal();
     cat.classList.remove('on');
-    if ((a.wins || []).length) {
-      setWin(`<div class="gwt">${(a.wins || []).length}개 부문 수상</div>
-        <div class="gws">상금 ${rewardText(a.totals)} 입금 완료</div>`, 'mine');
-      await say(`오늘 ${a.studio}는 ${(a.wins || []).length}개 부문을 가져갔습니다. 상금은 이미 계좌로 보냈습니다.`, 1200);
+
+    /* ── 수상 내역 정리 ──
+       부문이 하나씩 지나가는 동안에는 "우리가 뭘 받았더라" 가 남지 않는다.
+       마지막에 한 장으로 다시 세워 두면 무대를 나가기 전에 오늘의 결과가
+       통째로 눈에 들어온다. 건너뛰기로 왔어도 이 판은 뜬다 — 건너뛴 사람이
+       원한 것은 진행이 빠른 것이지 결과를 안 보는 것이 아니다. */
+    this._galaSummary(sum, a, rows);
+    const closing = (a.wins || []).length
+      ? `오늘 ${a.studio}는 ${(a.wins || []).length}개 부문을 가져갔습니다. 상금은 이미 계좌로 보냈습니다.`
+      : '오늘 밤의 수상 내역입니다. 두 달 뒤에 뵙겠습니다.';
+    if (skipped) {
+      /* 건너뛰기로 온 사람에게도 결과 한 장은 보여준다. 건너뛴 것은 진행이
+         느려서지 결과를 안 보겠다는 뜻이 아니다. 여기서만 기다림을 되살리고,
+         한 번 더 누르면 그때는 진짜로 닫는다. */
+      line.textContent = closing;
+      line.classList.add('done');
+      skipped = false;
+      $('galaSkip').onclick = (e) => { e.stopPropagation(); skipped = true; if (tapped) tapped(); };
+      await beat(3200);
     } else {
-      await say('오늘 밤은 여기까지입니다. 다음 달에 뵙겠습니다.', 900);
+      await say(closing, 1400);
+      // 정리판은 한 박자 더 세워 둔다. 넘기고 싶으면 화면을 누르면 된다.
+      await beat(2600);
     }
 
     gala.onclick = null;
@@ -1452,6 +1499,33 @@ export class UI {
     conf.innerHTML = '';
     // 음악은 여기서 되돌리지 않는다. `_gala` 가 아직 참이라 _syncMusic 이
     // 시상식 곡을 다시 고른다 — 되돌리는 자리는 showAwards 의 finally 뒤다.
+  }
+
+  /* ---------- 수상 내역 정리 ----------
+     오늘 부른 이름을 한 장으로 다시 세운다. 우리 것은 금색으로 두드러지고,
+     남의 것은 가라앉는다 — 목록을 훑는 눈이 "우리가 뭘 받았나" 를 먼저
+     찾게 하는 것이 이 판의 유일한 일이다. */
+  _galaSummary(box, a, rows) {
+    if (!box) return;
+    box.innerHTML = '';
+    box.className = 'gsum on';
+    box.appendChild(el('h5', '', `${a.year}년차 ${a.month}월 수상 내역`));
+    if (!rows.length) {
+      box.appendChild(el('div', 'gsr', '<span class="gsm">—</span>'
+        + '<span class="gsn">이번 회차는 수상작이 없었습니다<i>다음 회차에 다시 심사합니다</i></span>'));
+      return;
+    }
+    const MEDAL = { gold: '🥇', silver: '🥈', bronze: '🥉' };
+    for (const w of rows) {
+      const who = w.mine ? a.studio : `${w.studioIcon || '🏢'} ${w.studio}`;
+      box.appendChild(el('div', 'gsr' + (w.mine ? ' mine' : ''),
+        `<span class="gsm">${MEDAL[w.grade.id] || '🏅'}</span>
+         <span class="gsn">${w.catKo} · 「${w.title}」<i>${who} · ${w.statKo} ${num(w.value)}</i></span>
+         <span class="gsg">${w.grade.ko}</span>`));
+    }
+    if ((a.wins || []).length) {
+      box.appendChild(el('div', 'gstot', `상금 ${rewardText(a.totals)} 입금 완료`));
+    }
   }
 
   /* 금색 종이. 우리 이름이 불린 순간에만 쏟아진다. */
@@ -1491,8 +1565,8 @@ export class UI {
         null, () => { this.g.pendingAward = null; this.g.save(); });
     } else {
       const n = a.near;
-      this.openModal(tag, '이번 달 수상은 없었습니다',
-        `<p style="font-size:12px;line-height:1.7">지난달 출시작 ${a.entries}편은 어느 부문의 기준선도 넘지 못했습니다.<br><br>`
+      this.openModal(tag, '이번 회차 수상은 없었습니다',
+        `<p style="font-size:12px;line-height:1.7">지난 두 달 출시작 ${a.entries}편은 어느 부문의 기준선도 넘지 못했습니다.<br><br>`
         + (n ? `가장 가까웠던 것은 <b>${n.catKo}</b> — 「${n.title}」 <b>${num(n.value)}점</b> (기준 ${num(n.bar)}점).
                 ${Math.round((1 - n.ratio) * 100)}% 가 모자랐습니다.` : '')
         + '</p>',
@@ -1522,10 +1596,30 @@ export class UI {
       }));
   }
 
+  /* ---------- 부스를 차리는 장면 ----------
+
+     "부스 차릴 때 그냥 차리기 하고 끝이 아니라, 그 부스 애니메이션도 만들어
+     줘. 게임 홍보 하고 있는 그런 모습을." — 그 자리다.
+
+     예산을 고르면 화면이 **전시장**으로 넘어간다. 사무실도 세트장도 아닌
+     세 번째 장소다: 홀이 서고, 우리 부스가 서고, 입구에서 사람이 걸어
+     들어와 부스 앞에 모인다. 그동안 방문자 수가 눈앞에서 올라간다.
+
+     결과는 그대로다 — joinExpo 가 정한 숫자를 화면이 뒤따라 셀 뿐이다.
+     바뀐 것은 **언제 어떻게 보여주느냐** 하나다. 출시 직후의 실시간 판매와
+     같은 생각이고, 같은 이유다: 만든 것에 바깥이 반응하는 순간이 화면에
+     있어야 한다. */
   _expoFlow(planId) {
     const r = this.g.joinExpo(planId);
     if (!r.ok) { this.toast(r.why || '출전할 수 없습니다', 'bad'); return; }
     this.g.save();
+    if (!$('expo') || !this.view || !this.view.enterExpo) { this._expoResultModal(r); return; }
+    this._expoShow(r).catch(() => this._expoResultModal(r));
+  }
+
+  /* 옛 캐시(전시장 DOM 이 없는 화면)와, 장면이 어떤 이유로든 못 설 때의
+     대비책. 예전 결산 팝업 그대로다. */
+  _expoResultModal(r) {
     this.openModal('게임덱스 결산', `부스 방문자 ${num(r.visitors)}명`,
       `${r.note.ko ? `<div class="grade" style="font-size:22px">${r.note.ko}</div>` : ''}
        <div class="gsub">${r.plan.icon} ${r.plan.ko}</div>
@@ -1535,6 +1629,139 @@ export class UI {
          <div><span class="k">다운로드</span><span class="v">${Math.round((r.dl - 1) * 100)}% UP · ${r.weeks}주</span></div>
        </div>`,
       null, () => { this._syncMusic(); this.renderAll(); });
+  }
+
+  /* 전시장이 도는 동안 방문자 계기판이 올라간다. main.js 의 rAF 루프가
+     매 프레임 부른다 — 전투·판매와 같은 시계를 쓰므로 탭이 뒤로 가면
+     이 장면도 같이 멈춘다. */
+  tickExpo(dt) {
+    const x = this._expo;
+    if (!x || x.paused) return;
+    x.t += dt;
+    if (x.countTo > 0) {
+      // 남은 거리의 일정 비율씩 좁힌다. 끝에서 천천히 붙어서 "다 찼다" 가
+      // 눈에 보인다.
+      const step = 1 - Math.exp(-dt * 2.2);
+      x.shown += (x.countTo - x.shown) * step;
+      if (x.countTo - x.shown < 1) x.shown = x.countTo;
+      const el2 = $('xNum');
+      const v = Math.round(x.shown);
+      if (el2 && x.lastShown !== v) { x.lastShown = v; el2.textContent = num(v); }
+    }
+  }
+
+  async _expoShow(r) {
+    const line = $('xLine'), note = $('xNote'), res = $('xRes'),
+      tag = $('xTag'), title = $('xTitle'), numEl = $('xNum'),
+      skip = $('xSkip'), ok = $('xOk');
+    const c = this.g.company;
+    this.busy = true;
+    this._expo = { t: 0, shown: 0, countTo: 0, lastShown: -1, paused: false };
+
+    // 부스에 걸 이름. 가장 최근에 낸 게임을 민다 — 없으면 신작 예고다.
+    this.view.boothShow = (this.g.releases[0] && this.g.releases[0].title)
+      || (this.g.finished && this.g.finished.title)
+      || (this.g.project && this.g.project.title) || null;
+    this.view.enterExpo(r.plan.id);
+    document.body.classList.add('expo');
+    music('expo');
+
+    tag.textContent = `게임덱스 ${c.month}월 · ${r.plan.icon} ${r.plan.ko}`;
+    title.textContent = c.name || '우리 스튜디오';
+    numEl.textContent = '0';
+    note.className = 'xnote';
+    note.textContent = '';
+    res.innerHTML = '';
+    ok.hidden = true;
+    skip.hidden = false;
+
+    let skipped = false;
+    let tapped = null;
+    const beat = (ms) => new Promise((done) => {
+      if (skipped) { done(); return; }
+      let fired = false;
+      const fin = () => { if (fired) return; fired = true; tapped = null; clearTimeout(t); done(); };
+      const t = setTimeout(fin, ms);
+      tapped = fin;
+    });
+    const onTap = () => { if (tapped) tapped(); };
+    $('expo').addEventListener('pointerdown', onTap);
+    skip.onclick = (e) => { e.stopPropagation(); skipped = true; if (tapped) tapped(); };
+
+    const say = async (text, hold = 700) => {
+      if (skipped) { line.textContent = text; line.classList.add('done'); return; }
+      line.classList.remove('done');
+      line.textContent = '';
+      for (let i = 0; i < text.length; i++) {
+        if (skipped) { line.textContent = text; break; }
+        line.textContent = text.slice(0, i + 1);
+        if (text[i] !== ' ') sfx('mc');
+        await beat(text[i] === ',' || text[i] === '…' ? 80 : 24);
+      }
+      line.textContent = text;
+      line.classList.add('done');
+      await beat(hold);
+    };
+    const card = (k, v, cls = '') => {
+      const d = el('div', 'xrc' + (cls ? ' ' + cls : ''), `<span>${k}</span><b>${v}</b>`);
+      res.appendChild(d);
+      sfx('coin');
+    };
+
+    try {
+      await say(`${r.plan.ko}. 부스를 세웁니다.`, 500);
+      sfx('place');
+      await say('개장했습니다 — 사람이 들어옵니다!', 400);
+      sfx('applause');
+
+      // 계기판이 올라간다. 실제 방문자 수까지 3초 남짓.
+      this._expo.countTo = r.visitors;
+      await say(`「${this.view.boothShow || '신작'}」 시연대 앞에 줄이 섰습니다.`, 900);
+      await beat(1400);
+      // 건너뛰었으면 숫자는 그 자리에서 맞춘다.
+      this._expo.shown = r.visitors;
+      numEl.textContent = num(r.visitors);
+
+      if (r.note && r.note.ko) {
+        note.textContent = r.note.ko;
+        note.className = 'xnote on' + (r.note.cls === 'bad' ? ' bad' : '');
+        sfx(r.note.cls === 'bad' ? 'bad' : 'trophy');
+      }
+      await say(`부스 방문자 ${num(r.visitors)}명.`, 700);
+      this.view.expoCheer();
+      sfx('applause');
+
+      card('팬', `+${num(r.fans)}`, 'good');
+      await beat(320);
+      card('다운로드', `${Math.round((r.dl - 1) * 100)}% UP`, 'good');
+      await beat(320);
+      card('지속', `${r.weeks}주`);
+      if (r.helper) {
+        await beat(320);
+        card('도우미', '영입!', 'good');
+        sfx('loot');
+      }
+      await say(r.helper
+        ? '부스에서 만난 사람이 회사까지 따라왔습니다.'
+        : '화제가 다운로드로 이어집니다.', 900);
+
+      skip.hidden = true;
+      ok.hidden = false;
+      // 결산을 확인할 때까지 장면은 그대로 돈다. 사람이 계속 걷는다.
+      await new Promise((done) => { ok.onclick = () => done(); tapped = null; });
+    } finally {
+      $('expo').removeEventListener('pointerdown', onTap);
+      skip.onclick = null;
+      ok.onclick = null;
+      this._expo = null;
+      this.busy = false;
+      document.body.classList.remove('expo');
+      this.view.exitExpo();
+      this.view.boothShow = null;
+      this._syncMusic();
+      this.renderAll();
+      this._drainPops();
+    }
   }
 
   /* 누적 다운로드 자릿수. 사진의 "축! 100만 다운로드 첫 달성!!" 이다. */
@@ -1972,25 +2199,68 @@ export class UI {
     // 물건이라, 싸우는 중에 손가락 하나로 눌러야 하는 자리와 맞지 않는다.
     const items = g.bagList()
       .filter((b) => b.item.kind !== 'gear' && b.item.kind !== 'gift').slice(0, 8);
-    // 아레나는 초당 20번 다시 그린다. 내용이 그대로면 DOM 을 건드리지 않는다 —
-    // 안 그러면 손가락이 아이콘에 닿는 순간 그 아이콘이 이미 다른 노드다.
-    const sig = items.map((b) => b.item.id + 'x' + b.n).join('|');
-    if (box._sig === sig) return;
-    box._sig = sig;
-    box.innerHTML = '';
-    for (const { item, n } of items) {
-      const t = el('div', 'tray-i', `<span class="e">${item.emoji}</span><span class="n">${n}</span>`);
-      t.title = `${item.ko} — ${item.desc || ''}`;
-      t.onclick = () => {
-        const who = item.kind === 'food' && !item.all
-          ? (g.neediest(g.project ? g.project.team : null) || g.neediest())
-          : null;
-        const r = g.useItem(item.id, who ? who.id : null);
-        if (!r.ok) this.toast(r.why || '지금은 쓸 수 없다', 'bad');
-        g.save();
-      };
-      box.appendChild(t);
+
+    /* ── 왜 노드를 다시 만들지 않는가 ──
+       "밥을 연타하는데 바로 안 먹여진다" 가 여기였다.
+
+       예전에는 아이콘 옆의 개수가 바뀌면 트레이를 통째로 다시 지었다
+       (`innerHTML = ''`). 그런데 밥을 한 번 먹이면 개수가 반드시 바뀐다.
+       즉 **한 번 누를 때마다** 트레이의 모든 노드가 교체됐고, 두 번째
+       손가락이 내려앉은 뒤 떼기 전에 그 노드가 사라지면 브라우저는
+       click 을 그 노드에 보내지 않는다 — 누른 것은 맞는데 아무 일도
+       안 일어난 것처럼 보이는, 정확히 그 증상이다.
+
+       그래서 이제 물건 목록(어떤 물건이 있는가)이 바뀔 때만 짓고, 개수는
+       숫자만 갈아 끼운다. 손가락 아래의 노드는 그대로 남는다. */
+    const keys = items.map((b) => b.item.id).join('|');
+    if (box._keys !== keys) {
+      box._keys = keys;
+      box.innerHTML = '';
+      box._cells = new Map();
+      for (const { item } of items) {
+        const t = el('div', 'tray-i', `<span class="e">${item.emoji}</span><span class="n"></span>`);
+        t.title = `${item.ko} — ${item.desc || ''}`;
+        // 폰에서 click 은 손가락을 뗀 뒤에 오고, 연타하면 두 번째 탭이
+        // 더블탭 확대로 먹히기도 한다. 누르는 즉시 먹인다.
+        t.style.touchAction = 'manipulation';
+        t.onpointerdown = (e) => {
+          e.preventDefault();
+          t._used = true;
+          this._useTrayItem(item);
+        };
+        // 포인터 이벤트가 없는 브라우저를 위한 대비책. 위에서 이미 먹였으면
+        // 무시한다 — 같은 탭으로 두 개를 먹이면 그게 더 나쁘다.
+        t.onclick = () => { if (!t._used) this._useTrayItem(item); t._used = false; };
+        box.appendChild(t);
+        box._cells.set(item.id, t);
+      }
     }
+    for (const { item, n } of items) {
+      const cell = box._cells && box._cells.get(item.id);
+      if (!cell) continue;
+      const nn = cell.querySelector('.n');
+      if (nn && nn.textContent !== String(n)) nn.textContent = String(n);
+    }
+  }
+
+  /* 트레이의 한 칸을 쓴다. 음식은 가장 지친 팀원에게 자동으로 간다 —
+     싸우는 중에 "누구에게" 를 한 번 더 물으면 아무도 안 쓴다. */
+  _useTrayItem(item) {
+    const g = this.g;
+    const who = item.kind === 'food' && !item.all
+      ? (g.neediest(g.project ? g.project.team : null) || g.neediest())
+      : null;
+    const r = g.useItem(item.id, who ? who.id : null);
+    if (!r.ok) this.toast(r.why || '지금은 쓸 수 없다', 'bad');
+    else if (this.inArena()) {
+      // 먹였다는 것이 로그에도 남아야 한다. 체력 바만 조금 차면 연타한
+      // 사람은 먹여진 것인지 아닌지를 끝까지 모른다.
+      this.arenaLog(`${item.emoji} ${who ? who.name : '전원'} — ${item.ko}`, 'good');
+    }
+    g.save();
+    // 개수는 그 자리에서 갱신한다. 다음 프레임을 기다리면 연타가 밀린다.
+    this.renderTray($('aTray'));
+    if (document.body.classList.contains('rest')) this.renderTray($('aRestTray'));
   }
 
   /* ---------- 진행 상황 ----------
@@ -2371,7 +2641,7 @@ export class UI {
   }
 
   /* ══════════════════════════ 행사 ══════════════════════════
-     시상식(매달)과 게임덱스(두 달)가 여기 산다. 지나간 행사의 기록도 같이
+     시상식(짝수 달)과 게임덱스(홀수 달)가 여기 산다. 지나간 행사의 기록도 같이
      둔다 — 상은 받은 순간보다 진열장에 쌓인 모습이 오래 남는다. */
   panelEvents(box) {
     const g = this.g, c = g.company;
@@ -2413,7 +2683,7 @@ export class UI {
     }
 
     /* ---- 시상식 ---- */
-    box.appendChild(el('h4', 'sec', `시상식 · 매달 1주 · ${c.year}년차 기준선`));
+    box.appendChild(el('h4', 'sec', `시상식 · 두 달마다(짝수 달) 1주 · ${c.year}년차 기준선`));
     box.appendChild(el('div', 'item',
       '<div class="d">지난 한 달에 <b>출시한 게임</b>을 부문별로 심사합니다. '
       + '부문의 기준선을 넘으면 상과 상금이 나옵니다. 기준선은 해마다 올라갑니다.</div>'));
@@ -3098,8 +3368,8 @@ export class UI {
       const held = Math.round(Math.min(2.6, p.bugs * 0.11) * 4);
       box.appendChild(el('div', 'item',
         `<div class="d">버그 ${p.bugs}개가 평론가 점수를 <b style="color:var(--bad)">약 ${held}점</b> 깎고 있습니다.
-         ${p.forfeits ? '개발 중에 팀이 쓰러져 <b>버그 보스를 다 잡지 못했습니다</b>. ' : '<b>버그 보스</b>를 끝까지 잡으면 대부분 사라집니다. '}
-         지금 고치려면 상점의 <b>🧰 디버그 킷</b>을 쓰세요.</div>`));
+         <b>버그 보스를 다 잡지 못했습니다</b> — 끝까지 잡았다면 0개였습니다.
+         남은 것은 상점의 <b>🧰 디버그 킷</b>으로 지웁니다.</div>`));
     } else {
       box.appendChild(el('div', 'item',
         '<div class="d">🐞 버그 0개 — 버그 보스를 깨끗하게 잡았습니다.</div>'));
@@ -3486,18 +3756,22 @@ export class UI {
     const g = this.g;
     this.panelChart(box);
     const live = g.managed();
-    box.appendChild(el('h4', 'sec', `운영 중 ${live.length} / ${g.info().managedCap}`));
-    if (!live.length) box.appendChild(el('div', 'item', '<div class="d">운영 중인 게임이 없습니다.</div>'));
+    box.appendChild(el('h4', 'sec', `판매 중 ${live.length}`));
+    if (!live.length) {
+      box.appendChild(el('div', 'item',
+        '<div class="d">판매 중인 게임이 없습니다. 출시한 게임은 <b>한 주 동안</b> 팔리고 서비스가 닫힙니다 — '
+        + '운영 칸이 차서 다음 게임을 못 내는 일은 없습니다.</div>'));
+    }
     for (const r of live) {
       const it = el('div', 'item');
       it.innerHTML = `<div class="t"><span class="n">「${r.title}」</span>
         <span class="j">${r.weeks}주차</span></div>
         <div class="d">${r.genreKo} × ${r.contentKo} · ${MONETIZE.find((m) => m.id === r.monetizeId).ko}<br>
         유저 ${num(r.users)}명 (최고 ${num(r.peakUsers)}) · 누적 ${won(r.earned)}</div>`;
-      const b = el('button', 'btn sm danger', '서비스 종료');
+      const b = el('button', 'btn sm danger', '지금 서비스 종료');
       b.style.marginTop = '6px';
       b.onclick = () => {
-        this.confirm(`「${r.title}」 서비스를 종료할까요?`, '운영 슬롯이 하나 비워집니다.',
+        this.confirm(`「${r.title}」 서비스를 종료할까요?`, '한 주가 지나면 어차피 닫힙니다.',
           () => { g.endService(r.id); g.save(); });
       };
       it.appendChild(b);
@@ -3537,14 +3811,15 @@ export class UI {
     ]) box.appendChild(el('div', 'row', `<span>${k}</span><b>${v}</b>`));
     box.appendChild(el('div', 'item',
       '<div class="d">가구를 사면 <b>가방</b>에 들어갑니다. <b>배치</b>를 눌러 바닥의 파란 구역에 놓으세요. '
-      + '책상 하나에 직원 한 명이 앉습니다. 쾌적도가 높으면 직원 의욕이 잘 유지되고 기획력이 오릅니다.</div>'));
+      + '책상 하나에 직원 한 명이 앉습니다. 쾌적도가 높으면 직원 의욕이 잘 유지되고 기획력이 오릅니다.<br>'
+      + '이미 놓은 가구는 화면에서 <b>꾹 누르면</b> 들어 올려서 옮기거나 🎒 로 회수할 수 있습니다.</div>'));
 
     box.appendChild(this._bagLink('산 가구는 가방에 들어갑니다.'));
 
     /* 회수는 화면을 눌러서 한다. 목록에서 "책상" 여섯 줄 중 어느 것이
        화면의 그 책상인지 고르는 것은 사실상 불가능하다. */
     const pick = el('button', 'btn wide sm',
-      c.placed.length ? '🧹 치우기 — 화면에서 눌러 가방으로' : '놓은 가구가 없습니다');
+      c.placed.length ? '🧹 치우기 — 여러 개를 연달아 가방으로' : '놓은 가구가 없습니다');
     pick.disabled = !c.placed.length;
     pick.onclick = () => {
       this.view.startPickup();
@@ -3787,6 +4062,11 @@ export class UI {
     // Built once and then updated in place: this refreshes on every pointer
     // move, and rebuilding the buttons under the player's finger would drop
     // the drag on some browsers.
+    //
+    // 이미 놓여 있던 것을 꾹 눌러 들어 올린 경우(`from`)에는 버튼이 하나 더
+    // 붙으므로, 그때는 툴바를 새로 짓는다.
+    const moving = !!p.from;
+    if (this._pb && this._pb.moving !== moving) this._pb = null;
     if (!this._pb) {
       const info = el('div', 'pinfo');
       /* 반 칸씩 미는 십자 버튼. 드래그로 반 칸을 조준하는 것은 폰에서
@@ -3812,11 +4092,26 @@ export class UI {
         this.renderPanel();
         this.toast('배치했습니다.', 'good');
       };
-      const cancel = el('button', 'btn sm danger', '취소');
+      const cancel = el('button', 'btn sm danger', moving ? '제자리로' : '취소');
       cancel.onclick = () => { this.view.stopPlacing(); this.renderPlaceBar(); this.togglePanel(false); };
       bar2.innerHTML = '';
-      bar2.append(info, nudge, rot, ok, cancel);
-      this._pb = { info, nudge, rot, ok, cancel };
+      bar2.append(info, nudge, rot, ok);
+      if (moving) {
+        /* 들어 올린 것을 그대로 가방에 넣는다. 옮기려다 "역시 치우자" 가
+           되는 일이 잦은데, 그때 다시 회수 모드를 켜게 하면 모드가 두 번
+           바뀐다. 이미 손에 들고 있으므로 여기가 그 자리다. */
+        const bag = el('button', 'btn sm', '🎒 회수');
+        bag.onclick = () => {
+          this.view.stopPlacing(true);
+          this.g.save();
+          this.renderPlaceBar();
+          this.renderPanel();
+          this.toast('가방으로 회수했습니다.', 'good');
+        };
+        bar2.append(bag);
+      }
+      bar2.append(cancel);
+      this._pb = { info, nudge, rot, ok, cancel, moving };
     }
     bar2.classList.add('show');
     const def = FURNITURE_BY_ID.get(p.id);
@@ -3879,9 +4174,10 @@ export class UI {
 
   _drainPops() {
     if ($('modal').classList.contains('show')) return;
-    // 시상식 무대가 도는 동안에는 팝업을 세워 둔다. 무대 위에 모달이 덮이면
-    // 둘 다 못 읽고, 사회자는 안 보이는 곳에서 계속 말하고 있게 된다.
-    if (this._gala) return;
+    // 시상식 무대와 게임덱스 부스가 도는 동안에는 팝업을 세워 둔다. 무대 위에
+    // 모달이 덮이면 둘 다 못 읽고, 사회자는 안 보이는 곳에서 계속 말하고
+    // 있게 된다.
+    if (this._gala || this._expo) return;
     const show = (this._pops || []).shift();
     if (show) show();
   }

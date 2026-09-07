@@ -423,9 +423,14 @@ await step('버튼이 화면에 남아 있다 — 1인칭으로 들어갈 길', 
   await page.evaluate(() => {
     window.__view.fp.exit();
     // 모달이 떠 있으면 화면 전체를 덮는다. 여기서 보려는 것은 버튼의 자리다.
+    // 줄을 세워 둔 팝업(시상식 초대·게임덱스 초대)까지 비워야 한다 — 닫자마자
+    // 다음 것이 올라오면 같은 자리에 또 덮인다.
+    window.__ui._pops = [];
     window.__ui.closeModal();
   });
   await page.waitForTimeout(300);
+  await page.evaluate(() => { window.__ui._pops = []; window.__ui.closeModal(); });
+  await page.waitForTimeout(200);
   const r = await page.evaluate(() => {
     const b = document.getElementById('fpBtn');
     const cs = getComputedStyle(b);
@@ -550,11 +555,15 @@ console.log('\n── 5. 체력과 회복 ──');
 await step('주간 휴식이 체력을 되돌린다', async () => {
   const r = await page.evaluate(() => {
     const g = window.__game;
+    // 답 안 한 사건이 남아 있으면 주가 안 넘어간다 — 그건 이 검사의 대상이
+    // 아니다. 무작위로 걸리는 사건이라 실행마다 있기도 없기도 하다.
+    g.pendingEvent = null;
     for (const s of g.staff) s.hp = 1;
     const before = g.staff.reduce((a, s) => a + s.hp, 0);
-    g.nextWeek();
-    return { before, after: g.staff.reduce((a, s) => a + s.hp, 0) };
+    const res = g.nextWeek();
+    return { before, after: g.staff.reduce((a, s) => a + s.hp, 0), blocked: !!(res && res.blocked) };
   });
+  if (r.blocked) throw new Error('주가 안 넘어감');
   if (r.after <= r.before) throw new Error('회복이 안 된다');
   return `${r.before} → ${r.after}`;
 });
@@ -591,6 +600,49 @@ await step('탈진해도 데미지가 0이 되지는 않는다', async () => {
   if (r.p <= 0) throw new Error('힘이 0이 됐다 — 영구히 막히는 상태');
   if (r.p >= r.base) throw new Error('탈진 페널티가 없다');
   return `힘 ${r.p.toFixed(1)} (최대 ${r.base.toFixed(1)})`;
+});
+
+/* ── 밥 연타 ──
+   제보: "보스랑 싸울 때 밥 연타하는데 왜 바로 안 먹여져?"
+
+   원인은 트레이를 다시 짓는 방식이었다. 아이콘 옆 개수가 바뀌면 트레이를
+   통째로 새로 만들었는데(innerHTML = ''), 밥을 한 번 먹이면 개수는 반드시
+   바뀐다. 즉 한 번 누를 때마다 손가락 아래의 노드가 사라졌고, 브라우저는
+   사라진 노드에 click 을 보내지 않는다. 이제 물건 목록이 바뀔 때만 짓고
+   개수는 숫자만 갈아 끼우며, 누르는 즉시(pointerdown) 먹인다. */
+await step('밥을 연타하면 연타한 만큼 먹여진다', async () => {
+  const r = await page.evaluate(async () => {
+    const g = window.__game, ui = window.__ui;
+    const D = await import('/src/game/data.js');
+    const food = D.SHOP.find((i) => i.kind === 'food' && !i.all && (i.rank || 1) <= 1);
+    g.company.money = 5_000_000;
+    // 가방을 비우고 밥만 다섯 개 둔다 — 트레이 첫 칸이 그 밥이라야
+    // "같은 노드를 세 번 눌렀다" 가 성립한다.
+    g.company.bag = {};
+    for (let i = 0; i < 5; i++) g.buyItem(food.id);
+    for (const s of g.staff) s.hp = 1;
+    const box = document.getElementById('aTray');
+    ui.renderTray(box);
+    const cell = box.querySelector('.tray-i');
+    if (!cell) return { err: '트레이가 비었다' };
+    const before = g.bagCount(food.id), hp0 = g.staff[0].hp;
+    // 노드를 다시 잡지 않고 **같은 노드**에 세 번 쏜다. 예전에는 첫 탭 뒤에
+    // 그 노드가 이미 다른 것이라 두 번째부터 아무 일도 안 일어났다.
+    for (let i = 0; i < 3; i++) {
+      cell.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerId: 90 + i, pointerType: 'touch',
+      }));
+    }
+    return {
+      id: food.id, before, after: g.bagCount(food.id), hp0, hp1: g.staff[0].hp,
+      sameNode: box.querySelector('.tray-i') === cell, cell: cell.title,
+    };
+  });
+  if (r.err) throw new Error(r.err);
+  if (r.before - r.after !== 3) throw new Error(`세 번 눌렀는데 ${r.before - r.after}개만 나갔다 ${JSON.stringify(r)}`);
+  if (r.hp1 <= r.hp0) throw new Error('체력이 안 찼다');
+  if (!r.sameNode) throw new Error('트레이 노드가 교체됐다');
+  return `가방 ${r.before}→${r.after} · 체력 ${r.hp0}→${Math.round(r.hp1)}`;
 });
 
 console.log('\n── 6. 밝기 ──');

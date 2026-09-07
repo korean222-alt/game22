@@ -5,7 +5,7 @@
    뒤로는 아무 일도 일어나지 않았다. 만든 것에 대해 **바깥이 반응하는
    순간**이 달력 위에 있어야 한다.
 
-     · 시상식 (매달)   지난 한 달에 낸 게임을 축별로 심사한다. 재미상,
+     · 시상식 (두 달)  지난 두 달에 낸 게임을 축별로 심사한다. 재미상,
                        발상상 같은 부문이 있고 기준을 넘으면 상을 준다.
      · 게임덱스 (두 달) 부스를 내고 팬을 모은다. 예산을 얼마나 쓸지 고르고,
                        방문자 수만큼 팬과 다운로드 버프를 받는다.
@@ -15,7 +15,7 @@
 import { STATS, STAT_KO } from './data.js';
 import { funScore } from './project.js';
 
-/* ══════════════════════ 매달 시상식 ══════════════════════
+/* ══════════════════════ 두 달마다 시상식 ══════════════════════
 
    부문은 게임의 다섯 축에 '재미' 를 더한 여섯 개다. 축을 그대로 부문으로
    쓰는 것이 중요하다 — 개발 중에 보던 막대가 곧 상의 이름이 되므로,
@@ -119,7 +119,7 @@ export function rivalAwards(wins, year, rnd, rivals, titleOf) {
   const out = [];
   for (const cat of AWARD_CATS) {
     if (taken.has(cat.id)) continue;
-    // 매달 여섯 부문이 전부 나가면 상이 흔해진다. 대상은 자주, 부문상은 가끔.
+    // 한 회차에 여섯 부문이 전부 나가면 상이 흔해진다. 대상은 자주, 부문상은 가끔.
     if (rnd() > (cat.id === 'fun' ? 0.92 : 0.7)) continue;
     const bar = awardBar(year, cat.id);
     const grade = AWARD_GRADES[rnd() < 0.28 ? 0 : rnd() < 0.6 ? 1 : 2];
@@ -134,7 +134,7 @@ export function rivalAwards(wins, year, rnd, rivals, titleOf) {
       statKo: cat.stat ? STAT_KO[cat.stat] : '재미',
     });
   }
-  /* 매달 서는 무대다. 남의 상까지 여섯 개를 다 부르면 한 번에 1분이 넘고,
+  /* 두 달마다 서는 무대다. 남의 상까지 여섯 개를 다 부르면 한 번에 1분이 넘고,
      그러면 시상식은 사건이 아니라 통행료가 된다. 세 부문이면 "업계가 돌고
      있다" 는 충분히 전해진다. */
   return out.slice(0, 3);

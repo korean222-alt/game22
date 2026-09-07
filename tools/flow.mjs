@@ -385,6 +385,108 @@ await step('배치를 마치고 나온다', async () => {
   return '취소';
 });
 
+/* ── 꾹 눌러서 옮기기 ──
+   제보: "가구나 책상 설치 후 이동시키거나 회수하는 그 기능, 꾹 누르면
+   작동하게 해줘." 예전에는 사무실 탭을 열고 🧹 치우기 모드를 켜야만
+   놓은 가구를 건드릴 수 있었다 — 화면에 보이는 책상을 옮기는 데 화면을
+   덮는 패널을 먼저 열어야 했다는 뜻이다. 아래 넷이 그 계약이다. */
+console.log('\n── 3-c. 꾹 눌러서 옮기기 · 회수 ──');
+/* 포인터를 직접 쏜다. 여기서 보려는 것은 "누르고 있는 시간" 이라, CDP 의
+   터치보다 포인터 이벤트 한 쌍이 읽기 쉽다. */
+const pointer = (type, id, x, y) => page.evaluate(([t, i, px, py]) => {
+  const c = document.getElementById('gl');
+  c.dispatchEvent(new PointerEvent(t, {
+    pointerId: i, pointerType: 'touch', isPrimary: true,
+    clientX: px, clientY: py, bubbles: true, cancelable: true,
+    buttons: t === 'pointerup' ? 0 : 1,
+  }));
+}, [type, id, x, y]);
+/* 놓은 가구가 화면 어디에 있는지. 카메라를 그 위로 보내고 투영한다. */
+const screenOfPlaced = () => page.evaluate(() => {
+  const cam = window.__cam, g = window.__game;
+  const p = g.company.placed[0];
+  if (!p) return null;
+  cam.lookAt(p.x, 2, p.z); cam.goalDist = 34; cam.snap();
+  cam.update(0.016, innerWidth / innerHeight);
+  const s = cam.project(p.x, 1.6, p.z, innerWidth, innerHeight);
+  return s ? { x: Math.round(s.x), y: Math.round(s.y) } : null;
+});
+
+await step('꾹 누르면 그 가구가 들려 올라온다', async () => {
+  await page.evaluate(() => { window.__view.setFloor(0); });
+  await page.waitForTimeout(350);
+  const pt = await screenOfPlaced();
+  if (!pt) throw new Error('바닥에 가구가 없다');
+  await pointer('pointerdown', 41, pt.x, pt.y);
+  // 소프트웨어 GL 은 한 프레임이 1초 가까이 걸린다. 420ms 타이머가 그만큼
+  // 늦게 뜨므로 넉넉히 기다린다.
+  await page.waitForTimeout(1600);
+  const st = await page.evaluate(() => ({
+    placing: !!window.__view.place,
+    from: window.__view.place ? !!window.__view.place.from : false,
+    bar: [...document.querySelectorAll('#placebar button')].map((b) => b.textContent).join('/'),
+  }));
+  await pointer('pointerup', 41, pt.x, pt.y);
+  if (!st.placing) throw new Error('배치 모드로 안 들어감');
+  if (!st.from) throw new Error('원래 자리를 안 들고 있다');
+  if (!st.bar.includes('🎒')) throw new Error('회수 버튼이 없다: ' + st.bar);
+  return st.bar;
+});
+
+await step('취소하면 제자리로 돌아간다', async () => {
+  const r = await page.evaluate(() => {
+    const v = window.__view, g = window.__game;
+    const was = { x: v.place.from.x, z: v.place.from.z, uid: v.place.uid };
+    v.movePlace(was.x + 2, was.z + 2);
+    v.stopPlacing();
+    window.__ui.renderPlaceBar();
+    const p = g.company.placed.find((q) => q.uid === was.uid);
+    return { was, now: p ? { x: p.x, z: p.z } : null };
+  });
+  if (!r.now) throw new Error('가구가 사라졌다');
+  if (r.now.x !== r.was.x || r.now.z !== r.was.z) throw new Error('제자리가 아니다: ' + JSON.stringify(r.now));
+  return `(${r.now.x}, ${r.now.z}) 복귀`;
+});
+
+await step('🎒 를 누르면 가방으로 들어간다', async () => {
+  const before = await page.evaluate(() => ({
+    placed: window.__game.company.placed.length, bag: window.__game.bag.length,
+  }));
+  const pt = await screenOfPlaced();
+  await pointer('pointerdown', 42, pt.x, pt.y);
+  await page.waitForTimeout(1600);
+  await pointer('pointerup', 42, pt.x, pt.y);
+  const r = await page.evaluate(() => {
+    if (!window.__view.place) return { err: '꾹 누르기가 안 걸렸다' };
+    const from = { ...window.__view.place.from, uid: window.__view.place.uid };
+    const btn = [...document.querySelectorAll('#placebar button')].find((b) => b.textContent.includes('🎒'));
+    if (!btn) return { err: '회수 버튼 없음' };
+    btn.click();
+    return { from, placed: window.__game.company.placed.length, bag: window.__game.bag.length };
+  });
+  if (r.err) throw new Error(r.err);
+  if (r.placed !== before.placed - 1 || r.bag !== before.bag + 1) {
+    throw new Error(`바닥 ${before.placed}→${r.placed} · 가방 ${before.bag}→${r.bag}`);
+  }
+  // 제자리에 다시 놓아 둔다 — 아래 절들이 이 책상 위에서 돈다.
+  await page.evaluate((from) => {
+    const g = window.__game, v = window.__view;
+    g.placeFurniture(from.uid, from.floor, from.x, from.z, from.rot, v.placeChecks());
+    v.rebuildFurniture();
+  }, r.from);
+  return `바닥 ${before.placed}→${r.placed} · 가방 ${before.bag}→${r.bag} · 제자리 복구`;
+});
+
+await step('빈 바닥을 꾹 눌러도 아무 일 없다', async () => {
+  await page.evaluate(() => { const v = window.__view; if (v.place) v.stopPlacing(); });
+  await pointer('pointerdown', 43, 120, 380);
+  await page.waitForTimeout(1600);
+  await pointer('pointerup', 43, 120, 380);
+  const s = await page.evaluate(() => ({ placing: !!window.__view.place }));
+  if (s.placing) throw new Error('빈 바닥인데 배치 모드가 켜졌다');
+  return '조용함';
+});
+
 console.log('\n── 4. 직원 탭 (채용 · 성장) ──');
 await openTab('staff'); await page.waitForTimeout(250);
 await step('빈 책상이 없으면 채용이 막힌다', async () => {

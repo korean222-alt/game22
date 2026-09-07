@@ -146,16 +146,34 @@ export function comfortLabel(score) {
 }
 
 /* The footprint a piece occupies once rotated. Rotation is quarter turns only,
-   so a swap of width and depth is the whole of it. */
+   so a swap of width and depth is the whole of it.
+
+   `ox`·`oz` 는 모델의 한가운데가 놓는 점에서 얼마나 어긋나 있는가다. 책상은
+   의자가 한쪽으로 나와 있어서 발자국의 중심이 상판의 중심이 아니다 —
+   그 어긋남을 무시하면 화면의 의자는 통로에 나와 있는데 판정은 통과한다.
+   값은 world/placed.js 의 calibrateFootprints() 가 모델에서 재어 넣는다.
+
+   회전은 그리는 쪽과 같은 식이다: 로컬 (lx, lz) 가 월드로 가는 변환이
+   (x + lx·cos ry + lz·sin ry, z − lx·sin ry + lz·cos ry) 이므로,
+   90°씩 돌면 (ox, oz) → (oz, −ox) → (−ox, −oz) → (−oz, ox) 가 된다. */
 export function footprint(def, rot) {
-  const swap = (rot & 1) === 1;
-  return { w: swap ? def.d : def.w, d: swap ? def.w : def.d };
+  const r = (rot | 0) & 3;
+  const swap = (r & 1) === 1;
+  const ox = def.ox || 0, oz = def.oz || 0;
+  const off = [[ox, oz], [oz, -ox], [-ox, -oz], [-oz, ox]][r];
+  return { w: swap ? def.d : def.w, d: swap ? def.w : def.d, ox: off[0], oz: off[1] };
+}
+
+/* 발자국 사각형의 한가운데. 놓는 점이 아니라 **차지하는 자리**의 중심이다. */
+export function footCenter(item, def) {
+  const f = footprint(def, item.rot);
+  return { x: item.x + f.ox, z: item.z + f.oz, w: f.w, d: f.d };
 }
 
 /* Two pieces overlap? Axis-aligned, because rotation is quantised. A small
    inset keeps two items that merely touch from being rejected. */
 export function overlaps(a, aDef, b, bDef) {
-  const fa = footprint(aDef, a.rot), fb = footprint(bDef, b.rot);
-  return Math.abs(a.x - b.x) * 2 < fa.w + fb.w - 0.2
-      && Math.abs(a.z - b.z) * 2 < fa.d + fb.d - 0.2;
+  const ca = footCenter(a, aDef), cb = footCenter(b, bDef);
+  return Math.abs(ca.x - cb.x) * 2 < ca.w + cb.w - 0.2
+      && Math.abs(ca.z - cb.z) * 2 < ca.d + cb.d - 0.2;
 }

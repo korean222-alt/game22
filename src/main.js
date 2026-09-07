@@ -16,13 +16,15 @@ import { OrbitCamera } from './render/camera.js';
 import { Rig } from './char/rig.js';
 import './world/palette.js';                  // registers the hex -> material map
 import { buildOffice, BUILDING, FLOOR_PLANS, STOREY, placeZones, inPlaceZone } from './world/office.js';
-import { buildPlaced, buildGhost } from './world/placed.js';
+import { buildPlaced, buildGhost, calibrateFootprints } from './world/placed.js';
 import { loadKit } from './world/kit.js';
 import { initSound, sfx } from './ui/sound.js';
 import { FURNITURE_BY_ID, footprint } from './game/furniture.js';
 import { Crew, Agent, ST, homeState } from './world/agents.js';
 import { Boss, bossSpot, preloadMonster, monsterFor, monsterForStage, stageSetOf, tauntFor } from './world/boss.js';
 import { buildArena, arenaSetFor, inArenaZone } from './world/arena.js';
+import { buildExpoHall, inExpoZone } from './world/expo.js';
+import { Visitors } from './world/visitors.js';
 import { Game } from './game/state.js';
 import { addMotivation } from './game/staff.js';
 import * as staffMod from './game/staff.js';
@@ -139,6 +141,12 @@ class View {
        스카이라인을 세우기 때문이다. 셋을 나란히 받으므로 부팅이 한 번의
        왕복만큼만 길어지고, 어느 하나가 실패해도 나머지는 그대로 선다. */
     await Promise.all([loadKit('furniture'), loadKit('city'), loadKit('car')]);
+
+    /* 가구의 발자국을 모델에서 잰다. 카탈로그에 손으로 적어 둔 w·d 는 화면에
+       그려지는 것과 여러 군데 어긋나 있었고 — 축이 뒤집힌 것도 있었다 —
+       그래서 "면적은 좁은데 설치할 땐 넓게 잡히는" 가구가 생겼다. 키트가
+       도착한 뒤라야 수입 가구도 잴 수 있으므로 이 순서다. */
+    calibrateFootprints();
 
     bootStep('사무실 배치');
     await nextFrame();
@@ -433,6 +441,15 @@ class View {
     this.bossProject = want;
     this.bossWant = want;
     this.bossLoading = true;
+    /* 무대는 **모델을 기다리지 않는다**.
+
+       예전에는 세트 교체가 이 함수의 아래쪽, `await preloadMonster` 뒤에
+       있었다. 모델은 네트워크에서 오므로 그 사이 몇백 밀리초 동안 화면에는
+       앞 공정의 세트가 그대로 서 있었고 — 카메라 각도는 이미 다음 공정
+       것으로 움직이는 경우가 있어서 — 벽 뒤를 비추는 시간이 생겼다.
+       무대는 공정의 것이지 몸의 것이 아니므로, 아는 즉시 갈아 끼운다.
+       (useArenaSet 이 새 무대의 시점까지 같이 맞춘다.) */
+    if (this.arena) this.useArenaSet(stageSetOf(project));
     let model = null;
     try { model = await preloadMonster(def); } finally { if (this.bossWant === want) this.bossLoading = false; }
     /* 돌아왔을 때 세상이 그대로인지 확인한다. 모델은 네트워크에서 오므로
@@ -447,7 +464,9 @@ class View {
     this.bossProject = want;
     this.boss.phase = project.phase || 0;
     this.boss.scale = 1 + (project.phase || 0) * 0.08;
-    // 세트장은 몬스터가 아니라 **공정**의 것이다. 같은 칸이면 누가 서든 같은 무대다.
+    // 세트장은 몬스터가 아니라 **공정**의 것이다. 같은 칸이면 누가 서든 같은
+    // 무대다. 위에서 이미 갈아 끼웠으므로 여기서는 대개 아무 일도 안 한다 —
+    // 로딩 중에 아레나 밖으로 나갔다 돌아온 경우를 위한 확인이다.
     this.useArenaSet(stageSetOf(project));
     const spot = this.bossSpot();
     this.boss.setAnchor(spot[0], spot[1], spot[2], this.bossFloor);
@@ -502,7 +521,36 @@ class View {
     // 메시는 GPU 에 올라갔다. CPU 쪽 배열까지 붙들고 있을 이유는 없다.
     set.mesh = null;
     renderer.fitLight(set.light.center, set.light.radius);
+    // 무대가 바뀌었으면 시점도 그 무대의 것으로 옮긴다. 아래 주석 참고.
+    if (this.arena) this.aimAtSet(set);
     return set;
+  }
+
+  /* ── 무대가 바뀌면 카메라도 그 무대의 자리로 ──
+     "버그 보스로 넘어갈 때 화면이 벽에 가려져서 1초 동안 안 보인다" 가
+     이 자리였다.
+
+     세트마다 카메라의 방위각이 다르다 (브레인스토밍 광장 2.42, 난제의
+     작업장 2.10, 마감의 제단 2.66, QA 실 2.38). 그 값은 그 세트의 지오메트리
+     사이로 무대가 보이는 각도로 하나하나 맞춰 둔 것이다 — QA 실은 반지름
+     26 에 모니터 벽이 둘러서 있고, 카메라는 그 판과 판 **사이**에 서야 한다.
+
+     그런데 스테이지가 넘어갈 때는 세트만 갈아 끼우고 카메라는 앞 무대의
+     각도 그대로 두었다. 마감의 제단(2.66)에서 QA 실로 넘어가면 카메라가
+     모니터 한 장 뒤에 서게 되고, 화면은 검은 판으로 가득 찬다. 그 상태가
+     풀리는 것은 다음에 카메라를 건드리는 무엇이 올 때였다.
+
+     그래서 세트를 바꾸는 그 자리에서 방위각·고도·거리를 새 세트의 것으로
+     옮기고 스냅한다. 부드럽게 도는 대신 딱 끊는 이유는, 도는 동안 카메라가
+     지나가는 경로에 바로 그 벽이 있기 때문이다. */
+  aimAtSet(set) {
+    if (!set || !this.arena) return;
+    cam.az = set.camera.az;
+    cam.el = set.camera.el;
+    cam.goalDist = arenaDist(set, monsterForStage(this.game.project));
+    this.wallCut = false;
+    cam.lookAt(...this.arenaTarget());
+    cam.snap();
   }
 
   clearArenaSet() {
@@ -577,6 +625,9 @@ class View {
      the ghost and two still work the camera, so nothing is lost. */
   startPlacing(uid) {
     if (this.pickup) this.stopPickup();
+    // 옮기던 가구가 있으면 먼저 제자리로 돌려놓는다. 안 그러면 그 가구가
+    // 조용히 가방에 남는다.
+    if (this.place) this.stopPlacing();
     const item = this.game.bag.find((b) => b.uid === uid);
     if (!item) return false;
     const def = FURNITURE_BY_ID.get(item.id);
@@ -593,6 +644,57 @@ class View {
     document.body.classList.add('placing');
     this.refreshGhost();
     return true;
+  }
+
+  /* ---- 꾹 눌러서 옮기기 ----
+     "가구나 책상 설치 후 이동시키거나 회수하는 그 기능, 꾹 누르면 작동하게" —
+     그 자리다.
+
+     예전에는 놓은 가구를 건드리려면 사무실 탭을 열고 🧹 치우기 모드로
+     들어가야 했다. 화면에 보이는 책상을 옮기고 싶은데, 그러려면 화면을 덮는
+     패널을 열고 모드를 켜고 다시 패널을 닫아야 했다는 뜻이다. 놓는 것이
+     화면을 눌러서 하는 일이므로 옮기는 것도 그래야 한다.
+
+     꾹 누르면 그 가구가 **배치 모드로 들려 올라온다**. 그 뒤로는 새로 산
+     가구를 놓을 때와 완전히 같다: 끌어서 옮기고, 회전하고, 놓는다. 툴바에
+     🎒 버튼이 하나 더 붙어서 그대로 가방에 넣을 수도 있다.
+
+     취소하면 원래 자리로 돌아간다(`from`). 들어 올린 것이 실수였을 때
+     가방에 남아 있으면, 그건 취소가 아니라 다른 사고다. */
+  startMoving(uid) {
+    const at = this.game.company.placed.find((p) => p.uid === uid);
+    if (!at) return false;
+    const from = { floor: at.floor, x: at.x, z: at.z, rot: at.rot || 0 };
+    const def = FURNITURE_BY_ID.get(at.id);
+    if (!def) return false;
+    if (this.pickup) this.stopPickup();
+    if (this.place) this.stopPlacing();
+    if (!this.game.pickUpFurniture(uid).ok) return false;
+    if (from.floor !== this.floor) { this.setFloor(from.floor); if (ui) ui.renderFloors(); }
+    this.rebuildFurniture();
+    this.place = { uid, id: at.id, def, rot: from.rot, x: from.x, z: from.z, valid: false, from };
+    document.body.classList.add('placing');
+    this.refreshGhost();
+    return true;
+  }
+
+  /* 짚은 자리에 서 있는 가구를 들어 올린다. 회수 모드의 pickAt 과 같은
+     방식으로 고르되(발자국 안 → 근처 순), 가방이 아니라 배치 모드로 간다. */
+  grabAt(x, z) {
+    const placed = this.game.company.placed.filter((p) => p.floor === this.floor);
+    let best = null, bestD = Infinity;
+    for (const p of placed) {
+      const def = FURNITURE_BY_ID.get(p.id);
+      if (!def) continue;
+      const f = footprint(def, p.rot);
+      const dx = Math.abs(p.x + f.ox - x), dz = Math.abs(p.z + f.oz - z);
+      const inside = dx * 2 <= f.w && dz * 2 <= f.d;
+      const d = inside ? -1 : Math.hypot(Math.max(0, dx - f.w / 2), Math.max(0, dz - f.d / 2));
+      if (d < bestD && (inside || d < 2.0)) { bestD = d; best = { p, def }; }
+    }
+    if (!best) return { ok: false, why: '여기엔 가구가 없습니다' };
+    if (!this.startMoving(best.p.uid)) return { ok: false, why: '들어 올릴 수 없습니다' };
+    return { ok: true, ko: best.def.ko };
   }
 
   /* ---- 회수 모드 ----
@@ -626,7 +728,7 @@ class View {
       const def = FURNITURE_BY_ID.get(p.id);
       if (!def) continue;
       const f = footprint(def, p.rot);
-      const dx = Math.abs(p.x - x), dz = Math.abs(p.z - z);
+      const dx = Math.abs(p.x + f.ox - x), dz = Math.abs(p.z + f.oz - z);
       const inside = dx * 2 <= f.w && dz * 2 <= f.d;
       const d = inside ? -1 : Math.hypot(Math.max(0, dx - f.w / 2), Math.max(0, dz - f.d / 2));
       if (d < bestD && (inside || d < 2.2)) { bestD = d; best = { p, def }; }
@@ -639,8 +741,15 @@ class View {
     return { ok: true, ko: best.def.ko };
   }
 
-  stopPlacing() {
+  stopPlacing(keepInBag = false) {
+    const p = this.place;
     this.place = null;
+    /* 놓여 있던 것을 들어 올렸다가 취소했으면 원래 자리로 돌려놓는다.
+       가방으로 보내는 것은 툴바의 🎒 버튼이 따로 맡는다 (keepInBag). */
+    if (p && p.from && !keepInBag && this.game.bag.some((b) => b.uid === p.uid)) {
+      this.game.placeFurniture(p.uid, p.from.floor, p.from.x, p.from.z, p.from.rot);
+      this.rebuildFurniture();
+    }
     disposeMesh(this.gGhost); this.gGhost = null;
     disposeMesh(this.gZones); this.gZones = null;
     document.body.classList.remove('placing');
@@ -1126,6 +1235,79 @@ class View {
     };
   }
 
+  /* ══ 게임덱스 전시장 ══
+
+     아레나와 같은 방식이다: 사무실에서 아주 멀리 떨어진 자리에 홀을 짓고,
+     카메라를 그리로 옮긴다. 다른 것은 여기에는 보스 대신 **관람객**이 있고,
+     싸움 대신 시간이 흐른다는 것뿐이다.
+
+     `planId` 가 무대의 크기를 정한다 — 전단지만 돌리면 탁자 하나, 부스를
+     내면 시연대 두 대, 최대 규모면 무대까지. 예산이 화면에 그대로 보여야
+     그 선택이 판단이 된다. */
+  enterExpo(planId) {
+    if (this.arena) this.exitArena();
+    if (this.fp && this.fp.on) this.fp.exit();
+    if (!this.expo && !inExpoZone(cam.gx, cam.gz)) {
+      this._camBefore = {
+        dist: cam.goalDist, el: cam.el, az: cam.az, cut: this.wallCut,
+        gx: cam.gx, gy: cam.gy, gz: cam.gz, floor: this.floor,
+      };
+    }
+    this.expo = true;
+    const hall = buildExpoHall(planId);
+    bakeAO(hall.mesh, 0.6, 1.3);
+    disposeMesh(this.gExpo);
+    this.gExpo = upload(splitGlass(hall.mesh).solid);
+    hall.mesh = null;
+    this.expoHall = hall;
+    if (!this.visitors) this.visitors = new Visitors();
+    this.visitors.spawn(hall.crowd, hall, this.rnd);
+    this._expoT = 0;
+    renderer.fitLight(hall.light.center, hall.light.radius);
+    cam.az = hall.camera.az;
+    cam.el = hall.camera.el;
+    cam.goalDist = hall.camera.dist;
+    this.wallCut = false;
+    cam.lookAt(...hall.look);
+    cam.snap();
+    document.body.classList.add('expo');
+    return hall;
+  }
+
+  /* 전시장이 도는 동안 카메라가 아주 천천히 돈다. 정지 화면에 사람만
+     움직이면 그건 배경이지 장면이 아니다. */
+  tickExpo(dt) {
+    if (!this.expo || !this.expoHall) return;
+    this.visitors.update(dt, this.time, this.expoHall, this.rnd);
+    /* 한 바퀴 도는 게 아니라 좌우로 아주 조금 흔들린다. 계속 돌면 정면에서
+       벗어난 순간 부스가 화면에서 사라지고, 옆 부스 뒤통수를 오래 보게 된다.
+       ±0.22 라디안이면 "카메라가 살아 있다" 만큼만 움직인다. */
+    this._expoT = (this._expoT || 0) + dt;
+    cam.az = this.expoHall.camera.az + Math.sin(this._expoT * 0.22) * 0.22;
+    cam.lookAt(...this.expoHall.look);
+  }
+
+  /* 발표가 끝나는 순간. 부스 앞의 사람들이 다 같이 환호한다. */
+  expoCheer() { if (this.visitors) this.visitors.cheer(this.time, 4.0); }
+
+  exitExpo() {
+    if (!this.expo) return;
+    this.expo = false;
+    document.body.classList.remove('expo');
+    if (this.visitors) this.visitors.dispose();
+    disposeMesh(this.gExpo); this.gExpo = null;
+    this.expoHall = null;
+    this.setFloor(this.floor);
+    const b = this._camBefore;
+    if (b && !inArenaZone(b.gx, b.gz) && !inExpoZone(b.gx, b.gz)) {
+      cam.goalDist = b.dist; cam.el = b.el; cam.az = b.az; this.wallCut = b.cut;
+      cam.lookAt(b.gx, b.gy, b.gz);
+    }
+    this._camBefore = null;
+    this.camSaved = null;
+    cam.snap();
+  }
+
   /* ══ 아레나 ══
      전용 세트장으로 들어간다. 사무실이 아니라 몬스터마다 다른 무대이고,
      스테이지가 넘어가면 무대도 같이 바뀐다. 순수 연출이다 — 규칙은
@@ -1211,6 +1393,8 @@ class View {
     this.time += dt;
     this.ambience(dt);
     this.fp.update(dt);
+    // 전시장이 열려 있으면 관람객이 걷는다.
+    this.tickExpo(dt);
     for (const s of this.game.staff) {
       const a = this.crew.get(s.id);
       if (a) a.mood = s.motivation;
@@ -1270,7 +1454,8 @@ class View {
     // 아레나에서는 사무실 쪽 라벨이 하나도 보이면 안 된다. 700 유닛 밖의
     // 점이라도 카메라 뒤가 아니면 투영은 되고, 그러면 세트장 위에 방 이름과
     // 직원 이름표가 떠 버린다.
-    const showFloor = this.arena ? -1 : this.floor;
+    // 아레나·전시장에서는 사무실 쪽 라벨이 하나도 보이면 안 된다.
+    const showFloor = (this.arena || this.expo) ? -1 : this.floor;
 
     for (const { r, el } of this.roomEls) {
       if (r.floor !== showFloor) { el.style.display = 'none'; continue; }
@@ -1313,6 +1498,7 @@ class View {
     }
 
     this.drawBossTag(w, h, showFloor);
+    this.drawBoothTag(w, h);
 
     for (const e of this.effects) {
       if (!e.el) {
@@ -1330,6 +1516,31 @@ class View {
       e.el.style.left = p.x + 'px';
       e.el.style.top = p.y + 'px';
     }
+  }
+
+  /* 부스 위의 간판. 3D 로는 글자를 못 새기므로 방 이름표와 같은 방식으로
+     DOM 한 장을 부스 뒷벽 위에 띄운다 — 우리 회사 이름과 지금 미는 게임이
+     거기 적혀 있어야 그 부스가 우리 것이 된다. */
+  drawBoothTag(w, h) {
+    if (!this.expo || !this.expoHall) {
+      if (this.boothEl) this.boothEl.style.display = 'none';
+      return;
+    }
+    if (!this.boothEl) {
+      this.boothEl = document.createElement('div');
+      this.boothEl.className = 'boothtag';
+      ov.appendChild(this.boothEl);
+    }
+    const b = this.expoHall.booth;
+    const p = cam.project(b.x, b.y, b.z, w, h);
+    if (!p || p.z < -1 || p.z > 1) { this.boothEl.style.display = 'none'; return; }
+    this.boothEl.style.display = '';
+    this.boothEl.style.left = p.x + 'px';
+    this.boothEl.style.top = p.y + 'px';
+    const c = this.game.company;
+    const show = this.boothShow || (this.game.releases[0] ? this.game.releases[0].title : null);
+    this.boothEl.innerHTML = `<div class="btn1">${c.name || '우리 스튜디오'}</div>`
+      + (show ? `<div class="btn2">「${show}」</div>` : '<div class="btn2">신작 준비 중</div>');
   }
 
   /* The monster's name plate and health bar, in the DOM like every other label
@@ -1360,6 +1571,13 @@ class View {
       if (pass === 'glass') return;
       renderer.drawMesh(L, this.gArena, null);
       this.drawBoss(pass);
+      return;
+    }
+    // 전시장도 같다: 홀과 관람객만 그린다.
+    if (this.expo && this.gExpo) {
+      if (pass === 'glass') return;
+      renderer.drawMesh(L, this.gExpo, null);
+      if (this.visitors) this.visitors.draw(L, renderer);
       return;
     }
     if (pass === 'glass') {
@@ -1577,7 +1795,7 @@ function resize() {
 function tick(dt) {
   // 전투의 시계는 화면의 시계와 같다. 따로 돌리면 탭이 백그라운드로 갔을 때
   // 보이지 않는 곳에서 전투만 흘러간다.
-  if (ui) { ui.tickBattle(dt); ui.tickSales(dt); }
+  if (ui) { ui.tickBattle(dt); ui.tickSales(dt); ui.tickExpo(dt); }
   /* 실시간 스태미나. 계산은 벽시계로 하므로 프레임마다 불러도 결과가 같고,
      탭이 백그라운드에 있었거나 앱을 껐다 켠 만큼도 한 번에 들어온다. */
   if (game) {
@@ -1892,7 +2110,12 @@ function wirePointer() {
   let pinch = 0, mid = null, moved = 0;
   // 배치 드래그를 쥐고 있는 포인터와, 잡은 순간의 손가락↔가구 어긋남.
   let placeId = null, placeOff = null;
+  /* 꾹 누르기. 손가락이 내려앉은 자리와 시각을 들고 있다가, 움직이지 않은
+     채로 HOLD_MS 가 지나면 그 자리의 가구를 들어 올린다. */
+  let holdT = null, holdAt = null;
+  const HOLD_MS = 420;
   const BOUNDS = { x0: -18, x1: 82, z0: -16, z1: 60 };
+  const cancelHold = () => { if (holdT) { clearTimeout(holdT); holdT = null; } holdAt = null; };
 
   const gather = () => {
     const a = [...pts.values()];
@@ -1929,11 +2152,52 @@ function wirePointer() {
     return true;
   };
 
+  /* 꾹 눌러서 가구 들어 올리기.
+
+     놓은 가구를 옮기거나 회수하려면 사무실 탭을 열고 모드를 켜야 했다.
+     화면에 보이는 책상을 옮기는 데 화면을 덮는 패널을 먼저 열어야 한다는
+     뜻이었다. 놓는 것이 화면을 눌러서 하는 일이므로 옮기는 것도 그래야
+     한다 — 꾹 누르면 그 가구가 배치 모드로 들려 올라온다.
+
+     조건이 까다로운 이유는 오작동이 비싸기 때문이다: 손가락 하나뿐이고,
+     그 사이 화면이 8픽셀 넘게 움직이지 않았고, 1인칭도 배치도 회수도
+     아니어야 한다. 카메라를 돌리려다 책상이 딸려 오면 그건 고장이다. */
+  const armHold = (e) => {
+    /* 이미 하나가 걸려 있으면 그건 두 번째 손가락이다 — 확대·이동을 하려는
+       손이므로 걸린 것을 취소하고 새로 걸지 않는다.
+
+       `pts.size` 로 손가락 수를 세지 않는 이유: 브라우저가 제스처를
+       가로채면 pointerup 이 안 오고 유령 접점이 남는다. 그 뒤로는 화면에
+       손가락이 하나뿐인데도 size 가 2 라서 꾹 누르기가 영영 안 걸린다. */
+    if (holdT || holdAt) { cancelHold(); return; }
+    if (view.fp.on || view.place || view.pickup) return;
+    holdAt = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    holdT = setTimeout(() => {
+      holdT = null;
+      if (!holdAt || moved >= 8 || view.place || view.pickup || view.fp.on) { holdAt = null; return; }
+      const hit = floorHit({ clientX: holdAt.x, clientY: holdAt.y });
+      holdAt = null;
+      if (!hit) return;
+      const r = view.grabAt(hit[0], hit[2]);
+      if (!r.ok) return;                       // 빈 바닥을 꾹 누른 것은 아무 일도 아니다
+      if (navigator.vibrate) { try { navigator.vibrate(18); } catch (err) { /* 무시 */ } }
+      if (ui) {
+        ui.toast(`${r.ko} — 끌어서 옮기거나 🎒 로 회수`, 'good');
+        ui.renderPlaceBar();
+        ui.togglePanel(false);
+      }
+      // 들어 올린 그 손가락이 그대로 끌 수 있어야 한다.
+      placeId = e.pointerId;
+      placeOff = null;
+    }, HOLD_MS);
+  };
+
   canvas.addEventListener('pointerdown', (e) => {
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* already gone */ }
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     canvas.classList.add('drag');
     moved = 0;
+    armHold(e);
     // Walking: a drag on the canvas turns your head. The stick is its own DOM
     // control, so the two can never be confused for one another.
     if (view.fp.on) { view.fp.startLook(e.pointerId, e.clientX, e.clientY); firstGesture(); return; }
@@ -1962,6 +2226,9 @@ function wirePointer() {
     moved += Math.abs(nx - prev.x) + Math.abs(ny - prev.y);
 
     pts.set(e.pointerId, { x: nx, y: ny });
+    // 끌기 시작했으면 꾹 누르기는 취소다. 카메라를 돌리려던 손가락이 책상을
+    // 들어 올리면 그건 고장이다.
+    if (holdAt && moved >= 8) cancelHold();
     if (view.fp.on) { view.fp.moveLook(e.pointerId, nx, ny); return; }
     if (view.place) {
       // 쥐고 있는 손가락만 가구를 옮긴다. 나머지는 아무 일도 하지 않는다 —
@@ -1982,6 +2249,7 @@ function wirePointer() {
   });
 
   const release = (e) => {
+    cancelHold();
     if (view.fp.on) {
       view.fp.endLook(e.pointerId);
       // A tap with nothing dragged reaches for whatever you are looking at.
@@ -2023,6 +2291,7 @@ function wirePointer() {
   // 손가락이 캡처 밖에서 사라지는 경우(브라우저가 제스처를 가로챈 뒤 등)가
   // 실제로 있다. 남아 있는 유령 접점 하나면 다음 드래그가 통째로 팬이 된다.
   canvas.addEventListener('lostpointercapture', (e) => {
+    cancelHold();
     if (e.pointerId === placeId) { placeId = null; placeOff = null; }
     pts.delete(e.pointerId);
     if (pts.size < 2) { pinch = 0; mid = null; }

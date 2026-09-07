@@ -34,10 +34,14 @@ export function seedProjectIds(n) { _pid = Math.max(_pid, n); }
 export const CRIT_BASE = 0.10;
 export const CRIT_BOOM = 2.0;
 
-/* 버그 보스를 끝까지 잡았을 때 지워지는 버그의 비율. 예전 디버그 버튼이
-   한 번에 지우던 양(약 3분의 1)을 여러 번 눌러 도달하던 자리를, 한 마리로
-   묶었다. 다 못 잡고 탈진 마감하면 잡은 만큼만 줄어든다. */
-export const BUG_BOSS_CUT = 0.9;
+/* 버그 보스를 끝까지 잡았을 때 지워지는 버그의 비율.
+
+   1 이다 — **잡으면 버그는 0개**. 0.9 였던 동안에는 마지막 한 마리를 끝까지
+   잡아도 화면에 버그가 한두 개 남았고, 그러면 그 싸움이 무엇을 위한
+   것이었는지가 흐려진다. 잡으면 0, 못 잡으면 잡은 만큼만 줄고 나머지는
+   상점의 디버그 킷으로 손수 지운다 — 이 둘로 갈라지는 편이 규칙이 하나로
+   읽힌다. */
+export const BUG_BOSS_CUT = 1.0;
 
 /* 앞의 보스에서 팀이 쓰러져 덜 만든 채로 넘어왔을수록 버그 보스가 커진다.
    "약하게, 대신 앞에서 사람이 죽었으면 세게" 가 이 두 계수다. */
@@ -873,7 +877,9 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
   if (!anyUp) out.idle = true;
 
   // ---- 보스의 게이지 ----
-  if (project.hp > 0) {
+  // 버그 보스(noAtk)는 때리지 않는다. 마지막 공정에서 남은 결정은 "시간을
+  // 더 쓸 것인가" 하나이고, 거기에 반격이 얹히면 그냥 벽이 된다.
+  if (project.hp > 0 && !currentStage(project).noAtk) {
     const st = currentStage(project);
     project.bossAtb = (project.bossAtb || 0) + step / (st.atk || 4.6);
     if (project.bossAtb >= 1) {
@@ -1019,7 +1025,7 @@ export function battleTurn(project, staffById, rnd, ctx = {}) {
   project.lastDamage = total;
   project.log.push({ turn: project.turn, damage: total, hp: project.hp });
 
-  if (project.hp > 0 && project.turn % HP.attackEvery === 0) {
+  if (project.hp > 0 && project.turn % HP.attackEvery === 0 && !currentStage(project).noAtk) {
     const move = BOSS_MOVES[Math.floor(rnd() * BOSS_MOVES.length)];
     events.push(bossAttack(project, staffById, rnd, move));
   }
@@ -1236,7 +1242,14 @@ export function finishProject(project, staffById, rnd, ctx = {}) {
   // 여기에 더해진다. 계산은 previewBugs 와 같은 함수를 쓰므로, 개발 중에
   // 보고 있던 예상 개수와 완성 결과가 어긋나지 않는다.
   let bugs = bugCount(project, quality, staffById, ctx);
-  bugs = Math.max(0, Math.round(bugs) + Math.floor(rnd() * 3) - 1);
+  /* 주사위는 버그 보스를 **다 잡지 못했을 때만** 굴린다.
+
+     -1~+1 이라 계산이 0 이어도 한 개가 붙을 수 있었다. 마지막 한 마리를
+     끝까지 잡고도 결과 화면에 버그 1개가 뜨면, 그 싸움이 무엇을 위한
+     것이었는지가 통째로 흐려진다. 잡았으면 0 이다. */
+  bugs = debugRatio(project) >= 1
+    ? Math.max(0, Math.round(bugs))
+    : Math.max(0, Math.round(bugs) + Math.floor(rnd() * 3) - 1);
 
   // Four critics, 1-10 each, the way the series has always scored a release.
   // The curve is saturating rather than linear: early games land around 3, and

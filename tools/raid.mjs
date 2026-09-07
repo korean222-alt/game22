@@ -308,38 +308,126 @@ await step('완성 뒤에는 보스가 다시 서지 않는다', async () => {
   return '3.6초 동안 아무도 안 섬';
 });
 
-console.log('\n── 4. 출시와 판매 현황 ──');
-await step('출시하면 판매 패널이 뜬다', async () => {
+console.log('\n── 4. 출시와 한 주 판매 ──');
+/* 출시작은 한 주만 판다.
+
+   예전에는 유저가 빠질 때까지 — 잘 만든 게임이면 반년 넘게 — 운영 칸을
+   붙들었고, 세 칸이 차면 새 게임을 못 냈다. 그 상태에서 개발 탭은 이미
+   출시 화면에 가 있어서 내릴 방법이 화면에 없었다. 그래서 여기서 보는 것은
+   "판매 패널이 뜬다" 가 아니라 **칸이 다시 비워지는가** 다. */
+await step('출시하면 실시간 판매가 돈다', async () => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     const res = g.release();
     window.__ui.renderAll();
-    return { ok: res.ok, why: res.why, releases: g.releases.length };
+    return { ok: res.ok, why: res.why, releases: g.releases.length, selling: g.selling(), live: g.managed().length };
   });
   if (!r.ok) throw new Error(r.why);
+  if (!r.selling) throw new Error('실시간 판매가 안 돈다');
   await page.evaluate(() => { window.__ui.exitArena(); });
   await page.waitForTimeout(200);
-  // 실시간 판매가 도는 동안 그 게임은 판매 현황 목록에서 빠져 있다 — 같은
-  // 숫자가 레일에 두 번 서지 않게. 정산을 확인한 뒤부터 목록에 올라온다.
-  await page.evaluate(() => {
+  return `출시작 ${r.releases}편 · 판매 중 ${r.live}작품`;
+});
+
+await step('정산을 확인하면 그 게임의 판매가 끝난다', async () => {
+  const r = await page.evaluate(() => {
     const g = window.__game;
     if (g.sales) g.closeSalesRun();
-    g.nextWeek();
     window.__ui.closeModal();
     window.__ui.renderAll();
+    return { live: g.managed().length, past: g.releases.filter((x) => !x.managing).length };
   });
-  await page.waitForTimeout(300);
-  const s = await state();
-  if (!s.salesVisible) throw new Error('판매 패널이 안 뜸');
-  const sales = await page.evaluate(() => ({
-    vis: getComputedStyle(document.getElementById('sales')).display,
-    cards: document.getElementById('sgList').children.length,
-    spark: document.querySelectorAll('#sales .spark i').length,
-    week: document.getElementById('sgWeek').textContent,
-  }));
-  if (sales.vis === 'none') throw new Error('#sales 가 display:none');
-  if (!sales.cards) throw new Error('판매 카드가 없음');
-  return `${sales.cards}개 · 막대 ${sales.spark} · ${sales.week}`;
+  if (r.live !== 0) throw new Error(`아직 ${r.live}작품이 운영 중이다`);
+  if (r.past < 1) throw new Error('서비스 종료 목록이 비어 있다');
+  return `운영 ${r.live} · 종료 ${r.past}`;
+});
+
+/* 사용자가 막힌 그 자리다: 게임을 다 만들고 출시를 눌렀는데 "3개가 찼으니
+   하나를 내리세요" 만 뜨고, 내리는 버튼은 다른 탭에 있었다. 이제는 칸이
+   차 있어도 가장 오래된 것을 접고 그대로 출시한다. */
+await step('운영 칸이 차 있어도 출시가 막히지 않는다', async () => {
+  const r = await page.evaluate(() => {
+    const g = window.__game;
+    const cap = g.info().managedCap;
+    // 칸을 억지로 채운다 (옛 세이브가 이 상태로 온다).
+    const base = g.releases[0];
+    for (let i = 0; i < cap; i++) {
+      g.releases.unshift({ ...base, id: 'fake' + i, title: '옛 작품 ' + i, managing: true, history: [] });
+    }
+    const before = g.managed().length;
+    // 출시할 게임 한 편을 세워 둔다.
+    g.finished = { ...base, id: 'newone', title: '새 작품', devCost: 1000,
+      quality: base.quality, critics: base.critics, criticTotal: base.criticTotal,
+      genreId: 'shoot', contentId: 'sf', genreKo: '슈팅', contentKo: 'SF',
+      platformId: base.platformId, monetizeId: base.monetizeId, bugs: 0,
+      seriesN: 1, hallOfFame: false, combo: 1, proposal: { grade: 2 }, hpMax: 500, team: [] };
+    const res = g.release();
+    return { ok: res.ok, why: res.why, before, after: g.managed().length, cap };
+  });
+  if (!r.ok) throw new Error(r.why || '출시가 막혔다');
+  if (r.after > r.cap) throw new Error(`운영 칸이 ${r.after}작품으로 넘쳤다`);
+  return `칸 ${r.before}/${r.cap} 이 차 있어도 출시됨 → ${r.after}작품`;
+});
+
+/* ── 무대가 바뀌면 시점도 그 무대의 것으로 ──
+   제보: "버그 보스 잡으려고 딱 넘어갈 때 화면이 벽에 가려져서 1초 동안
+   안 보인다." 세트마다 카메라의 방위각이 다르고(그 세트의 지오메트리 사이로
+   무대가 보이는 각도로 맞춰 둔 값이다), 공정이 넘어갈 때는 세트만 갈아
+   끼우고 카메라는 앞 무대의 각도 그대로 두었다. QA 실은 반지름 26 에
+   모니터 벽이 둘러서 있어서, 그 각도로는 카메라가 모니터 한 장 뒤에 선다. */
+console.log('\n── 5. 무대와 시점 ──');
+await step('공정이 바뀌면 카메라도 그 무대의 시점으로 옮긴다', async () => {
+  const r = await page.evaluate(async () => {
+    const v = window.__view, cam = window.__cam;
+    const A = await import('/src/world/arena.js');
+    const was = v.arena;
+    v.arena = true;
+    v.useArenaSet('demon');
+    const demon = { az: +cam.az.toFixed(3), want: +A.arenaSetFor('demon').camera.az.toFixed(3) };
+    v.useArenaSet('bug');
+    const bug = { az: +cam.az.toFixed(3), want: +A.arenaSetFor('bug').camera.az.toFixed(3) };
+    v.arena = was;
+    if (!was) { v.clearArenaSet(); v.setFloor(v.floor); }
+    return { demon, bug };
+  });
+  if (Math.abs(r.demon.az - r.demon.want) > 0.01) throw new Error(`마감의 제단: ${r.demon.az} ≠ ${r.demon.want}`);
+  if (Math.abs(r.bug.az - r.bug.want) > 0.01) throw new Error(`QA 실: ${r.bug.az} ≠ ${r.bug.want}`);
+  return `제단 ${r.demon.az} → QA 실 ${r.bug.az}`;
+});
+
+/* ── 게임덱스 부스 ──
+   제보: "부스 차릴 때 그냥 차리기 하고 끝이 아니라, 게임 홍보 하고 있는
+   그런 모습을 보여줘." 예산을 고르면 화면이 전시장으로 넘어가고, 입구에서
+   사람이 걸어 들어와 부스 앞에 모인다. */
+console.log('\n── 6. 게임덱스 부스 ──');
+await step('부스를 차리면 전시장으로 넘어간다', async () => {
+  const r = await page.evaluate(() => {
+    const v = window.__view;
+    const hall = v.enterExpo('big');
+    // 시간을 손으로 감아 사람들을 부스 앞까지 보낸다.
+    for (let i = 0; i < 240; i++) v.tickExpo(0.05);
+    const near = v.visitors.list.filter((a) => Math.hypot(a.x - hall.booth.x, a.z - hall.booth.z) < 34).length;
+    return {
+      expo: v.expo, crowd: v.visitors.count, near,
+      body: document.body.classList.contains('expo'),
+      booth: [Math.round(hall.booth.x), Math.round(hall.booth.z)],
+    };
+  });
+  if (!r.expo) throw new Error('전시장으로 안 넘어감');
+  if (r.crowd < 8) throw new Error(`관람객이 ${r.crowd}명`);
+  if (!r.near) throw new Error('아무도 부스 앞으로 안 옴');
+  return `관람객 ${r.crowd}명 · 부스 앞 ${r.near}명`;
+});
+
+await step('나오면 사무실로 되돌아온다', async () => {
+  const r = await page.evaluate(() => {
+    const v = window.__view;
+    v.exitExpo();
+    return { expo: v.expo, visitors: v.visitors ? v.visitors.count : -1, hall: !!v.expoHall };
+  });
+  if (r.expo || r.hall) throw new Error('전시장이 안 닫힘');
+  if (r.visitors !== 0) throw new Error(`관람객이 ${r.visitors}명 남았다`);
+  return '전시장 정리됨';
 });
 
 await page.screenshot({ path: `${OUT}/raid.png` });

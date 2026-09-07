@@ -219,17 +219,25 @@ export function chairGuest(m, x, z, ry, col) {
   m.mat = 0;
 }
 
+/* 소파.
+
+   등받이와 팔걸이가 앉는 판과 **직각**으로 서 있었다. 앉는 판은 로컬 X 로
+   길고(w × 2.6), 등받이는 로컬 Z 로 길게(0.55 × w) 놓여 있었으며, 팔걸이는
+   양 끝이 아니라 앞뒤에 붙어 있었다. 눈으로도 이상했지만 진짜 문제는
+   발자국이다 — 가구가 차지하는 자리를 모델에서 재게 된 뒤로, 뒤틀린 모델은
+   곧 뒤틀린 판정이 된다. 셋을 같은 축으로 맞춘다: 길이는 로컬 X, 등받이는
+   뒤쪽(−Z), 팔걸이는 양 끝(±X). */
 export function couch(m, x, z, ry, seats, col) {
   const c = col || P.couch, w = seats * 2.1;
+  const R = (lx, lz) => [x + lx * Math.cos(ry) + lz * Math.sin(ry), z - lx * Math.sin(ry) + lz * Math.cos(ry)];
   m.mat = MAT.FABRIC;
-  m.boxY(x, 0.80, z, w, 1.20, 2.6, ry, c);
-  m.boxY(x, 1.60, z, w - 0.6, 0.5, 2.3, ry, shade(c, 1.08));
-  const bx = x - Math.cos(ry) * 1.0, bz = z + Math.sin(ry) * 1.0;
-  m.boxY(bx, 2.20, bz, 0.55, 1.60, w, ry, c);
+  m.boxY(x, 0.80, z, w, 1.20, 2.6, ry, c);                       // 앉는 판
+  m.boxY(x, 1.60, z, w - 0.6, 0.5, 2.3, ry, shade(c, 1.08));     // 방석
+  const b = R(0, -1.05);
+  m.boxY(b[0], 2.20, b[1], w, 1.60, 0.55, ry, c);                // 등받이 — 뒤쪽
   for (const k of [-1, 1]) {
-    const ax = x + Math.cos(ry + Math.PI / 2) * k * (w / 2 - 0.2);
-    const az = z - Math.sin(ry + Math.PI / 2) * k * (w / 2 - 0.2);
-    m.boxY(ax, 1.55, az, 0.45, 1.0, 2.5, ry, shade(c, 0.92));
+    const a = R(k * (w / 2 - 0.22), 0.1);
+    m.boxY(a[0], 1.55, a[1], 0.45, 1.0, 2.4, ry, shade(c, 0.92)); // 팔걸이 — 양 끝
   }
   m.mat = 0;
 }
@@ -697,25 +705,39 @@ export function lockers(m, x, z, ry, bays) {
 }
 
 /* Single-person focus booth: the modern office's phone box. */
+/* 폰 부스.
+
+   옆판 두 장이 양옆(±X)이 아니라 앞뒤(±Z)에 서 있었고, 그래서 모델이
+   Z 방향으로 두 배(8.4)로 늘어나 있었다. 가로 4.2 짜리 부스가 세로로는
+   여덟 칸을 먹으니, 발자국을 모델에서 재는 지금은 어느 배치 구역에도
+   들어가지 않는 가구가 된다. 뒤판은 뒤(−Z), 옆판은 양옆(±X), 유리는
+   앞(+Z) 으로 바로잡는다. */
 export function phoneBooth(m, x, z, ry) {
   const W = 4.2, D = 4.2, H = 8.4;
+  const R = (lx, lz) => [x + lx * Math.cos(ry) + lz * Math.sin(ry), z - lx * Math.sin(ry) + lz * Math.cos(ry)];
   m.flag = 1;
   m.mat = MAT.WOOD;
-  m.boxY(x, H / 2, z, W, H, 0.35, ry, P.lamDk);                     // back
-  m.boxY(x + Math.sin(ry) * (D / 2), H / 2, z + Math.cos(ry) * (D / 2), 0.35, H, D, ry, P.lamDk);
-  m.boxY(x - Math.sin(ry) * (D / 2), H / 2, z - Math.cos(ry) * (D / 2), 0.35, H, D, ry, P.lamDk);
+  const bk = R(0, -D / 2);
+  m.boxY(bk[0], H / 2, bk[1], W, H, 0.35, ry, P.lamDk);             // 뒤판
+  for (const k of [-1, 1]) {
+    const sd = R(k * (W / 2), 0);
+    m.boxY(sd[0], H / 2, sd[1], 0.35, H, D, ry, P.lamDk);           // 옆판
+  }
   m.mat = MAT.CEIL;
   m.boxY(x, H, z, W + 0.3, 0.3, D + 0.3, ry, P.ceil);
   m.mat = 0;
-  m.flag = 2;                                                       // glass front
+  m.flag = 2;                                                       // 앞면 유리
   m.noSolid = true;
-  m.boxY(x + Math.cos(ry) * (W / 2), H / 2 + 0.3, z - Math.sin(ry) * (W / 2), 0.10, H - 0.8, D - 0.5, ry, P.glass);
+  const gl = R(0, D / 2);
+  m.boxY(gl[0], H / 2 + 0.3, gl[1], W - 0.5, H - 0.8, 0.10, ry, P.glass);
   m.noSolid = false;
   m.flag = 0;
   m.mat = MAT.WOOD;
-  m.boxY(x - Math.cos(ry) * 1.0, 2.3, z + Math.sin(ry) * 1.0, 1.5, 0.18, 3.0, ry, P.oak);   // ledge
+  const lg = R(0, -1.1);
+  m.boxY(lg[0], 2.3, lg[1], W - 1.0, 0.18, 1.4, ry, P.oak);         // 선반
   m.mat = 0;
-  chairTask(m, x + Math.cos(ry) * 0.4, z - Math.sin(ry) * 0.4, ry + Math.PI, P.chairG);
+  const ch = R(0, 0.5);
+  chairTask(m, ch[0], ch[1], ry, P.chairG);
 }
 
 /* Window bar: a counter of laptop seats facing the glass. */

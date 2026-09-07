@@ -54,11 +54,13 @@ src/
             city                                  창밖 스카이라인 + 길 위의 차
             boss                                  보스 몬스터 상태 기계
             arena                                 보스별 전용 세트장 (지오메트리만)
+            expo                                  게임덱스 전시장 (예산이 부스 크기를 정한다)
+            visitors                              전시장 관람객 (직원과 같은 몸·상태 기계)
   game/     data state staff project economy dialogue events
                                                   순수 시뮬레이션 (DOM/WebGL 없음)
             furniture monsters                    가구 카탈로그 · 몬스터 정의
             mail                                  편지함 (창업 축하 · 유저 편지 · DL 기념비)
-            awards                                매달 시상식 · 두 달마다 게임덱스
+            awards                                시상식(짝수 달) · 게임덱스(홀수 달)
             rivals                                경쟁사와 주간 판매 차트
             helpers                               도우미 뽑기·장착·효과
   ui/       hud device style.css                  DOM 오버레이
@@ -70,6 +72,7 @@ assets/city/      kit.json cars.json              창밖 도시·자동차 (Kenn
 assets/furniture/ kit.json                        수입 가구 (Kenney CC0)
 tools/      balance sloppy flow meeting probe     테스트 하네스
             monster gltf2glb shots battle raid features
+            bugboss                               마지막 공정의 규칙 (순수, 브라우저 없이)
 ```
 
 **경계가 이 프로젝트의 전부다.** `game/` 이 DOM 을 모르기 때문에 밸런스를
@@ -83,7 +86,11 @@ tools/      balance sloppy flow meeting probe     테스트 하네스
 |---|---|
 | 밸런스 숫자 | **`game/data.js` 하나뿐** — 장르/플랫폼/직업/랭크/아이템/특성/연구/홍보/계약/층값/**체력(HP)/보스 기술/상점(SHOP)/야근** |
 | 보스 외형·연출 | `world/boss.js` · 배치와 이벤트 반응은 `main.js` `View.playBattle` · 아레나 카메라는 `View.enterArena/arenaTarget` |
-| 아레나 세트장 | `world/arena.js` — 세트 하나가 함수 하나다. 카메라 각도(`camera`)와 그림자 반경(`lightRadius`)도 세트가 들고 있다. 붙이는 쪽은 `main.js` `View.useArenaSet/clearArenaSet` |
+| 아레나 세트장 | `world/arena.js` — 세트 하나가 함수 하나다. 카메라 각도(`camera`)와 그림자 반경(`lightRadius`)도 세트가 들고 있다. 붙이는 쪽은 `main.js` `View.useArenaSet/clearArenaSet`. **세트를 갈아 끼우면 카메라도 같이 옮겨야 한다** (`View.aimAtSet`) — 앞 무대의 각도로 두면 카메라가 벽 뒤에 선다 |
+| 게임덱스 전시장 | `world/expo.js` (홀·부스, 예산별 구성) + `world/visitors.js` (관람객) + `main.js` `View.enterExpo/tickExpo/exitExpo` + `ui/hud.js` `_expoShow` + `index.html` `#expo` |
+| 시상식 무대 | `ui/hud.js` `_galaShow/_galaSummary` + `index.html` `#gala` + `style.css` `.gmedal`/`.gsum`/`.gmc` |
+| 가구 발자국 | 카탈로그에 손으로 적지 않는다 — `world/placed.js` `calibrateFootprints()` 가 부팅 때 모델에서 재서 맞춘다 (축이 뒤집힌 것을 바로잡고, 줄이기만 한다) |
+| 꾹 눌러서 옮기기 | `main.js` `wirePointer()` 의 `armHold` → `View.grabAt/startMoving` · 툴바의 🎒 는 `hud.renderPlaceBar()` |
 | 카메라 조이스틱 | `main.js` `wireCamPad()` + `index.html` `#campad` + `style.css` `body.campad`/`--cam-w` |
 | 배치 조작 | `main.js` `wirePointer()` (드래그) · `View.nudgePlace` (십자) · `ui/hud.js` `renderPlaceBar()` |
 | 소재 뽑기 | `game/data.js` `CONTENT_BASE`/`CONTENT_GACHA_COST` · `game/state.js` `drawContent/ownedContents` · `ui/hud.js` `panelGacha()` |

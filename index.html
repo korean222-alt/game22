@@ -400,9 +400,22 @@
     <div class="gtag" id="galaTag">시상식</div>
     <div class="gcat" id="galaCat"></div>
     <div class="genv" id="galaEnv">✉️</div>
+    <!-- 메달: 이름이 불린 순간에만 돌면서 내려온다. 등급이 색을 정한다. -->
+    <div class="gmedal" id="galaMedal"><i class="gmrib"></i><b class="gmdisc"></b></div>
     <div class="gwin" id="galaWin"></div>
-    <div class="gmc">
-      <div class="gmcw">🎤</div>
+    <!-- 수상 내역 정리. 무대가 끝난 뒤 한 장으로 다시 보여준다. -->
+    <div class="gsum" id="galaSum"></div>
+    <!-- 사회자. 이모지 하나였던 자리다 — 말하는 동안 입이 움직이고 마이크 든
+         팔이 오르내려야 "발표하고 있다" 가 화면에 남는다. -->
+    <div class="gmc" id="galaMc">
+      <div class="gmcw">
+        <i class="mfig">
+          <i class="mhead"><i class="meye l"></i><i class="meye r"></i><i class="mmouth"></i></i>
+          <i class="mbody"></i>
+          <i class="marm"><i class="mmic"></i></i>
+        </i>
+        <i class="mpod"></i>
+      </div>
       <div class="gmct" id="galaLine"></div>
     </div>
     <div class="gfoot">
@@ -411,6 +424,29 @@
     </div>
   </div>
   <div class="gconf" id="galaConf"></div>
+</div>
+
+<!-- ══ 게임덱스 부스 ══
+     예산을 고르면 화면이 전시장으로 넘어간다. 부스가 서고, 입구에서 사람이
+     걸어 들어오고, 방문자 수가 눈앞에서 올라간다. 이 층은 그 위에 얹히는
+     자막과 계기판이다 — 3D 는 world/expo.js 가 맡는다. -->
+<div id="expo">
+  <div class="xtop">
+    <span class="xtag" id="xTag">게임덱스</span>
+    <b id="xTitle">—</b>
+  </div>
+  <div class="xmid">
+    <div class="xcount"><b id="xNum">0</b><span>부스 방문자</span></div>
+    <div class="xnote" id="xNote"></div>
+  </div>
+  <div class="xres" id="xRes"></div>
+  <div class="xbar">
+    <div class="xline" id="xLine"></div>
+    <div class="xfoot">
+      <button class="btn sm" id="xSkip">건너뛰기</button>
+      <button class="btn sm primary" id="xOk" hidden>결산 확인</button>
+    </div>
+  </div>
 </div>
 
 <!-- ══ modal: idea cards, release, rank up ══ -->
