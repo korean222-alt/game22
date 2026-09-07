@@ -351,7 +351,6 @@ export function buildExpoHall(planId = 'mid') {
     def,
     mesh: m,
     origin: { x: ox, z: oz },
-    // 간판이 걸리는 자리 — 부스 뒷벽 위.
     /* 간판이 걸리는 자리 — 뒷벽 꼭대기(13) 바로 위. 더 올리면 화면 맨 위의
        행사 이름과 겹치고, 더 내리면 뒷벽의 금색 띠에 글자가 잠긴다. */
     booth: { x: ox, z: bz - (planId === 'small' ? 0 : boothD / 2 - 0.6), y: planId === 'small' ? 4.4 : 13.6 },
