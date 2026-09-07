@@ -213,8 +213,14 @@ export function expoVisitors(plan, fans, bestFun, rnd) {
    몇 주 안에 게임을 내야 이득이라는 뜻이 되고, 그래서 달력을 보고 개발
    일정을 잡을 이유가 생긴다. */
 export function expoResult(plan, visitors, rnd) {
-  const fans = Math.round(visitors * (0.16 + rnd() * 0.10));
-  const dl = 1 + Math.min(0.85, plan.scale * 0.22 + visitors / 260000);
+  /* 방문자의 몇 할이 팬으로 남는가. 예전에는 16~26% 였고, 그 값이면 부스
+     한 번이 회사의 팬을 40% 씩 불렸다 — 랭크가 게임이 아니라 행사로
+     올라간다는 뜻이다. 부스는 팬을 **얹는** 자리지 만드는 자리가 아니다. */
+  const fans = Math.round(visitors * (0.10 + rnd() * 0.06));
+  /* 다운로드 배율. 예전 상한(1.85)은 이 배율이 주마다 곱으로 쌓이던 시절의
+     값이었다. 이제는 걸린 주에만 그대로 곱해지므로 상한을 낮춰 잡는다 —
+     +45% 면 "행사 뒤에 내는 편이 이득" 이 되기에 충분하다. */
+  const dl = 1 + Math.min(0.45, plan.scale * 0.13 + visitors / 420000);
   const weeks = plan.id === 'big' ? 6 : plan.id === 'mid' ? 4 : 2;
   return { fans, dl: Math.round(dl * 100) / 100, weeks };
 }

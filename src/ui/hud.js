@@ -16,7 +16,7 @@ import {
   STARTUP_GRANT, hireDiscount,
   SHOP, SHOP_KINDS, GEAR_SLOTS, BOSSES, bossFor, BOSS_STAGES, BOSS_PHASES, RAID, OVERTIME,
   shopItem,
-  EXHAUST, ABILITY_KO, starText, starOf, weaponFor,
+  EXHAUST, ABILITY_KO, starText, starOf, weaponFor, BUG_BOSS,
 } from '../game/data.js';
 import { helperSkillText } from '../game/helpers.js';
 import {
@@ -29,8 +29,9 @@ import {
 import {
   turnCost, projectQuality, projectedQuality, ideaHp, raidRounds, devStaminaCost,
   currentStage, raidProgress, ensureStages, strikePeriod, devCostOf, completion,
-  previewQuality, funScore, canUrge, comboMult, URGE, randomTitle,
+  previewQuality, funScore, canUrge, comboMult, URGE, randomTitle, bugTimeLeft,
 } from '../game/project.js';
+import { TUTORIAL } from '../game/tutorial.js';
 import { STAMINA_REGEN } from '../game/state.js';
 import { giftText } from '../game/mail.js';
 import { AWARD_CATS, AWARD_GRADES, EXPO_PLANS, awardBar } from '../game/awards.js';
@@ -54,6 +55,11 @@ const num = (n) => Math.round(n).toLocaleString('ko-KR');
 const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
 /* Motivation is fractional for anyone with 일벌레, so it cannot be printed raw. */
 const mot = (v) => (Number.isInteger(v) ? v : (Math.round(v * 10) / 10).toFixed(1));
+
+/* 화면에 적는 유저 수. 게임덱스 화제가 걸려 있으면 그 배율이 붙은 '이번 주에
+   실제로 붙어 있는 사람' 이 뜬다 — 매출은 그 수로 계산되므로, 여기에 자연
+   곡선을 적으면 유저는 그대로인데 돈만 뛰는 화면이 된다. */
+const liveUsers = (r) => (r && r.liveUsers) || (r ? r.users : 0);
 
 /* ---- the stat bars ----
    Every bar in the game reads against a stated maximum, and the maximum is
@@ -137,6 +143,7 @@ export class UI {
     this._wireShell();
     this._wireSaleRun();
     this._wireSalesFold();
+    this._wireTutor();
     this._wireClickSound();
 
     game.on((type, payload) => this._onGameEvent(type, payload));
@@ -265,14 +272,17 @@ export class UI {
          <div><span class="k">직원의 공격</span><span class="v">만들어 낸 분량</span></div>
          <div><span class="k">✨ 번뜩임</span><span class="v">좋은 아이디어 — 축 하나가 두 배로</span></div>
          <div><span class="k">🐞 버그 보스</span><span class="v">마지막 공정. 끝까지 잡으면 버그가 0개가 된다</span></div>
+         <div><span class="k">⏱ 제한시간</span><span class="v">버그 보스에만 있다. 다 되면 잡은 만큼만 인정된다</span></div>
          <div><span class="k">반격</span><span class="v">사양 변경 · 버그 · 납기 압박 (버그 보스는 안 때린다)</span></div>
        </div>
        <p style="font-size:11.5px;line-height:1.7;color:var(--dim);margin-top:9px">
          공정은 <b>기획 → 제작 → 마감 → 디버그</b> 넷입니다. 팀의 체력이 다 떨어지면
          그 공정은 못 만든 채로 마감되고, 완성도가 그만큼 깎입니다.
          상점의 <b>음식</b>으로 체력을 채워 주세요.<br>
-         마지막 <b>버그 보스</b>는 크지만 때리지 않습니다 — 끝까지 잡으면 버그가 0개,
-         중간에 마감하면 남은 버그는 <b>🧰 디버그 킷</b>으로 지웁니다.</p>`,
+         마지막 <b>버그 보스</b>는 때리지 않는 대신 <b>시간</b>이 있습니다. 몸집은
+         앞에서 만든 <b>버그 개수</b>가 정하므로, 반격을 덜 맞고 온 팀은 여기도
+         가볍게 넘어갑니다. 끝까지 잡으면 버그가 0개, 시간이 다 되면 잡은 만큼만
+         줄고 남은 버그는 <b>🧰 디버그 킷</b>으로 지웁니다.</p>`,
       null, () => {
         this.g.company.devIntroSeen = true;
         this.g.save();
@@ -426,6 +436,14 @@ export class UI {
     } else if (ev.kind === 'exhausted') {
       this.arenaLog('팀 전원 탈진 — 밥을 먹이지 않으면 이대로 마감됩니다', 'bad');
       this.renderRest(ev.grace);
+    } else if (ev.kind === 'bugWarn') {
+      this.arenaLog(`⏱ 마감까지 ${ev.left}초 — 남은 버그는 그대로 나갑니다`, 'bad');
+      this._vignette();
+      sfx('bad');
+    } else if (ev.kind === 'bugTimeout') {
+      this.arenaLog(`⏱ 시간 종료 — 버그의 ${ev.killed}% 만 잡았습니다`, 'bad');
+      this._flash();
+      sfx('bad');
     } else if (ev.kind === 'forfeit') {
       this.arenaLog(`${ev.name} — ${ev.left}% 를 남긴 채 마감`, 'bad');
       this._flash();
@@ -588,6 +606,18 @@ export class UI {
     const tk = $('aTotalK');
     if (tk) tk.textContent = `게임 완성도 ${Math.round(prog * 100)}%`;
     $('aTurn').textContent = `${p.turn}라운드 · 번뜩임 ${p.crits}`;
+    /* 버그 보스 앞에서만 시계가 돈다. 반격이 없는 대신 이것이 유일한
+       압박이므로, 남은 시간은 화면에서 제일 눈에 띄는 숫자여야 한다. */
+    const clock = $('aClock');
+    if (clock) {
+      const left = bugTimeLeft(p);
+      clock.hidden = left === null;
+      if (left !== null) {
+        const sec = Math.ceil(left);
+        clock.textContent = `⏱ ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+        clock.classList.toggle('warn', sec <= BUG_BOSS.warnSec);
+      }
+    }
     $('arena').classList.toggle('weak', (p.weak || 0) > 0);
 
     // ---- 파티 ----
@@ -1168,6 +1198,8 @@ export class UI {
     for (const o of document.querySelectorAll('.tabbtn')) o.classList.remove('on');
     t.classList.add('on');
     this.tab = name;
+    // 안내가 "가 봤다" 로 세는 자리. 살 것이 없는 탭도 방문만으로 끝난다.
+    if (this.g.markTabSeen && this.g.markTabSeen(name)) this.renderRail();
     this.renderPanel();
     this.togglePanel(false);
   }
@@ -1245,7 +1277,10 @@ export class UI {
     if (type === 'project') this.view.ensureBoss(payload);
     // 테스트 도구가 랭크를 한 번에 여러 단 올릴 때는 축하 팝업을 접는다.
     // 네 장을 연달아 닫게 만드는 것은 확인이 아니라 벌칙이다.
-    if (type === 'rank' && !this._quietRank) this.showRankUp(payload);
+    // 랭크업도 줄을 선다. 게임덱스 부스에 나가면 그 자리에서 팬이 늘어
+    // 랭크가 오르는데, 예전에는 이 팝업이 전시장 장면 **위에** 바로 떠서
+    // 사회자가 안 보이는 곳에서 말하고 있는 화면이 됐다.
+    if (type === 'rank' && !this._quietRank) this._pop(() => this.showRankUp(payload));
     // 판매는 십몇 초 동안 열두 번 온다. 그때마다 사이드 패널을 통째로 다시
     // 지으면 그 비용이 그대로 프레임에서 나간다 — 화면에 필요한 것은 판매 카드뿐이다.
     if (type === 'sales') {
@@ -1574,14 +1609,132 @@ export class UI {
     }
   }
 
-  /* 게임덱스 출전. 사진의 그 화면이다 — 예산을 고르고, 부스에 사람이
-     몇 명 왔는지를 본다. */
-  showExpo(x) {
+  /* ---------- 전시장 자막 ----------
+     한 글자씩 찍고, 화면을 누르면 그 줄이 끝나고, 건너뛰기를 누르면 전부
+     끝난다. 개막 장면과 부스 장면이 같은 장치를 쓴다 — 두 벌을 두면 한쪽만
+     고쳐지는 자리가 된다. */
+  _expoNarrator() {
+    const line = $('xLine');
+    const skip = $('xSkip');
+    const st = { skipped: false, tapped: null };
+    const beat = (ms) => new Promise((done) => {
+      if (st.skipped) { done(); return; }
+      let fired = false;
+      const fin = () => { if (fired) return; fired = true; st.tapped = null; clearTimeout(t); done(); };
+      const t = setTimeout(fin, ms);
+      st.tapped = fin;
+    });
+    const onTap = () => { if (st.tapped) st.tapped(); };
+    $('expo').addEventListener('pointerdown', onTap);
+    if (skip) skip.onclick = (e) => { e.stopPropagation(); st.skipped = true; if (st.tapped) st.tapped(); };
+    const say = async (text, hold = 700) => {
+      if (st.skipped) { line.textContent = text; line.classList.add('done'); return; }
+      line.classList.remove('done');
+      line.textContent = '';
+      for (let i = 0; i < text.length; i++) {
+        if (st.skipped) { line.textContent = text; break; }
+        line.textContent = text.slice(0, i + 1);
+        if (text[i] !== ' ') sfx('mc');
+        await beat(text[i] === ',' || text[i] === '…' ? 80 : 24);
+      }
+      line.textContent = text;
+      line.classList.add('done');
+      await beat(hold);
+    };
+    const end = () => {
+      $('expo').removeEventListener('pointerdown', onTap);
+      if (skip) skip.onclick = null;
+      st.tapped = null;
+    };
+    return { say, beat, end, st };
+  }
+
+  /* ══════════════════════ 게임덱스 개막 ══════════════════════
+
+     예전에는 초대장이 오는 순간 선택지 팝업이 **그냥 떴다**. 사무실 화면
+     위에 카드 세 장이 얹히고, 얼마를 쓸지 고르라고 한다. 무슨 행사인지도,
+     지금이 어느 시점인지도 화면에 없으니 그건 사건이 아니라 요금 청구서다.
+
+     그래서 초대장이 오면 먼저 **전시장으로 간다.** 남의 부스는 이미 다 서
+     있고 사람도 들어와 있는데 통로 한복판의 우리 칸만 비어 있다. 그 자리를
+     보면서 "자, 게임덱스가 열렸습니다 — 여기에 무엇을 세우시겠습니까" 를
+     듣고, 그 다음에 선택지가 뜬다. 고르는 것은 같지만 무엇을 고르는지가
+     화면에 있다.
+
+     장면이 도는 동안에는 다른 팝업이 줄에서 나오지 않는다(_expoScene). */
+  async showExpo(x) {
     if (!x) return;
+    if (this._expoScene || this._expo) return;
+    /* 옛 캐시(전시장 DOM 이 없는 화면)에서는 예전처럼 선택지부터 띄운다.
+       개발 중(세트장 안)에도 장면은 안 세운다 — 전시장으로 넘어가려면
+       세트장을 접어야 하고, 그건 싸우던 사람을 화면 밖으로 끌어내는 것이다. */
+    if (!$('expo') || !this.view || !this.view.enterExpo || this.inArena()) {
+      music('expo');
+      this._expoAsk(x);
+      return;
+    }
+
+    this._expoScene = true;
+    this.busy = true;
+    const nar = this._expoNarrator();
+    try {
+      const c = this.g.company;
+      this.view.boothShow = null;
+      this.view.enterExpo('none');
+      document.body.classList.add('expo', 'expo-ask');
+      music('expo');
+      $('xTag').textContent = `게임덱스 ${x.month}월`;
+      $('xTitle').textContent = '개막';
+      $('xNum').textContent = '0';
+      $('xNote').className = 'xnote';
+      $('xNote').textContent = '';
+      $('xRes').innerHTML = '';
+      $('xOk').hidden = true;
+      $('xSkip').hidden = false;
+      $('xLine').textContent = '';
+
+      sfx('applause');
+      await nar.say(`자, ${c.year}년차 ${c.month}월 — 게임덱스가 열렸습니다.`, 600);
+      await nar.say('업계가 전부 부스를 세웠습니다. 사람들이 들어오고 있습니다.', 700);
+      await nar.say(`${c.name || '우리 스튜디오'}의 자리는 통로 한복판, 아직 비어 있습니다.`, 800);
+      await nar.say('여기에 무엇을 세우시겠습니까?', 500);
+    } finally {
+      nar.end();
+      this.busy = false;
+    }
+    // 전시장은 그대로 두고 그 위에 선택지를 띄운다. 배경이 사무실이면
+    // 방금 본 빈 자리와 지금 고르는 것이 이어지지 않는다.
+    this._expoAsk(x);
+  }
+
+  /* 출전 내용 선택. 사진의 그 카드 세 장이다 — 이제 전시장 위에 뜬다. */
+  _expoAsk(x) {
     const c = this.g.company;
-    // 부스에 서 있는 동안은 행사장 음악이 돈다. 결산을 닫으면 원래대로.
-    music('expo');
-    this.openModal(`게임덱스 ${x.month}월`, '출전 내용 선택',
+    /* 나가는 문. 선택지 카드에는 닫기가 없으므로(고르는 것이 이 창의 일이다)
+       행사장 자체에 "나중에" 를 하나 둔다. 초대장은 남으므로 행사 탭에서
+       다시 열 수 있다 — 문이 없는 방을 만들지 않는다는 것이 규칙이다. */
+    const skip = $('xSkip');
+    if (skip && document.body.classList.contains('expo-ask')) {
+      skip.hidden = false;
+      skip.textContent = '나중에';
+      skip.onclick = (e) => {
+        e.stopPropagation();
+        skip.textContent = '건너뛰기';
+        skip.onclick = null;
+        skip.hidden = true;
+        this.closeModal();
+        this._expoScene = false;
+        this._expoLeave();
+        this.renderAll();
+      };
+    }
+    // 이 창은 무대의 일부다. 줄 서지 않고 전시장 위에 바로 선다.
+    this._sceneModal = true;
+    try { this._expoAskModal(x, c); } finally { this._sceneModal = false; }
+  }
+
+  _expoAskModal(x, c) {
+    this.openModal(`게임덱스 ${x.month}월`, '어떤 걸 선택하시겠어요?',
       '<p style="font-size:12px;line-height:1.7">부스에 얼마를 쓸지 고르세요. '
       + '방문자 수만큼 <b>팬</b>이 늘고, 몇 주 동안 <b>다운로드</b>가 늘어납니다.<br>'
       + '보여줄 게임이 좋을수록 줄이 깁니다.</p>',
@@ -1591,9 +1744,21 @@ export class UI {
           name: `${p.icon} ${p.ko}`,
           desc: can ? p.desc : '자금 또는 코인이 부족합니다',
           right: p.coins ? `🪙 ${p.coins}` : p.cost ? won(p.cost) : '무료',
-          onPick: () => { if (can) this._expoFlow(p.id); else this.toast('자금이 부족합니다', 'bad'); },
+          onPick: () => {
+            if (can) { this._expoFlow(p.id); return; }
+            this.toast('자금이 부족합니다', 'bad');
+            // 못 고르는 것을 골랐다고 행사장에서 쫓아낼 이유는 없다.
+            this._expoAsk(x);
+          },
         };
       }));
+  }
+
+  /* 전시장에서 나온다. 개막 장면만 돌고 부스는 안 세운 경우의 뒷정리다. */
+  _expoLeave() {
+    document.body.classList.remove('expo', 'expo-ask');
+    if (this.view && this.view.exitExpo) this.view.exitExpo();
+    this._syncMusic();
   }
 
   /* ---------- 부스를 차리는 장면 ----------
@@ -1610,16 +1775,33 @@ export class UI {
      같은 생각이고, 같은 이유다: 만든 것에 바깥이 반응하는 순간이 화면에
      있어야 한다. */
   _expoFlow(planId) {
+    const skip = $('xSkip');
+    if (skip) { skip.textContent = '건너뛰기'; skip.onclick = null; skip.hidden = true; }
+    /* joinExpo 는 그 자리에서 팬을 늘리고, 팬이 늘면 랭크가 오르고, 랭크가
+       오르면 축하 팝업이 뜬다. 부스가 서기 전의 이 한 줄 사이에 팝업이
+       끼어들면 전시장 위에 랭크업 창이 덮인다 — 사진의 그 화면이다. */
+    this._expoScene = true;
     const r = this.g.joinExpo(planId);
-    if (!r.ok) { this.toast(r.why || '출전할 수 없습니다', 'bad'); return; }
+    if (!r.ok) {
+      this._expoScene = false;
+      this._expoLeave();
+      this.toast(r.why || '출전할 수 없습니다', 'bad');
+      this._drainPops();
+      return;
+    }
     this.g.save();
-    if (!$('expo') || !this.view || !this.view.enterExpo) { this._expoResultModal(r); return; }
-    this._expoShow(r).catch(() => this._expoResultModal(r));
+    if (!$('expo') || !this.view || !this.view.enterExpo) {
+      this._expoScene = false;
+      this._expoResultModal(r);
+      return;
+    }
+    this._expoShow(r).catch(() => { this._expoScene = false; this._expoResultModal(r); });
   }
 
   /* 옛 캐시(전시장 DOM 이 없는 화면)와, 장면이 어떤 이유로든 못 설 때의
      대비책. 예전 결산 팝업 그대로다. */
   _expoResultModal(r) {
+    this._expoLeave();
     this.openModal('게임덱스 결산', `부스 방문자 ${num(r.visitors)}명`,
       `${r.note.ko ? `<div class="grade" style="font-size:22px">${r.note.ko}</div>` : ''}
        <div class="gsub">${r.plan.icon} ${r.plan.ko}</div>
@@ -1651,7 +1833,7 @@ export class UI {
   }
 
   async _expoShow(r) {
-    const line = $('xLine'), note = $('xNote'), res = $('xRes'),
+    const note = $('xNote'), res = $('xRes'),
       tag = $('xTag'), title = $('xTitle'), numEl = $('xNum'),
       skip = $('xSkip'), ok = $('xOk');
     const c = this.g.company;
@@ -1664,6 +1846,7 @@ export class UI {
       || (this.g.project && this.g.project.title) || null;
     this.view.enterExpo(r.plan.id);
     document.body.classList.add('expo');
+    document.body.classList.remove('expo-ask');
     music('expo');
 
     tag.textContent = `게임덱스 ${c.month}월 · ${r.plan.icon} ${r.plan.ko}`;
@@ -1675,33 +1858,8 @@ export class UI {
     ok.hidden = true;
     skip.hidden = false;
 
-    let skipped = false;
-    let tapped = null;
-    const beat = (ms) => new Promise((done) => {
-      if (skipped) { done(); return; }
-      let fired = false;
-      const fin = () => { if (fired) return; fired = true; tapped = null; clearTimeout(t); done(); };
-      const t = setTimeout(fin, ms);
-      tapped = fin;
-    });
-    const onTap = () => { if (tapped) tapped(); };
-    $('expo').addEventListener('pointerdown', onTap);
-    skip.onclick = (e) => { e.stopPropagation(); skipped = true; if (tapped) tapped(); };
-
-    const say = async (text, hold = 700) => {
-      if (skipped) { line.textContent = text; line.classList.add('done'); return; }
-      line.classList.remove('done');
-      line.textContent = '';
-      for (let i = 0; i < text.length; i++) {
-        if (skipped) { line.textContent = text; break; }
-        line.textContent = text.slice(0, i + 1);
-        if (text[i] !== ' ') sfx('mc');
-        await beat(text[i] === ',' || text[i] === '…' ? 80 : 24);
-      }
-      line.textContent = text;
-      line.classList.add('done');
-      await beat(hold);
-    };
+    const nar = this._expoNarrator();
+    const { say, beat } = nar;
     const card = (k, v, cls = '') => {
       const d = el('div', 'xrc' + (cls ? ' ' + cls : ''), `<span>${k}</span><b>${v}</b>`);
       res.appendChild(d);
@@ -1748,14 +1906,14 @@ export class UI {
       skip.hidden = true;
       ok.hidden = false;
       // 결산을 확인할 때까지 장면은 그대로 돈다. 사람이 계속 걷는다.
-      await new Promise((done) => { ok.onclick = () => done(); tapped = null; });
+      await new Promise((done) => { ok.onclick = () => done(); nar.st.tapped = null; });
     } finally {
-      $('expo').removeEventListener('pointerdown', onTap);
-      skip.onclick = null;
+      nar.end();
       ok.onclick = null;
       this._expo = null;
+      this._expoScene = false;
       this.busy = false;
-      document.body.classList.remove('expo');
+      document.body.classList.remove('expo', 'expo-ask');
       this.view.exitExpo();
       this.view.boothShow = null;
       this._syncMusic();
@@ -1767,7 +1925,8 @@ export class UI {
   /* 누적 다운로드 자릿수. 사진의 "축! 100만 다운로드 첫 달성!!" 이다. */
   showMilestone(m) {
     this.openModal('기념', `축! ${m.mark.ko} 다운로드 첫 달성!!`,
-      `<div class="grade">${num(m.total)}</div>
+      `<div class="mfrom">📰 업계지가 우리 회사를 기사로 실었습니다</div>
+       <div class="grade">${num(m.total)}</div>
        <div class="gsub">누적 다운로드</div>
        <p style="font-size:12px;margin-top:10px">축하 편지가 편지함에 도착했습니다. 선물이 들어 있습니다.</p>`,
       null, () => this.openTab('mail'));
@@ -1841,6 +2000,60 @@ export class UI {
          그 기간만큼 우리 게임은 멈춥니다.</p>`);
   }
 
+  /* ---------- 튜토리얼 ----------
+     한동안 안내는 ❓ 탭 안에 열두 줄로 접혀 있었다. 찾아가면 전부 읽을 수
+     있다는 점은 좋았지만, 처음 켠 사람은 **그런 탭이 있다는 것부터** 모른다
+     — 배지 하나로는 "이걸 눌러야 게임을 배울 수 있다" 가 전해지지 않았다.
+
+     그래서 탭을 없애고 화면 오른쪽 레일 맨 위로 꺼냈다. 지금 할 일 한
+     가지만 서 있고, 마지막 단계를 끝내면 카드째로 사라진다 — 끝나면 사라질
+     것이므로 건너뛰기도 다시 보지 않기도 필요 없다. 접기 하나면 된다.
+
+     한 번 통째로 지웠던 적이 있다. 열 번째 줄(상점)이 **끝낼 방법이 손에
+     없는** 줄이었기 때문인데, 지워야 했던 것은 안내가 아니라 그 줄의 조건
+     하나였다 — 지금은 탭을 열어 보기만 해도 넘어간다.
+
+     여기는 HUD 갱신 때마다 도는 자리라, 단계가 그대로면 DOM 을 건드리지
+     않는다. */
+  renderTutor() {
+    const g = this.g;
+    const card = $('tutor');
+    if (!card) return null;
+    const step = g.tutorialStep ? g.tutorialStep() : null;
+    document.body.classList.toggle('has-tutor', !!step && !this.inArena());
+    if (!step) { this._tuSig = null; return null; }
+    if (this._tuSig === step.id) return step;
+    this._tuSig = step.id;
+
+    const at = TUTORIAL.indexOf(step);
+    $('tuStep').textContent = `${at + 1} / ${TUTORIAL.length}`;
+    $('tuTitle').textContent = step.title;
+    $('tuBody').innerHTML = step.body;
+    const go = $('tuGo');
+    if (go) go.onclick = () => this.openTab(step.tab);
+    return step;
+  }
+
+  /* 접기. 개발 중에는 오른쪽 레일이 진행판·판매까지 함께 쌓이므로, 이미
+     아는 사람은 이 카드를 눕혀 둘 수 있어야 한다. 상태는 남긴다. */
+  _wireTutor() {
+    const h = $('tuHead');
+    if (!h) return;
+    try { this._tuFold = localStorage.getItem('socialdev3d.tufold') === '1'; } catch (e) { this._tuFold = false; }
+    const apply = () => {
+      const card = $('tutor');
+      if (card) card.classList.toggle('fold', !!this._tuFold);
+      h.setAttribute('aria-expanded', this._tuFold ? 'false' : 'true');
+      this.measureRail();
+    };
+    h.onclick = () => {
+      this._tuFold = !this._tuFold;
+      try { localStorage.setItem('socialdev3d.tufold', this._tuFold ? '1' : '0'); } catch (e) { /* private mode */ }
+      apply();
+    };
+    apply();
+  }
+
   /* A weekly event with a choice holds the week until it is answered.
 
      달력이 버튼이 아니라 일한 결과로 흐르게 되면서, 답을 못 받은 사건은
@@ -1855,7 +2068,11 @@ export class UI {
       this._evRetry = setTimeout(() => { this._evRetry = null; this._pop(() => this._eventFlow()); }, 700);
       return;
     }
-    this.openModal(`이번 주 · ${ev.ko}`, `${ev.icon || ''} ${ev.ko}`, ev.text,
+    /* 소식이 **어디서 왔는지**를 먼저 적는다. 카드가 사무실 위에 그냥 뜨면
+       그건 사건이 아니라 시스템 메시지이고, 전화가 울렸는지 공문이 왔는지
+       한 줄이 앞에 서면 같은 선택지가 회사에서 일어난 일이 된다. */
+    this.openModal(`이번 주 · ${ev.ko}`, `${ev.icon || ''} ${ev.ko}`,
+      `${ev.from ? `<div class="mfrom">${ev.from}</div>` : ''}${ev.text}`,
       ev.options.map((o, i) => ({
         name: o.ko,
         desc: o.desc,
@@ -2029,7 +2246,7 @@ export class UI {
     const week = live.reduce((a, r) => a + (r.lastIncome || 0), 0);
     $('sgWeek').textContent = `이번 주 ${won(week)}`;
 
-    const sig = live.map((r) => `${r.id}:${r.weeks}:${r.users}:${r.lastIncome || 0}:${r.lastEvent ? r.lastEvent.id : ''}`).join('|');
+    const sig = live.map((r) => `${r.id}:${r.weeks}:${liveUsers(r)}:${r.lastIncome || 0}:${r.lastEvent ? r.lastEvent.id : ''}`).join('|');
     if (this._salesSig === sig) return;
     this._salesSig = sig;
 
@@ -2046,7 +2263,7 @@ export class UI {
       // 남은 주를 세는 것 자체가 뜻이 없다 — 그때는 '상승 중' 이라고 쓴다.
       const rising = (r.peakWeek || 0) > r.weeks;
       const left = r.decay > 0 && r.decay < 1
-        ? Math.max(0, Math.ceil(Math.log(60 / Math.max(1, r.users)) / Math.log(r.decay)))
+        ? Math.max(0, Math.ceil(Math.log(60 / Math.max(1, liveUsers(r))) / Math.log(r.decay)))
         : 99;
       const drop = hist.length >= 2
         ? Math.round((1 - hist[hist.length - 1].income / Math.max(1, hist[hist.length - 2].income)) * 100)
@@ -2057,7 +2274,7 @@ export class UI {
       const c = el('div', 'sgc',
         `<div class="sgt">「${r.title}」</div>
          <div class="sgv">${won(r.lastIncome || 0)}</div>
-         <div class="sgn"><span>${r.weeks}주차</span><span>유저 ${num(r.users)}</span></div>
+         <div class="sgn"><span>${r.weeks}주차</span><span>유저 ${num(liveUsers(r))}</span></div>
          ${bars ? `<div class="spark">${bars}</div>` : ''}
          ${ev ? `<div class="sgd">${ev.emoji} ${ev.ko} ${ev.pct > 0 ? '+' : ''}${ev.pct}%</div>` : ''}
          <div class="sgend">${drop > 0 ? `지난주 대비 −${drop}% · ` : ''}${tail}</div>`);
@@ -2072,10 +2289,11 @@ export class UI {
     const g = this.g;
     const running = g.sales && !g.sales.ended ? g.sales.id : null;
     this.renderBuff();
+    const tutor = this.renderTutor();
     // 상태에서 바로 읽는다. body 클래스를 보면 renderHUD 가 먼저 도는
     // 프레임에서 한 박자 늦게 반영된다.
     const buff = !!(g.company.buff && g.company.buff.weeks > 0);
-    const on = buff || !!g.project || !!g.sales
+    const on = !!tutor || buff || !!g.project || !!g.sales
       || g.managed().some((r) => r.id !== running);
     document.body.classList.toggle('has-rail', on && !this.inArena());
     // 카드가 서고 눕는 자리다. 넘치면 레일이 손가락을 받아야 스크롤이 된다.
@@ -3241,8 +3459,9 @@ export class UI {
         `${icons[i]} <b>${names[i]}</b> <span style="color:var(--dim)">— ${st.ko}</span>`).join('<br>')}
        <br><br>보스는 <b>직원들이 자동으로</b> 공격해서 잡습니다. 전투에는 스태미나가 들지 않고,
        직원들의 <b>체력</b>이 줄어듭니다.<br>
-       마지막 <b>버그 보스</b>는 원래 약하지만, 앞에서 팀이 쓰러져 덜 만든 채로
-       넘어왔다면 그만큼 커져서 기다립니다.</div>`));
+       마지막 <b>버그 보스</b>는 때리지 않는 대신 <b>제한시간</b>이 있습니다. 몸집은
+       앞에서 만든 <b>버그 개수</b>가 정합니다 — 반격을 덜 맞고 덜 쓰러진 채로 오면
+       덤 한 마리, 엉망으로 오면 두 배 반으로 부풀어 기다립니다.</div>`));
   }
 
   async _kickoff(p) {
@@ -3767,7 +3986,7 @@ export class UI {
       it.innerHTML = `<div class="t"><span class="n">「${r.title}」</span>
         <span class="j">${r.weeks}주차</span></div>
         <div class="d">${r.genreKo} × ${r.contentKo} · ${MONETIZE.find((m) => m.id === r.monetizeId).ko}<br>
-        유저 ${num(r.users)}명 (최고 ${num(r.peakUsers)}) · 누적 ${won(r.earned)}</div>`;
+        유저 ${num(liveUsers(r))}명 (최고 ${num(r.peakUsers)}) · 누적 ${won(r.earned)}</div>`;
       const b = el('button', 'btn sm danger', '지금 서비스 종료');
       b.style.marginTop = '6px';
       b.onclick = () => {
@@ -3916,7 +4135,7 @@ export class UI {
       row.innerHTML = `<span class="cr">${r.rank}</span>
         <span class="ci">${r.icon}</span>
         <span class="ct"><b>${r.title}</b><i>${r.studio}</i></span>
-        <span class="cu">${num(r.users)}</span>`;
+        <span class="cu">${num(liveUsers(r))}</span>`;
       box.appendChild(row);
     }
     const rivals = (c.rivalGames || []).filter((r) => r.managing).length;
@@ -4122,6 +4341,19 @@ export class UI {
 
   /* ---------- modals ---------- */
   openModal(tag, title, bodyHTML, options, onOk) {
+    /* 무대가 도는 동안(시상식·게임덱스) 열리려는 창은 **전부** 줄을 선다.
+
+       예전에는 줄서기가 _pop 을 지나가는 것들에만 걸려 있었고, 그래서 그
+       길을 안 지나는 창 — 창업 지원금, 구조 지원금, 출시 결과 — 이 무대
+       위에 그대로 덮였다. 어느 창이 어느 길로 오는지를 부르는 쪽마다 외우게
+       하는 대신, 마지막 문 하나에서 막는다.
+
+       무대가 스스로 여는 창(게임덱스의 출전 선택)만 예외다. 그건 무대의
+       일부이고, 그래서 _sceneModal 을 켜고 들어온다. */
+    if ((this._gala || this._expo || this._expoScene) && !this._sceneModal) {
+      this._pop(() => this.openModal(tag, title, bodyHTML, options, onOk));
+      return;
+    }
     $('mTag').textContent = tag;
     $('mTitle').textContent = title;
     $('mBody').innerHTML = bodyHTML || '';
@@ -4177,7 +4409,7 @@ export class UI {
     // 시상식 무대와 게임덱스 부스가 도는 동안에는 팝업을 세워 둔다. 무대 위에
     // 모달이 덮이면 둘 다 못 읽고, 사회자는 안 보이는 곳에서 계속 말하고
     // 있게 된다.
-    if (this._gala || this._expo) return;
+    if (this._gala || this._expo || this._expoScene) return;
     const show = (this._pops || []).shift();
     if (show) show();
   }
@@ -4382,7 +4614,8 @@ export class UI {
        된다. */
     const plat = PLATFORMS.find((p) => p.rank === up.rank);
     this.openModal('랭크 업', `회사 랭크 ${up.rank}!`,
-      `<div class="grade">${up.rank}</div>
+      `<div class="mfrom">🏢 업계 평가가 갱신됐습니다 — 우리 회사가 한 칸 올라갔습니다</div>
+       <div class="grade">${up.rank}</div>
        <div class="gsub">RANK UP</div>
        ${plat ? `<div class="row"><span>새 플랫폼</span><b class="stars">${plat.ko} 개방</b></div>` : ''}
        <div class="row"><span>직원 정원</span><b>${up.info.staffCap}명</b></div>

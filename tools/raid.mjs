@@ -273,6 +273,9 @@ await step('아레나에서 나오면 사무실로 돌아온다', async () => {
   return `보스 x=${s.bossX} 로 복귀 후 다시 입장`;
 });
 
+/* 마지막 공정에서만 시계가 돈다. 버그 보스는 때리지 않는 대신 시간이
+   있으므로, 그 화면에 남은 시간이 안 적혀 있으면 압박이 화면에 없다. */
+let sawClock = null;
 await step('끝까지 자동으로 굴러 완성된다', async () => {
   for (let i = 0; i < 1400; i++) {
     const s = await state();
@@ -283,11 +286,31 @@ await step('끝까지 자동으로 굴러 완성된다', async () => {
         for (const st of g.staff) st.hp = st.hpMax;   // 밥을 먹였다고 치자
       });
     }
+    if (!sawClock) {
+      const c = await page.evaluate(() => {
+        const el = document.getElementById('aClock');
+        const g = window.__game;
+        const st = g.project && g.project.stages
+          ? g.project.stages[g.project.stage || 0] : null;
+        return el && !el.hidden && st && st.bug ? { tx: el.textContent, limit: st.limit } : null;
+      });
+      if (c) sawClock = c;
+    }
     if (s.modal) await pickFirstChoice();
     if (errs.length) throw new Error(errs[0]);
     await page.waitForTimeout(120);
   }
   throw new Error('완성되지 않음: ' + JSON.stringify(await state()));
+});
+
+await step('버그 보스 앞에서만 시계가 돈다', async () => {
+  if (!sawClock) throw new Error('마지막 공정에 시계가 안 떴다');
+  const off = await page.evaluate(() => {
+    const el = document.getElementById('aClock');
+    return !el || el.hidden;
+  });
+  if (!off) throw new Error('완성된 뒤에도 시계가 남아 있다');
+  return `${sawClock.tx} · 제한 ${sawClock.limit}초`;
 });
 
 /* 마지막 보스를 잡고 나서 아무도 다시 서지 않아야 한다.
@@ -429,6 +452,112 @@ await step('나오면 사무실로 되돌아온다', async () => {
   if (r.visitors !== 0) throw new Error(`관람객이 ${r.visitors}명 남았다`);
   return '전시장 정리됨';
 });
+
+/* ── 개막 장면 ──
+   초대장이 오면 선택지가 사무실 위에 그냥 뜨는 게 아니라, 먼저 전시장으로
+   간다: 남의 부스는 다 섰고 우리 칸만 비어 있는 홀에서 사회자가 개막을
+   알리고, 그 다음에 "어떤 걸 선택하시겠어요?" 가 뜬다. 그리고 그 장면이
+   도는 동안에는 어떤 팝업도 위에 덮이지 않는다 — 랭크업조차. */
+await step('초대장이 오면 개막 장면부터 돈다', async () => {
+  /* 앞 절이 남긴 창을 먼저 치운다. 팝업이 떠 있는 동안에는 줄이 안 움직이고
+     — 그게 규칙이다 — 그러면 초대장도 그 뒤에서 기다린다. */
+  for (let i = 0; i < 12; i++) {
+    const on = await page.evaluate(() => document.getElementById('modal').classList.contains('show'));
+    if (!on) break;
+    await page.evaluate(() => window.__ui.closeModal());
+    await page.waitForTimeout(250);
+  }
+  await page.evaluate(() => {
+    const g = window.__game;
+    g.company.money = 3_000_000;
+    g.company.coins = 9;
+    // 랭크업 직전까지 팬을 채워 둔다. 부스에 나가면 그 자리에서 오른다.
+    g.company.fans = Math.max(0, g.rankNeed ? g.rankNeed() - 1 : 1399);
+    g.company.lastExpoKey = null;
+    g._openExpo();
+  });
+  // 개막 장면이 설 때까지 기다린다. 한 줄씩 찍히므로 몇 초가 걸린다.
+  for (let i = 0; i < 40; i++) {
+    const up = await page.evaluate(() => document.body.classList.contains('expo-ask'));
+    if (up) break;
+    await page.waitForTimeout(250);
+  }
+  const r = await page.evaluate(() => ({
+    expo: document.body.classList.contains('expo'),
+    ask: document.body.classList.contains('expo-ask'),
+    modal: document.getElementById('modal').classList.contains('show'),
+    line: document.getElementById('xLine').textContent,
+    sign: !!(window.__view.expoHall && window.__view.expoHall.def
+      && window.__view.expoHall.def.empty),
+  }));
+  if (!r.expo || !r.ask) throw new Error('전시장 개막 장면이 안 섰다');
+  if (r.modal) throw new Error('개막 대사 위에 팝업이 덮였다');
+  if (!r.sign) throw new Error('우리 자리가 비어 있지 않다');
+  return `빈 자리 · 「${r.line.slice(0, 18)}…」`;
+});
+
+await step('개막이 끝나면 선택지가 전시장 위에 뜬다', async () => {
+  for (let i = 0; i < 60; i++) {
+    const on = await page.evaluate(() => document.getElementById('modal').classList.contains('show'));
+    if (on) break;
+    await page.waitForTimeout(300);
+  }
+  const r = await page.evaluate(() => ({
+    modal: document.getElementById('modal').classList.contains('show'),
+    title: document.getElementById('mTitle').textContent,
+    expo: document.body.classList.contains('expo'),
+    opts: document.querySelectorAll('#mOpts .choice').length,
+    // 팝업이 전시장 자막보다 위에 있어야 둘 다 안 겹친다.
+    over: Number(getComputedStyle(document.getElementById('modal')).zIndex)
+      > Number(getComputedStyle(document.getElementById('expo')).zIndex),
+  }));
+  if (!r.modal) throw new Error('선택지가 안 떴다');
+  if (!r.expo) throw new Error('선택하는 동안 전시장이 사라졌다');
+  if (r.opts !== 3) throw new Error(`선택지가 ${r.opts}개`);
+  if (!r.over) throw new Error('팝업이 전시장 자막에 덮인다');
+  return `${r.title} · ${r.opts}개`;
+});
+
+await step('부스가 서는 동안 랭크업이 위에 안 덮인다', async () => {
+  const before = await page.evaluate(() => window.__game.company.rank);
+  // 대형 부스. 팬이 크게 늘어 그 자리에서 랭크가 오른다.
+  const picked = await page.evaluate(() => {
+    const o = document.querySelectorAll('#mOpts .choice');
+    if (!o.length) return false;
+    o[o.length - 1].click();
+    return true;
+  });
+  if (!picked) throw new Error('선택지가 없다');
+  await page.waitForTimeout(1400);
+  const r = await page.evaluate(() => ({
+    expo: document.body.classList.contains('expo'),
+    modal: document.getElementById('modal').classList.contains('show'),
+    rank: window.__game.company.rank,
+  }));
+  if (!r.expo) throw new Error('부스 장면이 안 섰다');
+  if (r.modal) throw new Error('부스 장면 위에 팝업이 덮였다');
+  // 장면이 끝날 때까지 기다렸다가, 그때 밀린 팝업이 나오는지 본다.
+  for (let i = 0; i < 80; i++) {
+    const ok = await page.evaluate(() => {
+      const b = document.getElementById('xOk');
+      return b && !b.hidden;
+    });
+    if (ok) break;
+    await page.waitForTimeout(300);
+  }
+  await page.evaluate(() => { const b = document.getElementById('xOk'); if (b && !b.hidden) b.click(); });
+  await page.waitForTimeout(900);
+  const after = await page.evaluate(() => ({
+    expo: document.body.classList.contains('expo'),
+    modal: document.getElementById('modal').classList.contains('show'),
+    rank: window.__game.company.rank,
+  }));
+  if (after.expo) throw new Error('전시장이 안 닫혔다');
+  return `랭크 ${before} → ${after.rank} · 밀린 팝업 ${after.modal ? '뒤에 뜸' : '없음'}`;
+});
+
+await page.evaluate(() => window.__ui.closeModal());
+await page.waitForTimeout(400);
 
 await page.screenshot({ path: `${OUT}/raid.png` });
 if (errs.length) { console.log('\n--- 콘솔 오류 ---'); for (const e of errs.slice(0, 6)) console.log(e); }

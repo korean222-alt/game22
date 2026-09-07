@@ -26,6 +26,7 @@ import { buildArena, arenaSetFor, inArenaZone } from './world/arena.js';
 import { buildExpoHall, inExpoZone } from './world/expo.js';
 import { Visitors } from './world/visitors.js';
 import { Game } from './game/state.js';
+import { TUTORIAL } from './game/tutorial.js';
 import { addMotivation } from './game/staff.js';
 import * as staffMod from './game/staff.js';
 import { FirstPerson, SPOT_KO } from './ui/firstperson.js';
@@ -1522,7 +1523,8 @@ class View {
      DOM 한 장을 부스 뒷벽 위에 띄운다 — 우리 회사 이름과 지금 미는 게임이
      거기 적혀 있어야 그 부스가 우리 것이 된다. */
   drawBoothTag(w, h) {
-    if (!this.expo || !this.expoHall) {
+    // 초대장 장면(빈 자리)에는 걸 간판이 없다. 아직 부스를 안 세웠으니까.
+    if (!this.expo || !this.expoHall || (this.expoHall.def && this.expoHall.def.empty)) {
       if (this.boothEl) this.boothEl.style.display = 'none';
       return;
     }
@@ -1708,6 +1710,7 @@ async function boot() {
 
   window.__game = game;                 // console handles while balancing
   window.__staffMod = staffMod;         // tools/battle.mjs reads power/abilities here
+  window.__tutorial = TUTORIAL;         // tools/flow.mjs 가 안내의 줄들을 검사한다
   window.__view = view;
   window.__ui = ui;
   window.__renderer = renderer;

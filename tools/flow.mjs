@@ -25,8 +25,29 @@ page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
 page.on('console', (m) => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text()); });
 
 let pass = 0, fail = 0;
+/* 무대가 도는 동안에는 검사를 시작하지 않는다.
+
+   시상식과 게임덱스는 답을 받을 때까지 화면을 붙들고, 그동안 열리는 팝업은
+   전부 줄을 선다 — 그게 규칙이다. 그 위에서 탭을 누르면 하네스는 "확인 창이
+   안 뜬다" 고 말하는데, 실제로 벌어진 일은 무대가 아직 안 끝난 것이다.
+   건너뛰기를 눌러 무대를 접고, 접힌 다음에 검사를 시작한다. */
+const settle = async () => {
+  for (let i = 0; i < 120; i++) {
+    const busy = await page.evaluate(() => {
+      const b = document.body.classList;
+      if (!b.contains('gala') && !b.contains('expo')) return false;
+      for (const id of ['galaSkip', 'xSkip', 'xOk']) {
+        const el = document.getElementById(id);
+        if (el && !el.hidden && el.offsetParent !== null) { el.click(); break; }
+      }
+      return true;
+    });
+    if (!busy) return;
+    await page.waitForTimeout(250);
+  }
+};
 const step = async (label, fn) => {
-  try { const r = await fn(); console.log(`  ✓ ${label}${r ? ' — ' + r : ''}`); pass++; }
+  try { await settle(); const r = await fn(); console.log(`  ✓ ${label}${r ? ' — ' + r : ''}`); pass++; }
   catch (e) { console.log(`  ✗ ${label}: ${e.message}`); fail++; }
 };
 /* 탭이 두 줄로 갈라졌다: 위 줄(#tabs)에 회사·직원·개발·사무실, 오른쪽
@@ -136,13 +157,36 @@ await step('설치 안내를 닫는다', async () => {
   if (still) throw new Error('닫기를 눌러도 안 닫힘');
   return '닫기';
 });
-/* 안내 카드는 없앴다. 열 번째 줄이 지워지지 않아 영영 남는 자리였고,
-   할 일은 운영 탭의 '할 일' 목록이 이미 세고 있다. */
-await step('안내 카드도 안내 탭도 없다', async () => {
-  const stray = await page.evaluate(() => !!document.querySelector('.tabbtn[data-tab="guide"]')
-    || !!document.getElementById('tutor') || !!document.querySelector('#panel .gstep'));
-  if (stray) throw new Error('안내가 아직 남아 있음');
-  return '완전히 빠졌다';
+/* 안내 카드는 레일 맨 위에 선다. 한 번 통째로 지웠던 적이 있는데 —
+   상점 줄이 끝낼 방법 없이 남았기 때문이다 — 지워야 했던 것은 안내가
+   아니라 그 줄의 조건이었다. 여기서는 (1) 카드가 서 있는지, (2) 첫 줄이
+   책상인지, (3) 끝낼 수 없는 줄이 표에 없는지를 본다. */
+await step('안내 카드가 첫 할 일을 가리킨다', async () => {
+  const on = await page.evaluate(() => document.body.classList.contains('has-tutor')
+    && document.getElementById('tutor') !== null);
+  if (!on) throw new Error('안내 카드가 안 뜬다');
+  const t = await page.evaluate(() => document.getElementById('tuTitle').textContent);
+  if (!t.includes('책상')) throw new Error(`첫 줄이 책상이 아니다: ${t}`);
+  const step1 = await page.evaluate(() => document.getElementById('tuStep').textContent);
+  return `${step1} · ${t}`;
+});
+/* 끝낼 방법이 손에 없는 줄이 있으면 안내 전체가 그 자리에서 멈춘다. 모든
+   줄이 **플레이어가 화면에서 할 수 있는 것**으로 끝나는지 본다. */
+await step('안내의 모든 줄에 끝내는 길이 있다', async () => {
+  const bad = await page.evaluate(() => {
+    const g = window.__game;
+    const seen = { shop: true, company: true, bag: true, dev: true, staff: true, office: true, mail: true };
+    const fake = {
+      ...g,
+      company: { ...g.company, seenTabs: seen, shipped: 3, floors: 2, placed: [{ id: 'desk' }],
+        bag: { food: 1 }, helpers: {}, helperSlots: [], research: { tool: 1 }, spentOnShop: 0 },
+      staff: [{ id: 1 }], bag: [{ id: 'desk' }], proposals: [{}], project: null,
+      finished: { title: 'x' }, releases: [{ bugs: 0 }],
+    };
+    return window.__tutorial.filter((t) => !t.done(fake)).map((t) => t.id);
+  });
+  if (bad.length) throw new Error(`끝낼 수 없는 줄: ${bad.join(', ')}`);
+  return '모든 줄이 닫힌다';
 });
 
 console.log('\n── 2. 회사 탭 (외주 · 연구 · 저장) ──');

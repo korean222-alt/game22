@@ -26,10 +26,16 @@ const won = (n) => '₩' + Math.round(n).toLocaleString('ko-KR');
    `when` gates an event on the company's situation, so a server outage cannot
    fire at a studio with nothing live and a burnout cannot hit an empty roster.
    `choices` is what turns an event into a decision; an event with none simply
-   happens and reports itself. */
+   happens and reports itself.
+
+   `from` 은 이 소식이 **어디서 왔는가** 다. 예전에는 사무실 위에 카드 한 장이
+   그냥 떴고, 그러면 사건이 아니라 시스템 메시지로 읽힌다. 전화가 왔는지
+   공문이 왔는지 옆자리 사람이 말해 준 것인지가 한 줄 적혀 있으면, 같은
+   선택지가 회사에서 실제로 일어난 일이 된다. */
 export const EVENTS = [
   {
     id: 'viral',
+    from: '📺 방송을 보던 직원이 뛰어 들어왔습니다',
     ko: '바이럴',
     icon: '📈',
     text: '한 스트리머가 「{game}」을(를) 방송에서 다뤘습니다. 신규 유입이 몰리고 있어요.',
@@ -49,6 +55,7 @@ export const EVENTS = [
   },
   {
     id: 'outage',
+    from: '📟 새벽 세 시, 감시 알림이 울렸습니다',
     ko: '서버 장애',
     icon: '🔥',
     text: '새벽에 「{game}」 서버가 내려갔습니다. 지금 대응하지 않으면 유저가 빠집니다.',
@@ -82,6 +89,7 @@ export const EVENTS = [
   },
   {
     id: 'rival',
+    from: '📰 업계지가 아침에 이 기사를 실었습니다',
     ko: '경쟁사 신작',
     icon: '⚔️',
     text: '경쟁사가 대형 신작을 냈습니다. 이번 주 시장 관심이 그쪽으로 쏠립니다.',
@@ -98,6 +106,7 @@ export const EVENTS = [
   },
   {
     id: 'investor',
+    from: '💼 처음 보는 사람이 명함을 두고 갔습니다',
     ko: '투자 제안',
     icon: '💼',
     text: '한 투자사가 지분 없이 선급금을 제안했습니다. 대신 일정이 빡빡해집니다.',
@@ -124,6 +133,7 @@ export const EVENTS = [
   },
   {
     id: 'burnout',
+    from: '😵 옆자리에서 한 사람이 오래 자리를 비웠습니다',
     ko: '번아웃',
     icon: '😵',
     text: '{name} 씨가 지쳐 보입니다. 요즘 계속 야근이었죠.',
@@ -154,6 +164,7 @@ export const EVENTS = [
   },
   {
     id: 'conference',
+    from: '✉️ 협회에서 초청장이 왔습니다',
     ko: '업계 컨퍼런스',
     icon: '🎤',
     text: '개발자 컨퍼런스가 열립니다. 참가비는 있지만 배울 것이 많습니다.',
@@ -175,6 +186,7 @@ export const EVENTS = [
   },
   {
     id: 'headhunt',
+    from: '📇 헤드헌터가 전화를 걸어 왔습니다',
     ko: '헤드헌터',
     icon: '📇',
     text: '헤드헌터가 좋은 사람들을 소개해 주겠다고 합니다.',
@@ -198,6 +210,7 @@ export const EVENTS = [
   },
   {
     id: 'grant',
+    from: '🏛️ 관공서에서 공문이 도착했습니다',
     ko: '콘텐츠 진흥금',
     icon: '🏛️',
     text: '지역 진흥원의 소규모 개발사 지원금에 선정되었습니다.',
@@ -209,6 +222,7 @@ export const EVENTS = [
   },
   {
     id: 'fanart',
+    from: '🎨 트위터 알림이 아침부터 멈추지 않습니다',
     ko: '팬 아트',
     icon: '🎨',
     text: '커뮤니티에 우리 게임 팬 아트가 올라와 화제가 됐습니다.',
@@ -222,6 +236,7 @@ export const EVENTS = [
   },
   {
     id: 'leak',
+    from: '🔮 아는 사람이 조용히 파일 하나를 넘겼습니다',
     ko: '시장 조사 유출',
     icon: '🔮',
     text: '다음 분기에 뜰 장르를 미리 들었습니다. {hint} 쪽이라는군요.',
@@ -233,6 +248,7 @@ export const EVENTS = [
   },
   {
     id: 'awards',
+    from: '🏆 심사위원회에서 연락이 왔습니다',
     ko: '인디 어워드',
     icon: '🏆',
     text: '우리 회사가 올해의 신인 스튜디오 후보에 올랐습니다.',
@@ -246,6 +262,7 @@ export const EVENTS = [
   },
   {
     id: 'stray',
+    from: '📦 출근했더니 문 앞에 상자가 놓여 있었습니다',
     ko: '문 앞의 상자',
     icon: '📦',
     text: '아침에 나와 보니 사무실 문 앞에 상자가 하나 놓여 있습니다. 안에서 뭔가 움직입니다.',
@@ -270,6 +287,7 @@ export const EVENTS = [
   },
   {
     id: 'devroom',
+    from: '👀 개발실 안쪽에서 인기척이 났습니다',
     ko: '개발실의 인기척',
     icon: '👀',
     text: '아무도 없는 개발실에서 자꾸 소리가 납니다. 누가 밤새 일을 도와주고 간 것 같기도 하고.',
@@ -287,6 +305,7 @@ export const EVENTS = [
      기간만큼 우리 게임은 멈춘다. */
   {
     id: 'outsource',
+    from: '📞 아침부터 전화가 울립니다',
     ko: '외주 의뢰',
     icon: '📞',
     text: '큰 회사에서 전화가 왔습니다. 「{job}」을(를) 우리 팀에 맡기고 싶다는군요.',
@@ -317,6 +336,7 @@ export const EVENTS = [
   },
   {
     id: 'aircon',
+    from: '🥵 사무실이 아침부터 이상하게 덥습니다',
     ko: '에어컨 고장',
     icon: '🥵',
     text: '한여름에 사무실 에어컨이 멈췄습니다.',
@@ -353,7 +373,7 @@ export function rollEvent(game, rnd) {
   const target = def.pick ? def.pick(game, rnd) : null;
   const vars = def.vars ? def.vars(game, rnd, target) : {};
   const text = String(def.text || '').replace(/\{(\w+)\}/g, (_, k) => (vars[k] !== undefined ? vars[k] : ''));
-  return { id: def.id, ko: def.ko, icon: def.icon, text, def, target };
+  return { id: def.id, ko: def.ko, icon: def.icon, from: def.from || '', text, def, target };
 }
 
 /* ---------- 세일즈 태스크 ----------

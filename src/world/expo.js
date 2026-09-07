@@ -283,7 +283,36 @@ export const EXPO_STAGES = {
     ko: '무대까지 딸린 대형 부스', boothW: 28, boothZ: -6,
     camera: { az: 0.0, el: 0.33, dist: 54 }, lookY: 8, crowd: 20,
   },
+  /* ---- 아직 우리 자리가 비어 있는 홀 ----
+     초대장이 왔을 때 도는 장면이다. 남의 부스는 이미 다 서 있고 사람도
+     들어와 있는데 통로 한복판만 비어 있다 — "여기에 무엇을 세울 것인가"
+     가 화면에 그대로 있어야, 뒤이어 뜨는 선택지가 가계부가 아니라 자리에
+     대한 결정으로 읽힌다. */
+  none: {
+    ko: '아직 비어 있는 자리', boothW: 0, boothZ: 0, empty: true,
+    camera: { az: 0.0, el: 0.30, dist: 46 }, lookY: 7, crowd: 16,
+  },
 };
+
+/* ---------- 아직 비어 있는 우리 자리 ----------
+   초대장 장면에서만 선다. 바닥에 테이프로 구획이 그어져 있고, 아직 펴지
+   않은 파이프 몇 개가 옆에 눕혀져 있다. 그것만으로 "여기가 우리 칸이고
+   아직 아무것도 없다" 가 화면에서 읽힌다. */
+function emptyLot(m, ox, oz) {
+  const w = 18, d = 12;
+  m.noSolid = true;
+  // 구획 테이프. 네 변을 얇은 판으로 긋는다.
+  for (const k of [-1, 1]) {
+    m.box(ox + k * w / 2, 0.08, oz, 0.5, 0.1, d, '#e8b055');
+    m.box(ox, 0.08, oz + k * d / 2, w, 0.1, 0.5, '#e8b055');
+  }
+  m.noSolid = false;
+  // 아직 안 펴진 파이프 다발과 접힌 탁자.
+  m.mat = MAT.METAL;
+  for (let i = 0; i < 4; i++) m.box(ox - 5 + i * 0.9, 0.4, oz - 3.4, 0.5, 0.5, 7, '#7c8494');
+  m.mat = 0;
+  m.boxY(ox + 5.2, 1.5, oz - 2.4, 6, 3, 0.5, 0.22, '#8a6a3c');
+}
 
 /* 전시장을 짓는다. 반환값은 그리는 데 필요한 전부다: 메시, 우리 부스의
    자리, 카메라의 기본 시점, 그림자 프러스텀, 사람이 걸어다닐 지점들. */
@@ -309,7 +338,11 @@ export function buildExpoHall(planId = 'mid') {
   // 우리 부스. 홀 한복판, 카메라 정면.
   const bz = oz + def.boothZ;
   const boothD = planId === 'big' ? 14 : 11;
-  if (planId === 'small') {
+  if (def.empty) {
+    // 빈 자리에는 바닥 표시와 접힌 파이프만 놓는다. 아무것도 안 놓으면
+    // 카펫만 남아서 '자리' 로 안 읽힌다.
+    emptyLot(m, ox, bz);
+  } else if (planId === 'small') {
     flyerTable(m, ox, bz, 0);
     bannerPole(m, ox - 4.6, bz + 1.4, 0, '#e8b055', 11);
     bannerPole(m, ox + 4.6, bz + 1.4, 0, '#c2354a', 11);
@@ -353,7 +386,11 @@ export function buildExpoHall(planId = 'mid') {
     origin: { x: ox, z: oz },
     /* 간판이 걸리는 자리 — 뒷벽 꼭대기(13) 바로 위. 더 올리면 화면 맨 위의
        행사 이름과 겹치고, 더 내리면 뒷벽의 금색 띠에 글자가 잠긴다. */
-    booth: { x: ox, z: bz - (planId === 'small' ? 0 : boothD / 2 - 0.6), y: planId === 'small' ? 4.4 : 13.6 },
+    /* 빈 자리에도 좌표는 남긴다 — 관람객이 "저기" 를 보고 서는 기준점이고,
+       걸 간판이 없다는 것은 `def.empty` 가 따로 말한다. 여기를 null 로 두면
+       사람들이 볼 곳을 잃는다. */
+    booth: { x: ox, z: bz - (planId === 'small' || def.empty ? 0 : boothD / 2 - 0.6),
+      y: planId === 'small' || def.empty ? 4.4 : 13.6 },
     entrance: { x: ox, z: oz + 62 },
     spots,
     camera: { ...def.camera },

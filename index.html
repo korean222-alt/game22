@@ -135,7 +135,9 @@
       <!-- 회사 최고 기록을 넘긴 축이 하나라도 있으면 켜진다. -->
       <span class="arec">신기록</span>
     </div>
-    <div class="atop"><span class="aturn" id="aTurn"></span></div>
+    <!-- 라운드 수와, 마지막 공정에서만 도는 시계. 버그 보스는 때리지 않는
+         대신 시간이 있다 — 남은 시간이 그 공정의 유일한 압박이다. -->
+    <div class="atop"><span class="aturn" id="aTurn"></span><span class="aclock" id="aClock" hidden></span></div>
     <!-- 공정. 지금 어느 단계를 만들고 있나. -->
     <div class="asteps" id="aSteps"></div>
     <div class="aname">
@@ -241,6 +243,22 @@
      개발 점수판·실시간 판매·판매 현황이 같은 자리를 두고 다퉜다. 하나의
      세로 흐름에 넣으면 셋이 동시에 떠도 서로를 가리지 않는다. -->
 <div id="rrail">
+
+<!-- ══ 튜토리얼 ══
+     탭 안에 있던 안내를 화면 오른쪽으로 꺼냈다. 탭이면 찾아 들어가야 하고,
+     처음 하는 사람은 그런 탭이 있다는 것부터 모른다. 지금 할 일 한 가지가
+     항상 화면 구석에 서 있다가, 다 끝나면 카드째로 사라진다 — 끝나고 나서
+     지울 것을 남길 이유가 없으므로 '건너뛰기' 도 '다시 보지 않기' 도 없다. -->
+<div id="tutor" class="card">
+  <button class="tuh" id="tuHead" type="button" aria-expanded="true">
+    <span class="tuk">할 일</span><b id="tuStep">1 / 1</b><i class="tucar">▾</i>
+  </button>
+  <div class="tubody">
+    <div class="tut" id="tuTitle">—</div>
+    <div class="tub" id="tuBody"></div>
+    <button class="btn sm primary wide" id="tuGo">그 탭으로</button>
+  </div>
+</div>
 
 <!-- ══ 개발 진행 상황 — 화면 오른쪽에 붙는 실시간 점수판 ══ -->
 <div id="prog" class="card">

@@ -500,12 +500,27 @@ h4.sec:first-child{margin-top:0}
 .bcost{font-size:10px;color:var(--dim);margin-left:auto;text-align:right;line-height:1.35}
 
 /* ── modal ── */
+/* 팝업은 전시장(120) **위에** 선다. 예전에는 20 이라, 게임덱스 장면이
+   도는 동안 뜬 창은 전시장 자막과 계기판에 덮여서 둘 다 못 읽었다 —
+   사진의 그 화면이다. 시상식 무대(130) 밑에 두는 이유는 그쪽에는 애초에
+   팝업이 올라오지 않기 때문이다(_drainPops 가 세워 둔다). */
 #modal{
-  position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;
+  position:fixed;inset:0;z-index:124;display:none;align-items:center;justify-content:center;
   background:rgba(8,9,12,.58);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);
   padding:calc(var(--sat) + 8px) calc(var(--sar) + 8px) calc(var(--sab) + 8px) calc(var(--sal) + 8px);
 }
 #modal.show{display:flex}
+/* ── 소식의 출처 ──
+   팝업 본문 맨 위에 한 줄. "전화가 울립니다", "공문이 왔습니다" 처럼 이
+   창이 **어디서 온 것인지**를 말한다. 카드가 그냥 뜨면 시스템 메시지지만,
+   출처가 한 줄 앞에 서면 회사에서 일어난 일이 된다. */
+.mfrom{
+  font-size:11px;line-height:1.5;color:var(--gold);font-weight:700;
+  margin:0 0 8px;padding:6px 9px;border-radius:9px;
+  background:rgba(232,176,85,.10);box-shadow:0 0 0 1px rgba(232,176,85,.22) inset;
+  text-align:left;
+}
+
 #modal .mc{
   max-width:440px;width:100%;max-height:100%;overflow-y:auto;
   padding:16px 18px;background:var(--pan2);touch-action:pan-y;
@@ -1097,6 +1112,16 @@ body.arena .bosstag{display:none !important}
 #arena .atitle{font-size:10px;font-weight:800;color:var(--dim);flex:1;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #arena .aturn{font-size:9.5px;color:var(--dim);flex:none}
+/* ── 버그 보스의 시계 ──
+   마지막 공정에서만 켜진다. 반격이 없는 대신 이것 하나가 압박이므로 라운드
+   수보다 크고 밝게 적는다. 12초 아래로 내려가면 붉어지면서 뛴다. */
+#arena .aclock{
+  margin-left:auto;flex:none;font-size:13px;font-weight:900;color:var(--gold);
+  font-variant-numeric:tabular-nums;letter-spacing:.02em;
+  text-shadow:0 1px 6px rgba(0,0,0,.7);
+}
+#arena .aclock.warn{color:#ff7a6a;animation:aclk .6s ease-in-out infinite alternate}
+@keyframes aclk{from{transform:scale(1)}to{transform:scale(1.12)}}
 #arena .aname{display:flex;align-items:baseline;gap:6px;margin-bottom:5px;flex-wrap:wrap}
 #arena .aico{font-size:18px;line-height:1;flex:none}
 #arena .aname b{font-size:15px;font-weight:900;letter-spacing:-.2px}
@@ -1405,6 +1430,35 @@ body.rail-scroll #rrail{pointer-events:auto}
 #rrail::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:2px}
 #rrail > *{pointer-events:auto;flex:none}
 body.arena #rrail,body.fp #rrail,body.meeting #rrail{display:none !important}
+
+/* ── 튜토리얼 카드 ──
+   탭 안에 접혀 있던 안내를 레일 맨 위로 꺼낸 것. 지금 할 일 **한 가지**만
+   서 있고, 마지막 단계를 끝내면 카드째로 사라진다. 그래서 닫기도 건너뛰기도
+   없다 — 남을 것이 없는 안내에는 지울 버튼도 필요 없다. */
+#tutor{
+  position:static;z-index:auto;display:none;width:100%;
+  padding:8px 9px 9px;border-color:rgba(232,176,85,.34);
+}
+body.has-tutor #tutor{display:block}
+body.arena #tutor,body.fp #tutor,body.meeting #tutor{display:none !important}
+#tutor .tuh{
+  display:flex;align-items:center;gap:6px;width:100%;padding:0 0 5px;
+  background:none;border:0;color:inherit;font:inherit;cursor:pointer;text-align:left;
+}
+#tutor .tuk{
+  font-size:9px;font-weight:800;letter-spacing:1.4px;color:var(--gold);
+  text-transform:uppercase;
+}
+#tutor .tuh b{margin-left:auto;font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
+#tutor .tucar{font-style:normal;font-size:9px;color:var(--dim);transition:transform .16s ease}
+#tutor.fold .tucar{transform:rotate(-90deg)}
+#tutor.fold .tubody{display:none}
+#tutor .tut{font-size:12px;font-weight:800;line-height:1.35;margin-bottom:4px}
+#tutor .tub{font-size:10px;line-height:1.6;color:var(--dim);margin-bottom:7px}
+/* 안내문은 길다. 카드가 레일을 통째로 먹으면 판매 현황이 화면 밖으로
+   밀리므로, 여기서만 줄 수를 자른다 — 전체 문장은 그 탭에 가면 있다. */
+#tutor .tub{display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden}
+#tutor .btn{margin:0}
 
 /* 카드 안에서 또 스크롤시키지 않는다. 스크롤 영역이 둘이면 손가락이
    어느 쪽을 밀고 있는지 알 수 없고, 실제로 "판매 현황이 스크롤이 안 된다"
@@ -1898,10 +1952,17 @@ body.gala #gala{display:flex}
   animation:gsway 7s ease-in-out infinite alternate;
 }
 @keyframes gsway{from{transform:translateX(-50%) rotate(-2.2deg)}to{transform:translateX(-50%) rotate(2.2deg)}}
+/* 세로로 쌓되, **줄어드는 것은 수상 내역 한 장뿐**이다.
+   예전에는 무대 전체가 스크롤 상자였다. 상을 여러 개 받은 달에는 마지막
+   정리판이 길어지면서 사회자의 말풍선이 화면 밖으로 밀려났고 — 마무리
+   멘트를 읽을 수가 없었다. 목록만 안에서 스크롤되게 하면 사회자는 언제나
+   맨 아래에 서 있다. */
 .gstage{
   position:relative;z-index:2;width:min(560px,94vw);text-align:center;
-  padding:14px 18px 12px;max-height:96vh;overflow:auto;
+  padding:14px 18px 12px;max-height:96vh;overflow:hidden;
+  display:flex;flex-direction:column;
 }
+.gstage > *{flex:none}
 .gtag{font-size:10px;font-weight:800;color:var(--gold);letter-spacing:.16em}
 .gcat{
   margin-top:10px;font-size:15px;font-weight:800;color:var(--txt);min-height:20px;
@@ -1976,8 +2037,9 @@ body.gala #gala{display:flex}
 /* ── 수상 내역 정리 ──
    무대가 끝나면 한 장으로 다시 보여준다. 부문이 하나씩 지나가는 동안에는
    "우리가 뭘 받았더라" 가 남지 않기 때문이다. */
-.gsum{display:none;text-align:left;margin-top:8px;max-height:38vh;overflow:auto}
-.gsum.on{display:block;animation:gsumin .4s ease both}
+.gsum{display:none;text-align:left;margin-top:8px;overflow:auto}
+/* 남는 높이를 이 한 장이 가져가고, 넘치면 여기서만 스크롤된다. */
+.gsum.on{display:block;flex:0 1 auto;min-height:0;animation:gsumin .4s ease both}
 @keyframes gsumin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .gsum h5{
   font-size:10px;font-weight:800;letter-spacing:.14em;color:var(--gold);
@@ -2240,7 +2302,11 @@ body.expo #side,body.expo #battle,body.expo #prog,body.expo #brand,
 body.expo #floors,body.expo #hint,body.expo #menuBtn,body.expo #fpBtn,
 body.expo #campad,body.expo #rrail,body.expo #salerun,body.expo #buff,
 body.expo #hud,body.expo #placebar,body.expo .nm,body.expo .bub,
-body.expo .lab,body.expo .bosstag{display:none !important}
+body.expo .lab,body.expo .bosstag,body.expo #toast{display:none !important}
+/* 토스트도 비켜선다. z-index 로는 전시장(120) 아래(13)지만 전시장 층은
+   거의 투명해서 그대로 비쳐 보이고, 하필 자막과 건너뛰기 버튼이 있는
+   화면 아래쪽에 뜬다 — 사회자가 말하는 위에 로그 한 줄이 겹친다. */
+body.gala #toast{display:none !important}
 /* 위아래로 아주 옅은 그늘. 자막이 밝은 홀 위에서도 읽힌다. */
 body.expo #expo::before,
 body.expo #expo::after{
@@ -2307,6 +2373,11 @@ body.expo #expo::after{bottom:0;background:linear-gradient(0deg,rgba(6,8,14,.80)
 .xline::after{content:'▌';color:var(--gold);animation:gcar .7s steps(1) infinite}
 .xline.done::after{content:''}
 .xfoot{display:flex;gap:8px;pointer-events:auto}
+
+/* ── 개막 장면 ──
+   아직 부스를 안 세운 시점이다. 방문자 계기판도 결과 카드도 셀 것이 없으니
+   치운다 — 0 이 큼직하게 떠 있으면 그건 정보가 아니라 잡음이다. */
+body.expo-ask .xmid,body.expo-ask .xres{display:none}
 
 /* 부스 간판. 3D 로는 글자를 못 새기므로 뒷벽 위에 DOM 한 장을 띄운다. */
 .boothtag{

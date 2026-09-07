@@ -15,7 +15,7 @@ import {
   GENRES, CONTENTS, METHODS, PLATFORMS, MONETIZE, STATS,
   comboScore, TITLE_WORDS_A, TITLE_WORDS_B, researchEffect, TRAITS,
   bossFor, BOSS_MOVES, BOSS_STAGES, WEAK_TURNS, WEAK_MULT, HP, RAID,
-  devStamina, EXHAUST, strainOf, TREASURE, rollStar, lootPool, starOf,
+  devStamina, EXHAUST, strainOf, TREASURE, rollStar, lootPool, starOf, BUG_BOSS,
 } from './data.js';
 import { JOBS, JOB_ABILITY } from './data.js';
 import { helperSkill } from './helpers.js';
@@ -44,9 +44,39 @@ export const CRIT_BOOM = 2.0;
 export const BUG_BOSS_CUT = 1.0;
 
 /* 앞의 보스에서 팀이 쓰러져 덜 만든 채로 넘어왔을수록 버그 보스가 커진다.
-   "약하게, 대신 앞에서 사람이 죽었으면 세게" 가 이 두 계수다. */
-const BUG_SWELL_UNFINISHED = 2.2;
-const BUG_SWELL_FORFEIT = 0.35;
+   "약하게, 대신 앞에서 사람이 죽었으면 세게" 가 이 두 계수다. 이제는
+   여기에 **실제로 생긴 버그 개수**(BUG_BOSS.perBug)가 더해진다. */
+const BUG_SWELL_UNFINISHED = 1.1;
+const BUG_SWELL_FORFEIT = 0.20;
+
+/* 마지막 놈이 몸에 지고 있는 버그. 반격이 남긴 것과 급하게 덮은 자리에서
+   나온 것을 합친다 — 앞의 셋에서 무슨 일이 있었는지가 이 한 숫자다. */
+export function carriedBugs(project) {
+  return (project.bugExtra || 0) + (project.rushBugs || 0);
+}
+
+/* 버그 보스의 제한시간(전투 시간 기준 초).
+
+   앞의 셋을 실제로 잡아 온 속도로 이 몸집을 잡는 데 걸리는 시간에 여유를
+   곱한다. 상수 초를 박지 않는 이유는, 같은 30초가 신입 넷에게는 넘을 수
+   없는 벽이고 시니어 여섯에게는 없는 것이나 마찬가지이기 때문이다. */
+export function bugTimeLimit(project, hpMax) {
+  const done = Math.max(1, project.clearedHp || 0);
+  const spent = Math.max(1, project.elapsed || 0);
+  const dps = done / spent;                       // 앞의 셋에서의 실제 속도
+  const need = hpMax / Math.max(0.001, dps);
+  return Math.round(Math.max(BUG_BOSS.minSec, Math.min(BUG_BOSS.maxSec, need * BUG_BOSS.margin)));
+}
+
+/* 남은 시간(초). 버그 보스가 아니면 null 이다 — 화면이 시계를 띄울지
+   말지를 이 하나로 정한다. */
+export function bugTimeLeft(project) {
+  if (!project || !project.stages) return null;
+  const st = project.stages[Math.min(project.stage || 0, project.stages.length - 1)];
+  if (!st || !st.bug || !st.limit) return null;
+  if (project.done || project.hp <= 0) return null;
+  return Math.max(0, st.limit - (project.bugClock || 0));
+}
 
 const pick = (rnd, arr) => arr[Math.floor(rnd() * arr.length)];
 
@@ -714,12 +744,21 @@ export function advanceStage(project) {
      숫자로 말하는 자리다. 총 작업량도 같이 늘려야 완성도 막대가 100%를
      넘거나 뒤로 튀지 않는다. */
   if (st.bug && !st.swollen) {
-    const swell = 1 + (project.unfinished || 0) * BUG_SWELL_UNFINISHED
-      + (project.forfeits || 0) * BUG_SWELL_FORFEIT;
+    /* 몸집은 **앞에서 생긴 버그 개수**가 정한다. 반격을 한 번도 안 맞고
+       아무도 안 쓰러졌으면 절반 크기의 덤 한 마리이고, 사양 변경과 야근에
+       줄줄이 맞아 왔으면 두 배 반까지 부푼다. */
+    const swell = Math.max(BUG_BOSS.minSwell, Math.min(BUG_BOSS.maxSwell,
+      BUG_BOSS.minSwell + carriedBugs(project) * BUG_BOSS.perBug
+      + (project.unfinished || 0) * BUG_SWELL_UNFINISHED
+      + (project.forfeits || 0) * BUG_SWELL_FORFEIT));
     const grown = Math.max(20, Math.round(st.hpMax * swell));
     project.totalHp = (project.totalHp || st.hpMax) + (grown - st.hpMax);
     st.hpMax = grown;
     st.swollen = true;
+    // 때리지 않는 대신 시계가 돈다. 이 몸집을 앞의 페이스로 잡는 시간이 기준.
+    st.limit = bugTimeLimit(project, grown);
+    st.bugs = carriedBugs(project);
+    project.bugClock = 0;
   }
   project.hpMax = st.hpMax;
   project.hp = st.hpMax;
@@ -877,15 +916,32 @@ export function battleTick(project, staffById, rnd, ctx = {}, dt = 0.016) {
   if (!anyUp) out.idle = true;
 
   // ---- 보스의 게이지 ----
-  // 버그 보스(noAtk)는 때리지 않는다. 마지막 공정에서 남은 결정은 "시간을
-  // 더 쓸 것인가" 하나이고, 거기에 반격이 얹히면 그냥 벽이 된다.
-  if (project.hp > 0 && !currentStage(project).noAtk) {
-    const st = currentStage(project);
-    project.bossAtb = (project.bossAtb || 0) + step / (st.atk || 4.6);
+  // 버그 보스(noAtk)는 때리지 않는다. 대신 시계가 돈다 — 아래가 그 자리다.
+  const cur = currentStage(project);
+  if (project.hp > 0 && !cur.noAtk) {
+    project.bossAtb = (project.bossAtb || 0) + step / (cur.atk || 4.6);
     if (project.bossAtb >= 1) {
       project.bossAtb -= 1;
       const move = BOSS_MOVES[Math.floor(rnd() * BOSS_MOVES.length)];
       out.events.push(bossAttack(project, staffById, rnd, move));
+    }
+  }
+
+  /* ---- 버그 보스의 시계 ----
+     때리지 않는 대신 시간이 있다. 다 되면 잡은 만큼만 인정하고 마감한다 —
+     남은 버그는 그대로 완성작에 남고, 상점의 디버그 킷으로 손수 지운다. */
+  if (project.hp > 0 && cur.bug && cur.limit) {
+    project.bugClock = (project.bugClock || 0) + step;
+    const left = cur.limit - project.bugClock;
+    // 남은 시간이 처음 경고선을 넘는 순간에 한 번만 알린다.
+    if (left <= BUG_BOSS.warnSec && !project.bugWarned) {
+      project.bugWarned = true;
+      out.events.push({ kind: 'bugWarn', left: Math.max(0, Math.round(left)) });
+    }
+    if (left <= 0) {
+      out.events.push({ kind: 'bugTimeout', killed: Math.round(debugRatio(project) * 100) });
+      for (const ev of forfeitStage(project, rnd, { ...ctx, staffById })) out.events.push(ev);
+      return out;
     }
   }
 

@@ -19,6 +19,7 @@ import {
 import {
   FURNITURE_BY_ID, RESELL, comfortScore, comfortLevel, footprint, overlaps,
 } from './furniture.js';
+import { TUTORIAL, tutorialStep } from './tutorial.js';
 import {
   rollCandidates, proposalPower, giveItem, promote, canPromote,
   reincarnate, canReincarnate, addMotivation, abilities, power, role, seedIds, itemCost,
@@ -149,6 +150,7 @@ export class Game {
       placed: [],
       rescues: 0,                   // how many emergency grants have been taken
       founded: false,               // the naming + grant ceremony has happened
+      seenTabs: {},                 // 안내가 "가 봤다" 로 세는 탭들
       recentCombos: [],             // the last few genre|content keys shipped
       tasksDone: {},                // sales tasks already paid out
       eventsSeen: 0,
@@ -253,6 +255,23 @@ export class Game {
     this.sendMail(welcomeMail(c, this.dateLabel()));
     this.emit('founded', { name: c.name, grant: STARTUP_GRANT });
     return { ok: true, name: c.name, grant: STARTUP_GRANT };
+  }
+
+  /* ---------- 안내 ----------
+     지금 할 일 한 가지. 마지막 단계를 끝내면 null 이 되고, 화면의 카드도
+     그때 통째로 사라진다 — 그래서 건너뛰기도 '다시 보지 않기' 도 없다. */
+  tutorialStep() { return tutorialStep(this); }
+
+  /* 안내가 "그 탭에 가 봤는가" 를 세는 자리. 상점처럼 **살 것이 없을 수도
+     있는** 탭은 방문만으로 끝나야 한다. 안 그러면 끝낼 방법이 손에 없는
+     줄이 되고, 예전에 안내가 통째로 지워진 이유가 그것이었다. */
+  markTabSeen(name) {
+    const c = this.company;
+    c.seenTabs = c.seenTabs || {};
+    if (c.seenTabs[name]) return false;
+    c.seenTabs[name] = true;
+    this.save();
+    return true;
   }
 
   note(text, kind = 'info') {
@@ -1274,14 +1293,16 @@ export class Game {
     let changed = false;
     const boost = this.dlBuff();
     while (s.done < want) {
-      const before = rel.users;
-      const { income, event } = tickRelease(rel, this.rnd, boost);
+      // 화제 배율이 걸린 '이번 주에 붙어 있는 사람' 을 센다. rel.users 는
+      // 배율이 빠진 자연 곡선이라, 그걸 세면 버프가 다운로드에 안 잡힌다.
+      const before = rel.liveUsers || rel.users;
+      const { income, event, users } = tickRelease(rel, this.rnd, boost);
       this.earn(income);
-      this.addDl(Math.max(0, rel.users - before));
+      this.addDl(Math.max(0, users - before));
       s.done += 1;
       s.total += income;
       s.peak = Math.max(s.peak, income);
-      s.points.push({ w: rel.weeks, income, users: rel.users, event });
+      s.points.push({ w: rel.weeks, income, users, event });
       if (event) {
         s.event = { ...event, at: s.done };
         s.events = [...(s.events || []), s.event].slice(-4);
@@ -2147,11 +2168,12 @@ export class Game {
       // 실시간 판매가 도는 게임은 그 팝업이 자기 주차를 흘리고 있다. 여기서
       // 또 한 주를 태우면 같은 주가 두 번 팔린다.
       if (this.sales && this.sales.id === r.id && !this.sales.ended) continue;
-      const before = r.users;
-      income += tickRelease(r, this.rnd, boost).income;
+      const before = r.liveUsers || r.users;
+      const tick = tickRelease(r, this.rnd, boost);
+      income += tick.income;
       // 늘어난 유저만 다운로드로 센다. 빠져나간 주는 0 이다 — 누적
       // 다운로드는 줄어들 수 있는 숫자가 아니다.
-      this.addDl(Math.max(0, r.users - before));
+      this.addDl(Math.max(0, tick.users - before));
     }
     // 경쟁사도 한 주를 산다. 우리 게임이 식는 동안 남의 게임은 뜬다.
     this._tickRivals();
@@ -2436,6 +2458,7 @@ export class Game {
       c.lastAwardKey = c.lastAwardKey || null;
       c.lastExpoKey = c.lastExpoKey || null;
       c.expoInvite = c.expoInvite || null;
+      c.seenTabs = c.seenTabs || {};
       /* 누적 다운로드가 없던 세이브는 지금 있는 출시작으로 되짚는다.
          0 으로 열면 이미 백만을 판 회사가 10만 축하 편지를 받는다. */
       if (!c.totalDl) {
@@ -2489,6 +2512,6 @@ export {
   STATS, JOBS, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, RESEARCH, CONTRACTS, MARKETING,
   SHOP,
   abilities, power, role, rankInfo, RANK_UP_FANS, itemCost, trainStamina, floorCost,
-  expToNext, STARTUP_GRANT, TASKS, rewardText,
+  expToNext, STARTUP_GRANT, TASKS, TUTORIAL, rewardText,
   hpRatio, isTired, isSpent, gearOf, basePower, shopItem, GEAR_SLOTS,
 };

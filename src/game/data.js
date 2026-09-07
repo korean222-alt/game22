@@ -152,6 +152,22 @@ export const GENRES = [
   { id: 'idle', ko: '방치형', hp: 0.90, tags: ['casual', 'long'], bias: { retention: 1.35, usability: 1.15 } },
   { id: 'mmo', ko: 'MMO', hp: 1.75, tags: ['long', 'social', 'grind'], bias: { social: 1.40, retention: 1.35 } },
   { id: 'party', ko: '파티게임', hp: 0.95, tags: ['casual', 'social'], bias: { social: 1.35, craze: 1.15 } },
+  /* ---- 늘린 열한 장르 ----
+     열여섯 개로는 기획서 돌림판이 두어 바퀴 만에 다 돌았다. 장르는 이
+     게임에서 "이번엔 뭘 만드나" 를 정하는 첫 칸이고, 그 칸의 가짓수가
+     적으면 두 번째 작품부터 새로울 것이 없다. 고를 때 성격이 서로 겹치지
+     않는 것들로만 늘렸다 — 이름만 다르고 같은 물건이면 늘린 값이 없다. */
+  { id: 'fighting', ko: '대전격투', hp: 1.10, tags: ['fast', 'skill'], bias: { impact: 1.25, usability: 1.20 } },
+  { id: 'roguelike', ko: '로그라이크', hp: 1.30, tags: ['grind', 'skill', 'long'], bias: { retention: 1.30, impact: 1.10 } },
+  { id: 'defense', ko: '디펜스', hp: 1.10, tags: ['build', 'skill'], bias: { usability: 1.15, retention: 1.20 } },
+  { id: 'platformer', ko: '플랫포머', hp: 1.00, tags: ['fast', 'skill', 'short'], bias: { usability: 1.30, impact: 1.10 } },
+  { id: 'stealth', ko: '잠입', hp: 1.20, tags: ['skill', 'story'], bias: { impact: 1.25, retention: 1.05 } },
+  { id: 'survival', ko: '생존', hp: 1.35, tags: ['build', 'long', 'grind'], bias: { retention: 1.30, impact: 1.15 } },
+  { id: 'novel', ko: '비주얼 노벨', hp: 0.95, tags: ['story', 'short'], bias: { impact: 1.30, craze: 1.10 } },
+  { id: 'open', ko: '오픈월드', hp: 1.60, tags: ['story', 'long', 'build'], bias: { impact: 1.35, retention: 1.25 } },
+  { id: 'quiz', ko: '퀴즈', hp: 0.75, tags: ['casual', 'short', 'social'], bias: { craze: 1.25, social: 1.15 } },
+  { id: 'moba', ko: '대전 온라인', hp: 1.55, tags: ['fast', 'skill', 'social'], bias: { social: 1.30, impact: 1.20 } },
+  { id: 'sandbox', ko: '샌드박스', hp: 1.45, tags: ['build', 'long', 'collect'], bias: { retention: 1.35, social: 1.15 } },
 ];
 
 /* ---------- game content (the mid-battle idea card) ---------- */
@@ -209,59 +225,154 @@ export const METHODS = [
   { id: 'polish', ko: '완성도 다듬기', desc: '버그가 크게 줄어든다', dmg: 0.85, quality: 1.15, bugCut: 0.45 },
 ];
 
-/* Hand-authored standout pairings. Everything else falls back to tag overlap,
-   so the table can grow without the combo maths changing. */
+/* ══════════════════════ 장르 × 소재의 궁합 ══════════════════════
+
+   세 장의 표로 적는다. 태그가 겹치는 것만으로는 이 판단을 못 하기 때문이다:
+   태그는 "빠른가 / 긴가 / 모으는가" 같은 성격이고, 사람이 조합을 보고 곧장
+   아는 것 — **아이돌 육성**, **좀비 슈팅**, **축구 매니저** — 은 성격이
+   아니라 이미 세상에 있는 장르 이름이다. 태그만 세면 아이돌 육성이
+   "무난한 조합" 이 되고, 그건 화면이 틀린 말을 하는 것이다.
+
+     MASTER  손으로 고른 걸작 짝. 무조건 '환상의 조합' 위로 올라간다.
+     GOOD    분명히 말이 되는 짝. 최소한 '좋은 조합' 은 된다.
+     BAD     서로 싸우는 짝. 아무리 태그가 겹쳐도 '아쉬운 조합' 아래로 내려간다.
+             겹치는 게 하나도 없으면 '안 맞는 조합' 바닥까지 간다.
+
+   표에 없는 짝은 태그가 정한다 — 그래서 표를 안 늘려도 새 장르가 바로
+   돌아가고, 늘리면 그만큼 정확해진다. */
 export const MASTER_COMBOS = [
-  ['rpg', 'fantasy'], ['rpg', 'dungeon'], ['card', 'idol'], ['card', 'fantasy'],
-  ['rhythm', 'idol'], ['sim', 'farm'], ['idle', 'farm'], ['mmo', 'fantasy'],
-  ['strategy', 'sengoku'], ['action', 'zombie'], ['shoot', 'space'], ['racing', 'robot'],
-  ['puzzle', 'animal'], ['adv', 'mystery'], ['raise', 'animal'], ['party', 'school'],
-  ['board', 'school'], ['sports', 'soccer'], ['sim', 'cooking'], ['adv', 'space'],
-  ['adv', 'dino'], ['raise', 'dino'], ['sim', 'cafe'], ['idle', 'cafe'],
-  ['action', 'ninja'], ['strategy', 'pirate'], ['adv', 'pirate'], ['adv', 'horror'],
-  ['shoot', 'robot'], ['rpg', 'magic'], ['mmo', 'dungeon'], ['party', 'animal'],
+  /* 기존 열여섯 장르 */
+  ['rpg', 'fantasy'], ['rpg', 'dungeon'], ['rpg', 'magic'], ['rpg', 'sengoku'],
+  ['card', 'idol'], ['card', 'fantasy'], ['card', 'magic'],
+  ['rhythm', 'idol'], ['sim', 'farm'], ['sim', 'cooking'], ['sim', 'cafe'], ['sim', 'soccer'],
+  ['idle', 'farm'], ['idle', 'cafe'], ['idle', 'animal'],
+  ['mmo', 'fantasy'], ['mmo', 'dungeon'],
+  ['strategy', 'sengoku'], ['strategy', 'pirate'], ['strategy', 'space'],
+  ['action', 'zombie'], ['action', 'ninja'], ['action', 'robot'],
+  ['shoot', 'space'], ['shoot', 'robot'], ['shoot', 'zombie'],
+  ['racing', 'robot'],
+  ['puzzle', 'animal'], ['puzzle', 'cooking'],
+  ['adv', 'mystery'], ['adv', 'space'], ['adv', 'dino'], ['adv', 'pirate'], ['adv', 'horror'],
+  ['raise', 'animal'], ['raise', 'dino'], ['raise', 'idol'], ['raise', 'school'],
+  ['party', 'school'], ['party', 'animal'],
+  ['board', 'school'], ['sports', 'soccer'], ['sim', 'sengoku'],
+  /* 늘린 열한 장르. 각자 "이 장르 하면 떠오르는 것" 둘씩이다. */
+  ['fighting', 'ninja'], ['fighting', 'robot'],
+  ['roguelike', 'dungeon'], ['roguelike', 'fantasy'],
+  ['defense', 'zombie'], ['defense', 'fantasy'],
+  ['platformer', 'animal'], ['platformer', 'dino'],
+  ['stealth', 'ninja'], ['stealth', 'mystery'],
+  ['survival', 'zombie'], ['survival', 'ocean'],
+  ['novel', 'school'], ['novel', 'mystery'],
+  ['open', 'fantasy'], ['open', 'pirate'],
+  ['quiz', 'school'], ['quiz', 'animal'],
+  ['moba', 'fantasy'], ['moba', 'magic'],
+  ['sandbox', 'farm'], ['sandbox', 'dungeon'],
+];
+
+/* 걸작까지는 아니어도 **분명히 말이 되는** 짝. 이 층이 없던 동안에는
+   '환상' 아니면 '무난' 뿐이라, 학원 리듬게임이나 우주 시뮬레이션처럼
+   누구나 그림이 그려지는 조합이 아무 짝도 아닌 것으로 취급됐다. */
+export const GOOD_COMBOS = [
+  ['rpg', 'scifi'], ['rpg', 'space'], ['rpg', 'pirate'], ['rpg', 'ninja'],
+  ['action', 'dino'], ['action', 'pirate'], ['action', 'fantasy'], ['action', 'magic'],
+  ['shoot', 'scifi'], ['shoot', 'ninja'],
+  ['racing', 'scifi'], ['racing', 'ocean'],
+  ['rhythm', 'school'], ['rhythm', 'magic'],
+  ['board', 'mystery'], ['board', 'animal'], ['board', 'sengoku'],
+  ['sports', 'school'], ['sports', 'animal'],
+  ['adv', 'fantasy'], ['adv', 'ocean'], ['adv', 'magic'], ['adv', 'ninja'],
+  ['strategy', 'robot'], ['strategy', 'dungeon'], ['strategy', 'scifi'],
+  ['raise', 'farm'], ['raise', 'magic'], ['raise', 'cafe'],
+  ['idle', 'dungeon'], ['idle', 'ocean'], ['idle', 'zombie'],
+  ['mmo', 'sengoku'], ['mmo', 'space'], ['mmo', 'pirate'],
+  ['party', 'cooking'], ['party', 'cafe'], ['party', 'soccer'],
+  ['puzzle', 'magic'], ['puzzle', 'ocean'], ['puzzle', 'cafe'],
+  ['sim', 'ocean'], ['sim', 'space'], ['sim', 'school'], ['sim', 'pirate'],
+  ['card', 'dungeon'], ['card', 'sengoku'], ['card', 'robot'],
+  ['fighting', 'zombie'], ['fighting', 'dino'], ['fighting', 'magic'],
+  ['roguelike', 'magic'], ['roguelike', 'scifi'], ['roguelike', 'horror'],
+  ['defense', 'robot'], ['defense', 'dino'], ['defense', 'sengoku'],
+  ['platformer', 'fantasy'], ['platformer', 'ninja'], ['platformer', 'cooking'],
+  ['stealth', 'scifi'], ['stealth', 'sengoku'], ['stealth', 'horror'],
+  ['survival', 'dino'], ['survival', 'space'], ['survival', 'horror'],
+  ['novel', 'idol'], ['novel', 'horror'], ['novel', 'magic'], ['novel', 'cafe'],
+  ['open', 'scifi'], ['open', 'dino'], ['open', 'sengoku'], ['open', 'space'],
+  ['quiz', 'cooking'], ['quiz', 'idol'], ['quiz', 'mystery'],
+  ['moba', 'robot'], ['moba', 'sengoku'], ['moba', 'scifi'],
+  ['sandbox', 'space'], ['sandbox', 'ocean'], ['sandbox', 'fantasy'], ['sandbox', 'robot'],
+  ['sandbox', 'animal'], ['survival', 'farm'], ['open', 'zombie'], ['board', 'zombie'],
+  ['board', 'pirate'], ['strategy', 'fantasy'], ['action', 'horror'], ['shoot', 'horror'],
+  ['adv', 'school'], ['mmo', 'scifi'], ['racing', 'animal'], ['party', 'idol'],
+  ['platformer', 'magic'], ['fighting', 'fantasy'],
 ];
 
 /* Pairings that actively fight each other. Tag overlap alone never produces a
    really bad score — every content shares SOMETHING with every genre — so the
-   "이건 아니지" half of the discovery game has to be written down too. A puzzle
-   game about dungeon crawling, an adventure about a football league: the player
-   should be able to feel these are wrong and learn it by shipping one. */
+   "이건 아니지" half of the discovery game has to be written down too.
+
+   ── 여기서 뺀 것들 ──
+   좀비 방치형과 좀비 보드게임은 '안 맞는 조합' 이었는데, 둘 다 실제로 흔한
+   물건이다. 잘 맞을 것 같은데 화면이 안 맞는다고 말하면 그건 발견을 가르치는
+   게 아니라 표가 틀린 것이다. 퍼즐 좀비·퍼즐 공포도 같은 이유로 뺐다. */
 export const BAD_COMBOS = [
-  ['puzzle', 'dungeon'], ['puzzle', 'sengoku'], ['puzzle', 'horror'], ['puzzle', 'zombie'],
+  ['puzzle', 'dungeon'], ['puzzle', 'sengoku'],
   ['adv', 'soccer'], ['adv', 'cooking'], ['adv', 'cafe'],
-  ['mmo', 'mystery'], ['mmo', 'horror'], ['idle', 'zombie'], ['idle', 'horror'],
+  ['mmo', 'mystery'], ['mmo', 'horror'], ['idle', 'horror'],
   ['rhythm', 'dungeon'], ['rhythm', 'sengoku'], ['rhythm', 'dino'],
-  ['board', 'zombie'], ['board', 'horror'], ['racing', 'cooking'], ['racing', 'idol'],
+  ['board', 'horror'], ['racing', 'cooking'], ['racing', 'idol'],
   ['sports', 'magic'], ['sports', 'horror'], ['shoot', 'cafe'], ['shoot', 'farm'],
   ['sim', 'ninja'], ['card', 'cafe'], ['raise', 'zombie'],
+  ['fighting', 'farm'], ['fighting', 'cafe'], ['fighting', 'cooking'],
+  ['roguelike', 'idol'], ['roguelike', 'cafe'],
+  ['defense', 'idol'], ['defense', 'cafe'],
+  ['platformer', 'sengoku'], ['platformer', 'mystery'],
+  ['stealth', 'cooking'], ['stealth', 'farm'], ['stealth', 'idol'],
+  ['survival', 'idol'], ['survival', 'cafe'],
+  ['novel', 'soccer'], ['novel', 'dungeon'],
+  ['open', 'cafe'], ['open', 'soccer'],
+  ['quiz', 'dungeon'], ['quiz', 'horror'], ['quiz', 'zombie'],
+  ['moba', 'cooking'], ['moba', 'farm'], ['moba', 'cafe'],
+  ['sandbox', 'idol'], ['sandbox', 'soccer'],
 ];
 
 const MASTER_SET = new Set(MASTER_COMBOS.map(([a, b]) => a + '|' + b));
+const GOOD_SET = new Set(GOOD_COMBOS.map(([a, b]) => a + '|' + b));
 const BAD_SET = new Set(BAD_COMBOS.map(([a, b]) => a + '|' + b));
 
-/* Compatibility in [0.55, 2.0]. Tag overlap is the floor, a listed masterpiece
-   pairing is what actually makes a hit, and a listed clash is what makes a
-   flop. The spread has to be wide in BOTH directions or "발견"은 상향 조정일
-   뿐, 진짜 선택이 되지 않는다. */
+/* Compatibility in [0.55, 2.0]. 태그 겹침이 바닥을 깔고, 표가 그 위에
+   **바닥선/천장선**을 긋는다.
+
+   예전에는 표가 점수를 더하기만 했다. 그래서 태그가 하나도 안 겹치는
+   걸작 짝(학원 육성처럼)이 손으로 골라 넣었는데도 '좋은 조합' 에 머물렀다 —
+   표에 적어 넣은 뜻이 화면에 그대로 안 나오는 것이다. 지금은 MASTER 면
+   반드시 환상 위, GOOD 이면 반드시 좋은 위, BAD 면 반드시 아쉬운 아래다.
+   표에 없으면 예전 그대로 태그가 정한다. */
 export function comboScore(genreId, contentId) {
   const g = GENRES.find((x) => x.id === genreId);
   const c = CONTENTS.find((x) => x.id === contentId);
   if (!g || !c) return 1;
   const key = genreId + '|' + contentId;
-  let s = 0.85;
   const shared = g.tags.filter((t) => c.tags.includes(t)).length;
-  s += shared * 0.16;
-  if (MASTER_SET.has(key)) s += 0.55;
-  if (BAD_SET.has(key)) s -= 0.45;
+  let s = 0.85 + shared * 0.16;
+  if (GOOD_SET.has(key)) s = Math.max(s + 0.24, 1.28);
+  if (MASTER_SET.has(key)) s = Math.max(s + 0.40, 1.62);
+  if (BAD_SET.has(key)) s = Math.min(s - 0.30, 0.80);
   return Math.min(2.0, Math.max(0.55, s));
 }
 
+/* 점수를 사람 말로.
+
+   '무난' 의 경계가 1.0 이던 시절에는, 표에 안 적혔고 태그도 안 겹치는 짝
+   — 그러니까 **아무 문제도 없는 그냥 평범한 짝** — 이 전부 '아쉬운 조합'
+   이었다. 567개 중 222개가 그랬다. 화면이 아쉽다고 말하면 플레이어는
+   그것을 실패로 읽는다. 아쉬움은 BAD 표에 적힌 것들만의 몫이어야 하고,
+   그래서 경계를 태그 바닥값(0.85) 아래로 내렸다. */
 export function comboLabel(score) {
   if (score >= 1.55) return { ko: '환상의 조합', cls: 'great' };
   if (score >= 1.25) return { ko: '좋은 조합', cls: 'good' };
-  if (score >= 1.0) return { ko: '무난한 조합', cls: 'ok' };
-  if (score >= 0.82) return { ko: '아쉬운 조합', cls: 'bad' };
+  if (score >= 0.84) return { ko: '무난한 조합', cls: 'ok' };
+  if (score >= 0.66) return { ko: '아쉬운 조합', cls: 'bad' };
   return { ko: '안 맞는 조합', cls: 'bad' };
 }
 
@@ -386,12 +497,32 @@ export function rankInfo(rank) {
   };
 }
 
-/* Rank thresholds: ~10k fans by rank 5, ~255k by 10, ~7M by 15. Tuned against
-   the headless balance run: a studio reaches rank 2-3 in its first year (so
-   year one still visibly moves), the platform ladder opens through the middle
-   years, and the twenties stay a long career away rather than being exhausted
-   before the second Christmas. */
-export const RANK_UP_FANS = (rank) => Math.round(900 * Math.pow(2.2, rank - 1));
+/* ---------- 랭크 사다리 ----------
+   `RANK_UP_FANS(r)` 는 랭크 r 에서 r+1 로 올라가는 데 필요한 팬 수다.
+
+   예전에는 900 × 2.2^(r-1) — 배수가 **끝까지 같았다**. 배수가 같으면
+   체감 속도도 끝까지 같다: 팬은 출시할 때마다 곱으로 늘어나므로, 회사가
+   커질수록 한 작품이 밀어 올리는 랭크 수가 오히려 늘어난다. 게임덱스 한
+   번에 랭크가 두 단 오르던 자리가 거기였다.
+
+   그래서 두 가지를 바꾼다.
+     1) 첫 칸을 900 → 1,400 으로 올린다. 데뷔작 한 편으로 랭크가 오르지
+        않고, 두세 편은 내야 한다.
+     2) **배수 자체가 랭크를 따라 커진다** (2.2 → 2.6 까지). 위로 갈수록
+        한 칸이 더 무거워지므로, 후반의 한 랭크는 회사가 몇 년을 들여
+        올라가는 칸이 된다.
+
+   결과적으로 앞쪽은 예전의 1.6배쯤 걸리고, 뒤로 갈수록 그 격차가 두 배
+   넘게 벌어진다. 랭크 1→2 는 1,400, 5→6 은 35,000, 10→11 은 234만이다. */
+export const RANK_UP_BASE = 1400;
+export const RANK_UP_STEP = (rank) => Math.min(2.6, 2.2 + 0.02 * (Math.max(1, rank) - 1));
+export const RANK_UP_FANS = (rank) => {
+  let need = RANK_UP_BASE;
+  for (let r = 1; r < Math.max(1, rank); r++) need *= RANK_UP_STEP(r);
+  // 자릿수를 잘라 읽기 좋은 수로 만든다. 화면에 뜨는 목표치이기 때문이다.
+  const unit = need < 10000 ? 100 : need < 1000000 ? 1000 : 10000;
+  return Math.round(need / unit) * unit;
+};
 
 /* ---------- 창업 지원금 ----------
    A studio now opens with no staff and no furniture, so the opening move is
@@ -633,6 +764,17 @@ export const BOSSES = {
   idle: { ko: '무한 루프', shape: 'orb', col: '#8a8a9a', accent: '#8affd8', line: '아무 일도 일어나지 않는다!' },
   mmo: { ko: '서버 리바이어던', shape: 'drone', col: '#3a6ad8', accent: '#ff5a5a', line: '동접이 감당이 안 된다!' },
   party: { ko: '파티 광대', shape: 'ghost', col: '#d8a03a', accent: '#ff6ad8', line: '아무도 안 웃는다!' },
+  fighting: { ko: '프레임 데이터 마신', shape: 'spike', col: '#c94a3a', accent: '#ffd66e', line: '이 기술이 너무 세다!' },
+  roguelike: { ko: '시드 뽑기 마녀', shape: 'orb', col: '#6a4ab8', accent: '#8affd8', line: '이번 판은 시작부터 글렀다!' },
+  defense: { ko: '무한 웨이브', shape: 'drone', col: '#4a8ad8', accent: '#ffe08a', line: '다음 웨이브가 벌써 온다!' },
+  platformer: { ko: '판정 박스 요괴', shape: 'cube', col: '#3aa8b8', accent: '#ffd66e', line: '분명 밟았는데 죽었다!' },
+  stealth: { ko: '경비병 시야', shape: 'ghost', col: '#4a5a7a', accent: '#ff5a5a', line: '어디서 봤는지 모르겠다!' },
+  survival: { ko: '배고픔 게이지', shape: 'spike', col: '#7a8a4a', accent: '#ffe08a', line: '만들기도 전에 굶어 죽는다!' },
+  novel: { ko: '분기 미로', shape: 'ghost', col: '#c95a8a', accent: '#ffe6a0', line: '루트가 서른 개다!' },
+  open: { ko: '텅 빈 대륙', shape: 'cube', col: '#4a7a5a', accent: '#8affd8', line: '넓기만 하고 할 게 없다!' },
+  quiz: { ko: '문제은행 괴물', shape: 'orb', col: '#d88a3a', accent: '#ffffff', line: '문제가 동나간다!' },
+  moba: { ko: '메타 밸런스', shape: 'drone', col: '#5a4ad8', accent: '#ff8a5a', line: '한 챔피언만 픽된다!' },
+  sandbox: { ko: '물리 엔진 크래시', shape: 'cube', col: '#8a7a4a', accent: '#5affc8', line: '블록을 쌓으면 터진다!' },
 };
 
 export function bossFor(genreId) {
@@ -699,6 +841,33 @@ export const BOSS_STAGES = [
      지운다. 때려서 죽지는 않으니 남는 결정은 "시간을 더 쓸 것인가" 하나다. */
   { ko: '버그 보스', species: 'bug', set: 'bug', bug: true, noAtk: true, dmg: 0.82, share: 0.18, atk: 13.0, card: null },
 ];
+
+/* ---------- 버그 보스의 크기와 시간 ----------
+   이 한 마리는 다른 셋과 규칙이 다르다. **때리지 않는 대신 시계가 돈다.**
+
+   왜 시계인가: 반격이 없으면 남는 압박이 하나도 없어서, 잡히든 안 잡히든
+   가만히 두면 언젠가는 잡힌다 — 그러면 마지막 공정은 선택이 아니라 대기다.
+   시계가 돌면 "지금 밥을 먹일까, 도우미를 쓸까, 여기서 마감할까" 가 실제
+   질문이 된다. 시간이 다 되면 잡은 만큼만 인정하고 마감한다.
+
+   왜 버그 개수로 크기를 정하는가: 앞의 셋에서 반격을 얼마나 맞았고 얼마나
+   덜 만든 채로 넘어왔는가가 곧 이 회사가 남긴 버그다. 그 숫자가 그대로
+   마지막 놈의 몸집이 되면, 앞을 무난히 넘긴 팀은 여기도 무난히 넘고
+   엉망으로 넘어온 팀은 여기서 그 값을 치른다.
+
+   시간은 **이 팀이 앞의 셋을 실제로 얼마나 빨리 잡았는가**로 정한다. 초를
+   상수로 박으면 약한 팀에게는 넘을 수 없는 벽이고 강한 팀에게는 없는
+   것이나 마찬가지다. 앞의 페이스로 이 몸집을 잡는 데 걸리는 시간의 몇
+   배 — 그것이 이 보스의 제한시간이다. */
+export const BUG_BOSS = {
+  perBug: 0.085,     // 앞에서 생긴 버그 하나당 붙는 몸집
+  minSwell: 0.55,    // 버그가 하나도 없으면 이만큼으로 쪼그라든다
+  maxSwell: 2.60,    // 아무리 엉망이어도 이 이상은 안 커진다
+  margin: 2.10,      // 앞의 페이스로 잡는 데 걸리는 시간의 몇 배를 주는가
+  minSec: 30,
+  maxSec: 240,
+  warnSec: 12,       // 이 아래로 남으면 시계가 붉어진다
+};
 
 /* 이름이 바뀐 뒤로도 예전 저장 파일과 UI 가 phase 를 읽는다. 스테이지
    인덱스를 그대로 페이즈로 쓴다. */
