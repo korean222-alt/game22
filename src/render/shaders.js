@@ -28,12 +28,14 @@ layout(location=6) in vec3 aMatUV;
 uniform mat4 uVP, uLightVP;
 uniform mat4 uBones[${NB}];
 out vec3 vN; out vec3 vC; out float vAO; out float vFlag; out vec3 vW; out vec4 vLS; out float vD;
-flat out float vMat; out vec2 vUV;
+flat out float vMat; out vec2 vUV; out vec3 vLocal;
 void main(){
   mat4 M = uBones[int(aBone)];
   vec4 w = M * vec4(aPos,1.0);
-  vec3 n = normalize(mat3(M) * aNrm);
+  vec3 rawN = mat3(M) * aNrm;
+  vec3 n = dot(rawN, rawN) > 1e-12 ? normalize(rawN) : vec3(0.0, 1.0, 0.0);
   vW = w.xyz; vN = n; vAO = aAO; vFlag = aFlag;
+  vLocal = aPos;                                // detail follows the animated bone
   vMat = aMatUV.x; vUV = aMatUV.yz;
   vC = pow(max(aCol,0.0), vec3(2.2));            // sRGB bytes -> linear
   vLS = uLightVP * vec4(w.xyz + n*0.055, 1.0);   // normal offset kills most acne
@@ -239,7 +241,7 @@ export const FS_SCENE = `#version 300 es
 precision highp float;
 precision highp sampler2DShadow;
 in vec3 vN; in vec3 vC; in float vAO; in float vFlag; in vec3 vW; in vec4 vLS; in float vD;
-flat in float vMat; in vec2 vUV;
+flat in float vMat; in vec2 vUV; in vec3 vLocal;
 
 uniform vec3 uSun, uSunCol, uSkyCol, uGndCol, uHorizCol, uFogCol, uEye;
 uniform float uAmb, uFogFar, uHL, uTime, uExposure, uFill;
@@ -265,8 +267,10 @@ void main(){
      실제로 들어 있다). normalize(0) 은 NaN 이고, NaN 한 픽셀은 블룸을 타고
      사각형으로 번진다. */
   vec3 N = dot(vN, vN) > 1e-12 ? normalize(vN) : vec3(0.0, 1.0, 0.0);
-  vec3 V = normalize(uEye - vW);
+  vec3 toEye = uEye - vW;
+  vec3 V = dot(toEye, toEye) > 1e-12 ? normalize(toEye) : N;
   if(!gl_FrontFacing) N = -N;
+  vec3 geometricN = N;
 
   int mat = int(vMat + 0.5);
   Surf s;
@@ -317,10 +321,13 @@ void main(){
     s.albedo *= 1.0 - 0.07*d;
     s.rough = 0.95;
   } else if(mat == 8){                             // skin
-    float pores = vn3(vW*140.0);
+    // World-space pores swam over a walking face. Bone-local coordinates hold
+    // them still, and pixel-footprint filtering removes subpixel sparkle.
+    float detail = 1.0 - smoothstep(0.4, 1.8, length(fwidth(vLocal*140.0)));
+    float pores = mix(0.5, vn3(vLocal*140.0), detail);
     height = pores; bump = 0.0016;
-    s.albedo *= 1.0 + (vn3(vW*11.0)-0.5)*0.05;
-    s.rough = 0.48 + 0.10*pores; wrap = 0.42;
+    s.albedo *= 1.0 + (vn3(vLocal*11.0)-0.5)*0.035;
+    s.rough = 0.50 + 0.10*pores; wrap = 0.32;
   } else if(mat == 9){                             // floor tile with grout
     vec2 gt = fract(vW.xz);
     float grout = clamp(step(gt.x,0.03)+step(gt.y,0.03), 0.0, 1.0);
@@ -344,15 +351,19 @@ void main(){
     s.albedo *= 0.84 + 0.32*lv;
     s.rough = 0.60; wrap = 0.55;
   } else if(mat == 14){                            // hair: strand sheen
-    float st = 0.5 + 0.5*sin(vW.y*90.0 + vn3(vW*4.0)*5.0);
+    float phase = vLocal.y*90.0 + vn3(vLocal*4.0)*5.0;
+    float detail = 1.0 - smoothstep(0.7, 3.14, fwidth(phase));
+    float st = 0.5 + 0.5*sin(phase)*detail;
     height = st; bump = 0.006;
     s.albedo *= 0.84 + 0.24*st;
     s.rough = 0.34;
   } else if(mat == 15){                            // clothing: fine weave
-    float wv = 0.5 + 0.5*sin(vW.x*110.0 + vW.z*90.0)*sin(vW.y*110.0);
+    vec2 phase = vec2(vLocal.x*110.0 + vLocal.z*90.0, vLocal.y*110.0);
+    float detail = 1.0 - smoothstep(0.7, 3.14, max(fwidth(phase.x), fwidth(phase.y)));
+    float wv = 0.5 + 0.5*sin(phase.x)*sin(phase.y)*detail;
     height = wv; bump = 0.012;
     s.albedo *= 0.96 + 0.05*wv;
-    s.albedo *= 1.0 + (vn3(vW*8.0)-0.5)*0.05;
+    s.albedo *= 1.0 + (vn3(vLocal*8.0)-0.5)*0.05;
     s.rough = 0.86; sheen = 0.30;
   } else if(mat == 16){                            // self-lit: boss eyes, aura
     // Emissive in its own vertex colour and well above 1.0, so the bloom chain
@@ -372,8 +383,13 @@ void main(){
   // Glass is drawn in its own blended pass: thin, reflective, barely tinted.
   float alpha = 1.0;
   if(uGlassMode > 0.5){
-    s.rough = 0.05; s.metal = 0.0;
-    alpha = 0.20;
+    // A pane has no drywall bump. Reflection strengthens at grazing angles,
+    // while a straight view stays clear enough to read the office behind it.
+    N = geometricN;
+    s.albedo = mix(vec3(0.96), vC, 0.20);
+    s.rough = 0.09; s.metal = 0.0;
+    float fresnel = 0.04 + 0.96*pow(1.0 - max(dot(N, V), 0.0), 5.0);
+    alpha = 0.10 + 0.68*fresnel;
   }
 
   float ndv = clamp(dot(N, V), 1e-4, 1.0);
@@ -390,8 +406,11 @@ void main(){
   vec3 hv = L + V;
   vec3 H = dot(hv, hv) > 1e-8 ? normalize(hv) : N;
   float ndh = max(dot(N,H), 0.0), vdh = max(dot(V,H), 0.0);
-  vec3 spec = F_Schlick(f0, vdh) * D_GGX(ndh, a) * V_SmithGGX(ndv, max(ndlRaw,1e-4), a);
-  vec3 lit = (kd/3.14159265 + spec) * uSunCol * ndl * sh;
+  vec3 F = F_Schlick(f0, vdh);
+  vec3 spec = F * D_GGX(ndh, a) * V_SmithGGX(ndv, max(ndlRaw,1e-4), a);
+  // Wrapped diffuse light softens skin without letting the specular lobe
+  // shine from the unlit side or counting reflected energy twice.
+  vec3 lit = (kd*(1.0-F)/3.14159265*ndl + spec*max(ndlRaw,0.0)) * uSunCol * sh;
 
   // ---- sky: diffuse irradiance + roughness-blurred specular ----
   vec3 irr = mix(uGndCol, uSkyCol, N.y*0.5 + 0.5);
@@ -430,7 +449,7 @@ void main(){
   /* 마지막 안전핀. 위의 가드를 다 지나서도 NaN 이 하나 새어 나오면 블룸이
      그것을 사각형으로 키운다 — NaN 은 자기 자신과의 비교가 항상 거짓이므로
      이 한 줄로 잡힌다. */
-  if(!(dot(lit, lit) >= 0.0)) lit = vec3(0.0);
+  if(any(isnan(lit)) || any(isinf(lit))) lit = vec3(0.0);
   outColor = vec4(lit * uExposure, alpha);
 }`;
 
@@ -482,7 +501,8 @@ void main(){
   }
   mat4 M = uModel * S;
   vec4 w = M * vec4(aPos, 1.0);
-  vec3 n = normalize(mat3(M) * aNrm);
+  vec3 rawN = mat3(M) * aNrm;
+  vec3 n = dot(rawN, rawN) > 1e-12 ? normalize(rawN) : vec3(0.0, 1.0, 0.0);
   vW = w.xyz; vN = n; vUV = aUV;
   vLS = uLightVP * vec4(w.xyz + n*0.055, 1.0);
   gl_Position = uVP * w;
@@ -530,9 +550,10 @@ void main(){
   vec4 tex = texture(uAlbedo, vUV);
   if(tex.a < 0.35) discard;                      // the packs use cutout alpha
 
-  vec3 N = normalize(vN);
+  vec3 N = dot(vN, vN) > 1e-12 ? normalize(vN) : vec3(0.0, 1.0, 0.0);
   if(!gl_FrontFacing) N = -N;                    // the packs are double sided
-  vec3 V = normalize(uEye - vW);
+  vec3 toEye = uEye - vW;
+  vec3 V = dot(toEye, toEye) > 1e-12 ? normalize(toEye) : N;
 
   vec3 albedo = pow(tex.rgb, vec3(2.2)) * uTint;
   float rough = 0.68, metal = 0.0;
@@ -550,9 +571,10 @@ void main(){
   float sh = shadowFactor(N);
   vec3 hv2 = L + V;
   vec3 H = dot(hv2, hv2) > 1e-8 ? normalize(hv2) : N;
-  vec3 spec = F_Schlick(f0, max(dot(V,H),0.0)) * D_GGX(max(dot(N,H),0.0), a)
+  vec3 F = F_Schlick(f0, max(dot(V,H),0.0));
+  vec3 spec = F * D_GGX(max(dot(N,H),0.0), a)
             * V_SmithGGX(ndv, max(ndlRaw,1e-4), a);
-  vec3 lit = (kd/3.14159265 + spec) * uSunCol * ndl * sh;
+  vec3 lit = (kd*(1.0-F)/3.14159265*ndl + spec*max(ndlRaw,0.0)) * uSunCol * sh;
 
   vec3 irr = mix(uGndCol, uSkyCol, N.y*0.5 + 0.5);
   irr = mix(irr, uHorizCol, pow(1.0-abs(N.y), 3.0)*0.45);
@@ -566,6 +588,7 @@ void main(){
   float fogA = 1.0 - exp(-vD/uFogFar * 1.35);
   lit = mix(lit, uFogCol, fogA*fogA*0.55);
 
+  if(any(isnan(lit)) || any(isinf(lit))) lit = vec3(0.0);
   outColor = vec4(lit * uExposure, uAlpha);
 }`;
 

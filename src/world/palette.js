@@ -47,9 +47,13 @@ export const P = {
   lane: '#d8d5c8', laneY: '#d6b04e', walkStripe: '#e2e0d6',
   pole: '#5a5d63', lampHead: '#f2e6c2', signRed: '#c04a3c', signGreen: '#4a9c62',
   signAmber: '#e0a83c', busStop: '#3f6a86', hedge: '#5d7c46', trunk: '#6b4f34',
+  stone: '#b6b8b5', stoneDk: '#888e91', facade: '#b7bcbf', facadeWarm: '#b8a696',
+  spandrel: '#47545e', window: '#435e6d', windowBlue: '#536f7c', windowWarm: '#8c8170',
+  reveal: '#303b43', seal: '#333a3e', coping: '#969b9c',
 
   /* skin tones */
   sk1: '#eabb8d', sk2: '#dda877', sk3: '#c08a55', sk4: '#a06a3c', sk5: '#7d4c2a',
+  lip: '#a56a60', eyeWhite: '#e9e5df', pupil: '#171a20',
 
   /* hair */
   hr1: '#2b2018', hr2: '#4a3524', hr3: '#7a5a35', hr4: '#a8823f', hr5: '#8e8b86',
@@ -72,6 +76,12 @@ put(MAT.LEAF, 'leaf', 'leafDk', 'hedge');
 put(MAT.WOOD, 'trunk');
 put(MAT.EMIT, 'lampHead');
 put(MAT.SCREEN, 'screen');
+put(MAT.WALL, 'stone', 'stoneDk', 'facade', 'facadeWarm');
+put(MAT.METAL, 'spandrel', 'coping');
+put(MAT.GLOSS, 'window', 'windowBlue', 'windowWarm', 'eyeWhite', 'pupil');
+put(MAT.DEF, 'reveal', 'seal');
+put(MAT.SKIN, 'lip', 'sk1', 'sk2', 'sk3', 'sk4', 'sk5');
+put(MAT.HAIR, 'hr1', 'hr2', 'hr3', 'hr4', 'hr5');
 
 setMatMap(MAP);
 

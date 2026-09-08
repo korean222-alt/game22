@@ -355,7 +355,10 @@ await step('출시하면 실시간 판매가 돈다', async () => {
 await step('정산을 확인하면 그 게임의 판매가 끝난다', async () => {
   const r = await page.evaluate(() => {
     const g = window.__game;
-    if (g.sales) g.closeSalesRun();
+    // 화면의 '정산 확인' 버튼은 12주가 다 팔린 뒤에만 열린다. 남은 주차를
+    // 마저 흘려서 같은 조건을 만든 뒤에 확인한다 — 중간에 접으면 아직
+    // 받지 않은 매출이 사라지므로 게임 쪽이 막는다.
+    if (g.sales) { g.salesTick(g.sales.secs); g.closeSalesRun(); }
     window.__ui.closeModal();
     window.__ui.renderAll();
     return { live: g.managed().length, past: g.releases.filter((x) => !x.managing).length };

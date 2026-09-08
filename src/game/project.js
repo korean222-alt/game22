@@ -26,7 +26,10 @@ import {
 } from './staff.js';
 
 let _pid = 1;
-export function seedProjectIds(n) { _pid = Math.max(_pid, n); }
+export function seedProjectIds(n) {
+  if (Number.isSafeInteger(n) && n > 0) _pid = Math.max(_pid, n);
+}
+export function nextProjectId() { return _pid; }
 
 /* ---------- 번뜩임 ----------
    기본 확률과, 번뜩였을 때 한 축이 추가로 받는 배율. 데미지는 예전대로
@@ -547,7 +550,7 @@ export function canUrge(project, s) {
   if (project.done || project.pendingCards || project.hp <= 0) return false;
   if (!project.team.includes(s.id)) return false;
   if ((project.down && project.down[s.id] > 0) || s.hp <= 0) return false;
-  const t = (project.urgeAt && project.urgeAt[s.id]) || -99;
+  const t = project.urgeAt?.[s.id] ?? -99;
   return (project.elapsed || 0) - t >= urgeCool(project);
 }
 
@@ -1048,45 +1051,36 @@ const STAT_KO_LOCAL = {
 };
 
 /* ---------- 한 라운드 ----------
-   팀 전원이 한 번씩 친다. 자동 전투가 표준이 된 뒤로 UI 는 이걸 부르지
-   않지만, 밸런스 시뮬레이터와 "빨리 감기" 는 이 단위로 돈다. */
+   수동 버튼도 자동 전투와 같은 시계·게이지·제한시간을 쓴다.
+   기본 공격 주기만큼 빨리 감되, 카드나 공정 전환에서는 멈춘다. */
 export function battleTurn(project, staffById, rnd, ctx = {}) {
   ensureStages(project);
   if (project.done) return { events: [], finished: true };
   if (project.pendingCards) return { events: [], blocked: 'card' };
 
-  let teamMood = 0;
-  const pool = [];
-  for (const id of project.team) {
-    const s = staffById.get(id);
-    if (!s) continue;
-    syncHp(s);
-    teamMood += traitAdd(s, 'teamMood');
-    pool.push(s);
-  }
-  const c2 = { ...ctx, teamMood };
-
   const events = [];
-  let total = 0;
-  for (const s of pool) {
-    if (project.hp <= 0) break;
-    if (s.hp <= 0) continue;
-    const ev = staffStrike(project, s, rnd, c2);
-    total += ev.damage;
-    events.push(ev);
-    const loot = rollTreasure(project, rnd);
-    if (loot) events.push(loot);
+  /* 도우미 능력이나 시뮬레이터가 작업량을 먼저 0 으로 만들어 놓았을 수 있다.
+     battleTick 은 죽어 있는 보스를 손대지 않으므로, 그 정리는 여기서 한다 —
+     안 하면 이 판이 영영 다음 공정으로 넘어가지 않는다. */
+  if (project.hp <= 0) {
+    for (const ev of stageCleared(project, rnd, { ...ctx, staffById })) events.push(ev);
+    return {
+      events, total: 0,
+      finished: project.hp <= 0 && !project.pendingCards
+        && (project.stage || 0) >= project.stages.length - 1,
+    };
   }
-  project.turn = Math.max(1, Math.round(project.strikes / Math.max(1, pool.length)));
-  project.lastDamage = total;
-  project.log.push({ turn: project.turn, damage: total, hp: project.hp });
-
-  if (project.hp > 0 && project.turn % HP.attackEvery === 0 && !currentStage(project).noAtk) {
-    const move = BOSS_MOVES[Math.floor(rnd() * BOSS_MOVES.length)];
-    events.push(bossAttack(project, staffById, rnd, move));
+  const stage = project.stage;
+  for (let left = RAID.strikeSec; left > 1e-9;) {
+    const dt = Math.min(0.25, left);
+    const tick = battleTick(project, staffById, rnd, ctx, dt);
+    events.push(...tick.events);
+    left -= dt;
+    if (project.pendingCards || project.stage !== stage || project.hp <= 0
+        || teamDown(project, staffById)) break;
   }
-  if (project.hp <= 0) for (const ev of stageCleared(project, rnd, { ...ctx, staffById })) events.push(ev);
-
+  const total = events.reduce((sum, ev) => sum
+    + (ev.kind === 'hit' || ev.kind === 'crit' ? ev.damage || 0 : 0), 0);
   return {
     events, total,
     finished: project.hp <= 0 && !project.pendingCards

@@ -376,6 +376,32 @@ export function rollEvent(game, rnd) {
   return { id: def.id, ko: def.ko, icon: def.icon, from: def.from || '', text, def, target };
 }
 
+/* 함수는 JSON에 저장하지 않는다. 선택지 번호와 대상의 안정적인 ID만
+   저장하고, 로드할 때 현재 정의와 실제 직원/출시작을 다시 연결한다. */
+export function saveEvent(ev, game) {
+  if (!ev) return null;
+  const kind = !ev.target ? null : game.staff.includes(ev.target) ? 'staff'
+    : game.releases.includes(ev.target) ? 'release' : 'contract';
+  return {
+    id: ev.id, text: ev.text, targetId: ev.target?.id, targetKind: kind,
+    options: ev.options.map((o) => ev.def.choices.indexOf(o)),
+  };
+}
+
+export function restoreEvent(saved, game) {
+  if (!saved) return null;
+  const def = EVENTS.find((e) => e.id === saved.id);
+  if (!def?.choices) return null;
+  const pool = saved.targetKind === 'staff' ? game.staff
+    : saved.targetKind === 'release' ? game.releases : CONTRACTS;
+  const target = saved.targetKind ? pool.find((t) => t.id === saved.targetId) : null;
+  if (def.pick && !target) return null;
+  const options = (saved.options || []).map((i) => def.choices[i]).filter(Boolean);
+  if (!options.length) options.push(def.choices[def.choices.length - 1]);
+  return { id: def.id, ko: def.ko, icon: def.icon, from: def.from || '',
+    text: String(saved.text || def.text || ''), def, target, options };
+}
+
 /* ---------- 세일즈 태스크 ----------
    The doc's `Sales Tasks`: a standing list of things the company has not done
    yet, each paying out once. It exists to give a week a goal that is not "make
@@ -385,7 +411,7 @@ export const TASKS = [
   { id: 'ship1', ko: '첫 게임을 출시한다', done: (g) => g.company.shipped >= 1, reward: { coins: 3 } },
   { id: 'ship5', ko: '게임 5작품 출시', done: (g) => g.company.shipped >= 5, reward: { money: 120000 } },
   { id: 'ship15', ko: '게임 15작품 출시', done: (g) => g.company.shipped >= 15, reward: { coins: 12 } },
-  { id: 'hire1', ko: '직원을 한 명 채용한다', done: (g) => g.staff.length > 5, reward: { money: 40000 } },
+  { id: 'hire1', ko: '직원을 한 명 채용한다', done: (g) => g.staff.length >= 1, reward: { money: 40000 } },
   { id: 'team8', ko: '직원 8명을 모은다', done: (g) => g.staff.length >= 8, reward: { research: 30 } },
   { id: 'crit24', ko: '평론가 24점 이상 받기', done: (g) => g.history.some((h) => h.criticTotal >= 24), reward: { research: 25 } },
   { id: 'crit32', ko: '명예의 전당 (32점)', done: (g) => g.releases.some((r) => r.hallOfFame), reward: { coins: 8 } },
@@ -395,7 +421,7 @@ export const TASKS = [
   { id: 'great', ko: '환상의 조합으로 출시', done: (g) => g.releases.some((r) => (r.combo || 0) >= 1.55), reward: { coins: 5 } },
   { id: 'trend', ko: '유행을 탄 게임 출시', done: (g) => g.releases.some((r) => r.trendHit), reward: { money: 200000 } },
   { id: 'sequel', ko: '속편을 만든다', done: (g) => g.releases.some((r) => r.seriesN > 1), reward: { research: 50 } },
-  { id: 'live3', ko: '3작품 동시 운영', done: (g) => g.managed().length >= 3, reward: { coins: 6 } },
+  { id: 'live3', ko: '게임 3작품 출시', done: (g) => g.company.shipped >= 3, reward: { coins: 6 } },
   { id: 'floor2', ko: '2층에 입주한다', done: (g) => g.company.floors >= 2, reward: { research: 35 } },
   { id: 'floor5', ko: '5층까지 확장한다', done: (g) => g.company.floors >= 5, reward: { coins: 20 } },
   { id: 'rank5', ko: '회사 랭크 5 달성', done: (g) => g.company.rank >= 5, reward: { coins: 5 } },

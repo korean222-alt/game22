@@ -4,7 +4,7 @@
    space; `ry` is a Y rotation in radians. Nothing here knows about the game —
    these are just things a game studio's office contains. */
 
-import { MAT, shade } from '../core/color.js';
+import { MAT, shade, matOf } from '../core/color.js';
 import { P } from './palette.js';
 
 export const FLOOR_Y = 0.0;
@@ -47,13 +47,18 @@ export function floorField(m, x0, z0, x1, z1, col, tile, y) {
   // Break the field into tiles so the AO bake and the colour jitter have
   // something to vary across; one giant quad reads as dead flat.
   const nx = Math.max(1, Math.round(w / tile)), nz = Math.max(1, Math.round(d / tile));
+  // shade() returns RGB rather than the palette's hex key. Resolve material
+  // before tinting, or half the carpet tiles silently become generic plastic.
+  const prevMat = m.mat, prevSolid = m.noSolid;
+  m.mat = prevMat || matOf(col);
   m.noSolid = true;
   for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
     const cx = x0 + (i + 0.5) * w / nx, cz = z0 + (j + 0.5) * d / nz;
     const s = seedAt(i * 3.1, j * 7.7);
     m.box(cx, yy - 0.15, cz, w / nx, 0.30, d / nz, s > 0.5 ? col : shade(col, 0.97));
   }
-  m.noSolid = false;
+  m.noSolid = prevSolid;
+  m.mat = prevMat;
 }
 
 /* 천장 전용 플래그. 벽 자르기에서는 빠지고, 층 자르기에서는 **디더 없이**

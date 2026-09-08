@@ -5,7 +5,7 @@
    battle turn emits hit events the office animates, a release emits a banner.
 
    Save format is the plain state object, so localStorage round-trips it with
-   JSON and nothing needs a migration layer yet. */
+   JSON. Older save formats are migrated by load(). */
 
 import {
   JOBS, PLATFORMS, MONETIZE, GENRES, CONTENTS, METHODS, STATS, rankInfo, RANK_UP_FANS, ITEMS,
@@ -30,12 +30,12 @@ import {
 import {
   generateProposal, startProject, battleTurn, battleTick, chooseCard, finishProject,
   scoreCritics, useHelperSkill,
-  turnCost, seedProjectIds, previewQuality, previewBugs, funScore,
+  turnCost, seedProjectIds, nextProjectId, previewQuality, previewBugs, funScore,
   ensureStages, currentStage, raidProgress, teamDown, advanceStage, stageName,
   forfeitStage, completion, projectQuality,
   urgeStaff, canUrge, comboMult, URGE,
 } from './project.js';
-import { TASKS, rollEvent, grantReward, rewardText } from './events.js';
+import { TASKS, rollEvent, saveEvent, restoreEvent, grantReward, rewardText } from './events.js';
 import {
   RIVALS, marketScale, rivalReleaseChance, makeRivalRelease, tickRival,
   buildChart, myBestRank, CHART_FAN_BONUS, rivalTitle,
@@ -225,8 +225,7 @@ export class Game {
     this.project = null;         // the project currently in development
     this.finished = null;        // finished, awaiting release
     this.releases = [];
-    /* 출시 직후 화면 오른쪽에서 도는 실시간 판매. 저장하지 않는다 — 탭을 닫았다
-       열면 그 판매는 이미 끝난 것으로 친다. */
+    // 지급 완료 주차까지 저장한다. 탭을 다시 열어도 남은 판매를 이어간다.
     this.sales = null;
     this.candidates = [];
     this.history = [];
@@ -571,10 +570,16 @@ export class Game {
       }
     }
 
-    const chart = this.chart();
+    this._scoreChart();
+  }
+
+  _scoreChart(chart = this.chart(), settling = false) {
+    const c = this.company;
     const rank = myBestRank(chart);
     const was = c.chartRank || 0;
-    if (rank === 1) {
+    // 실시간 판매작은 정산 확인 시 딱 한 번 보상한다(12배 지급 방지).
+    const saleOwnsTop = this.sales && chart[0]?.id === this.sales.id;
+    if (rank === 1 && (settling || !saleOwnsTop)) {
       c.chartWeeksNo1 = (c.chartWeeksNo1 || 0) + 1;
       // 1위는 팬을 부른다. 차트가 숫자로만 존재하면 장식이 된다.
       const gain = Math.round(chart[0].users * CHART_FAN_BONUS);
@@ -1201,19 +1206,25 @@ export class Game {
   release() {
     const p = this.finished;
     if (!p) return { ok: false, why: '출시할 게임이 없다' };
-    let active = this.managed();
-    while (active.length >= this.info().managedCap) {
-      const oldest = active[active.length - 1];
-      this._retireRelease(oldest, '새 작품 출시로 서비스 종료');
-      active = this.managed();
+    if (this.sales) return { ok: false, why: '앞선 판매 정산을 먼저 확인하세요' };
+    if (!PLATFORMS.some((x) => x.id === p.platformId)
+        || !MONETIZE.some((x) => x.id === p.monetizeId)) {
+      return { ok: false, why: '출시 설정을 확인하세요' };
     }
     const mk = MARKETING.find((x) => x.id === this.company.marketingId) || MARKETING[0];
     const mkCost = marketingCost(mk, p.devCost);
-    if (mkCost > 0 && !this.spend(mkCost)) {
+    if (!Number.isFinite(mkCost) || this.company.money < mkCost) {
       return { ok: false, why: `홍보비 부족 (₩${mkCost.toLocaleString()})` };
     }
     const { release, fansGained } = releaseGame(p, this.company, this.rnd,
       this.ctx({ marketingId: mk.id, team: this.teamOf(p), recent: this.company.recentCombos || [] }));
+    // 실패할 수 있는 검증과 출시 데이터 생성이 끝난 뒤에만 기존 작품을 닫는다.
+    if (mkCost > 0) this.spend(mkCost);
+    let active = this.managed();
+    while (active.length >= this.info().managedCap) {
+      this._retireRelease(active[active.length - 1], '새 작품 출시로 서비스 종료');
+      active = this.managed();
+    }
     // 출시 시점을 박아 둔다. 시상식이 "지난 한 달에 낸 게임" 을 고르는
     // 유일한 근거고, 이게 없으면 심사 대상이 늘 전작 전체가 된다.
     release.at = { year: this.company.year, month: this.company.month, week: this.company.week };
@@ -1240,6 +1251,7 @@ export class Game {
     this._startSalesRun(release, fansGained);
     this._maybeRankUp();
     this.checkTasks();
+    this.save();
     return { ok: true, release };
   }
 
@@ -1249,17 +1261,15 @@ export class Game {
      들어왔다. 판 것은 게임인데 그 사실이 화면에 나타나는 순간이 없었다는
      뜻이다 — 버튼을 누르면 숫자가 이미 바뀌어 있을 뿐이었다.
 
-     그래서 출시하면 15초 동안 화면에서 **실시간으로 팔린다**. 15초에
+     그래서 출시하면 18초 동안 화면에서 **실시간으로 팔린다**. 18초에
      SALES.weeks 주치가 흐르고, 막대가 하나씩 서고, 자금이 눈앞에서 오른다.
      실제로 흐르는 것은 그 게임의 판매 주차뿐이다: 달력은 그대로고, 받는 돈의
      총액도 예전과 같다. 바뀐 것은 **언제 보여주느냐** 하나다.
 
-     이 15초 동안에는 새 게임을 만들 수 없고 주도 넘길 수 없다. 정산을
+     이 판매 동안에는 새 게임을 만들 수 없고 주도 넘길 수 없다. 정산을
      확인하고 나서야 다음 판이 시작된다. */
   _startSalesRun(rel, fansGained) {
-    // 앞의 판매가 아직 돌고 있으면 접는다. 카드는 하나뿐이고, 두 판이
-    // 같은 자리에서 겹치면 어느 게임의 그래프인지 알 수가 없다.
-    if (this.sales) this.closeSalesRun();
+    if (this.sales) return this.sales;
     this.sales = {
       id: rel.id,
       title: rel.title,
@@ -1287,7 +1297,8 @@ export class Game {
     if (!s || s.ended) return s;
     const rel = this.releases.find((r) => r.id === s.id);
     if (!rel) { s.ended = true; this.emit('sales', s); return s; }
-    s.t += dt;
+    if (!Number.isFinite(dt) || dt <= 0) return s;
+    s.t = Math.min(s.secs, s.t + dt);
     const per = s.secs / s.weeks;
     const want = Math.min(s.weeks, Math.floor(s.t / per));
     let changed = false;
@@ -1317,23 +1328,35 @@ export class Game {
       changed = true;
       this.note(`「${s.title}」 ${s.done}주 판매 정산: ₩${s.total.toLocaleString()}`, 'good');
     }
-    if (changed) this.emit('sales', s);
+    if (changed) {
+      this.checkTasks();
+      this.emit('sales', s);
+      this.save();
+    }
     return s;
   }
 
   /* 정산을 확인했다. 여기서부터 다시 게임을 만들 수 있다. 출시 뒷정리에
      한 주가 간다 — 달력이 움직이는 세 자리 중 하나다. */
   closeSalesRun() {
-    if (!this.sales) return null;
+    if (!this.sales || !this.sales.ended) return null;
     const s = this.sales;
-    this.sales = null;
-    this.emit('sales', null);
     /* ── 판매는 여기서 끝난다 ──
        이 게임의 출시는 "한 주 동안 파는 것" 이다. 실시간 판매 카드가 그
        한 주의 전부를 보여주고, 정산을 확인하면 서비스가 닫힌다. 운영 칸에
        계속 쌓이지 않으므로 다음 게임을 낼 때 아무것도 내릴 필요가 없다. */
     const rel = this.releases.find((r) => r.id === s.id);
+    if (rel && !rel.saleFeedbackDone) {
+      rel.saleFeedbackDone = true;
+      // 자연 감소로 서비스가 닫혔더라도 마지막 판매 실적으로 심사한다.
+      const entries = this.releases.map((r) => r === rel
+        ? { ...r, managing: true, users: r.liveUsers ?? r.users } : r);
+      this._scoreChart(buildChart(entries, this.company.rivalGames, this.company.name), true);
+      this._rollFanMail([rel]);
+    }
     if (rel) this._retireRelease(rel, '판매 종료');
+    this.sales = null;
+    this.emit('sales', null);
     this.advanceWeeks(1, `「${s.title}」 출시 정리`);
     this.save();
     return s;
@@ -1363,7 +1386,7 @@ export class Game {
   _retireStaleReleases() {
     for (const r of this.releases) {
       if (!r.managing || !r.at) continue;
-      if (this.sales && this.sales.id === r.id && !this.sales.ended) continue;
+      if (this.sales && this.sales.id === r.id) continue;
       if (this._weeksSince(r.at) >= RELEASE_SALE_WEEKS) this._retireRelease(r, '판매 기간 종료');
     }
   }
@@ -1374,6 +1397,11 @@ export class Game {
     const r = this.releases.find((x) => x.id === releaseId);
     if (!r || !r.managing) return { ok: false };
     this._retireRelease(r, '서비스 종료');
+    if (this.sales?.id === r.id) {
+      this.sales.ended = true;
+      this.emit('sales', this.sales);
+    }
+    this.save();
     return { ok: true };
   }
 
@@ -1505,7 +1533,7 @@ export class Game {
       let touched = 0;
       for (const st of this.staff) {
         if (item.hp) { if (healHp(st, item.hp) > 0) touched++; }
-        if (item.mot) { addMotivation(st, item.mot, c.rank); touched++; }
+        if (item.mot && addMotivation(st, item.mot, c.rank) > 0) touched++;
       }
       if (!touched) return { ok: false, why: '지금은 효과가 없다' };
       msg = `${item.emoji} ${item.ko} — 전 직원에게 돌렸다`;
@@ -1515,8 +1543,8 @@ export class Game {
       if (!st) return { ok: false, why: '누구에게 줄지 고르세요' };
       let did = 0;
       if (item.hp) did += healHp(st, item.hp);
-      if (item.mot) { addMotivation(st, item.mot, c.rank); did += 1; }
-      if (!did) return { ok: false, why: '체력이 이미 가득하다' };
+      if (item.mot) did += Math.max(0, addMotivation(st, item.mot, c.rank));
+      if (!did) return { ok: false, why: '지금은 효과가 없다' };
       msg = `${item.emoji} ${st.name} — ${item.ko} (체력 ${st.hp}/${st.hpMax})`;
       this.emit('staff', null);
     }
@@ -1787,6 +1815,7 @@ export class Game {
       ev.options = opts.length ? opts : [ev.def.choices[ev.def.choices.length - 1]];
       this.pendingEvent = ev;
       this.emit('event', ev);
+      this.save();
       return ev;
     }
     const line = ev.def.apply ? ev.def.apply(this, this.rnd, ev.target) : '';
@@ -1799,7 +1828,10 @@ export class Game {
   answerEvent(index) {
     const ev = this.pendingEvent;
     if (!ev) return { ok: false };
-    const opt = ev.options[index] || ev.options[0];
+    const opt = ev.options[index];
+    if (!opt || (opt.can && !opt.can(this))) {
+      return { ok: false, why: '지금은 이 선택을 할 수 없습니다. 다른 선택지를 골라 주세요.' };
+    }
     const line = opt.apply ? opt.apply(this, this.rnd, ev.target) : '';
     this.pendingEvent = null;
     this.note(`${ev.icon || ''} ${ev.ko} → ${opt.ko}${line ? ' · ' + line : ''}`);
@@ -1808,6 +1840,7 @@ export class Game {
     this.checkTasks();
     // 사건이 붙들고 있던 나머지 주를 마저 흘린다.
     this._drainWeeks();
+    this.save();
     return { ok: true, line };
   }
 
@@ -1960,8 +1993,7 @@ export class Game {
   /* ---------- 유저 편지 ----------
      운영 중인 게임 하나를 골라 굴린다. 게임당 세 통까지만: 그 이상은
      편지함이 한 게임의 팬레터로 가득 찬다. */
-  _rollFanMail() {
-    const live = this.managed();
+  _rollFanMail(live = this.managed().filter((r) => r.id !== this.sales?.id)) {
     if (!live.length) return;
     const c = this.company;
     c.fanMailSent = c.fanMailSent || {};
@@ -2167,7 +2199,7 @@ export class Game {
     for (const r of this.releases) {
       // 실시간 판매가 도는 게임은 그 팝업이 자기 주차를 흘리고 있다. 여기서
       // 또 한 주를 태우면 같은 주가 두 번 팔린다.
-      if (this.sales && this.sales.id === r.id && !this.sales.ended) continue;
+      if (this.sales && this.sales.id === r.id) continue;
       const before = r.liveUsers || r.users;
       const tick = tickRelease(r, this.rnd, boost);
       income += tick.income;
@@ -2307,10 +2339,12 @@ export class Game {
   /* ---------- save / load ---------- */
   serialize() {
     return JSON.stringify({
-      v: 2, seed: this.seed,
+      v: 3, seed: this.seed, rngState: this.rnd.getState?.(), nextProjectId: nextProjectId(),
       company: this.company, staff: this.staff, proposals: this.proposals,
       project: this.project, finished: this.finished, releases: this.releases,
       candidates: this.candidates, history: this.history, bag: this.bag,
+      sales: this.sales, pendingEvent: saveEvent(this.pendingEvent, this),
+      pendingAward: this.pendingAward,
     });
   }
 
@@ -2489,7 +2523,35 @@ export class Game {
       }
       // Ids must not collide with anything the save already used.
       seedIds(Math.max(0, ...g.staff.map((s) => s.id), ...g.candidates.map((s) => s.id)) + 1);
-      seedProjectIds(Date.now() % 100000);
+      let nextId = 1;
+      for (const p of [...g.proposals, g.project, g.finished, ...g.releases]) {
+        for (const id of [p?.id, p?.proposal?.id, p?.seriesRoot]) {
+          const match = /^(?:pr|gp)(\d+)$/.exec(String(id || ''));
+          if (match) nextId = Math.max(nextId, Number(match[1]) + 1);
+        }
+      }
+      seedProjectIds(nextId);
+      seedProjectIds(d.nextProjectId);
+      g.pendingEvent = restoreEvent(d.pendingEvent, g);
+      g.pendingAward = d.pendingAward || null;
+      const saleRel = g.releases.find((r) => r.id === d.sales?.id);
+      if (saleRel) {
+        g.sales = d.sales;
+      } else if ((d.v || 2) < 3 && !g.project && !g.finished) {
+        // v2는 sales 자체가 없었다. 이미 입금된 주차는 다시 지급하지 않는다.
+        const rel = g.releases.find((r) => r.managing && !r.saleFeedbackDone);
+        if (rel) {
+          const s = g._startSalesRun(rel, 0);
+          s.done = Math.min(SALES.weeks, Math.max(0, rel.weeks || 0));
+          s.t = s.done * s.secs / s.weeks;
+          s.points = (rel.history || []).slice(-SALES.weeks);
+          s.total = rel.earned || 0;
+          s.peak = s.points.reduce((max, p) => Math.max(max, p.income || 0), 0);
+          s.ended = s.done >= s.weeks;
+        }
+      }
+      // new Game()이 명단을 생성하며 쓴 난수는 버리고 저장 순간부터 잇는다.
+      if (Number.isInteger(d.rngState)) g.rnd.setState(d.rngState);
       g.note('저장된 회사를 불러왔습니다.');
       return g;
     } catch (e) {
@@ -2502,7 +2564,8 @@ export class Game {
     try {
       localStorage.removeItem(SAVE_KEY);
       for (const k of LEGACY_KEYS) localStorage.removeItem(k);
-    } catch (e) { /* private mode */ }
+      return true;
+    } catch (e) { return false; }
   }
 
   static get SAVE_KEY() { return SAVE_KEY; }

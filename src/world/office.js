@@ -78,6 +78,9 @@ function inRect(r, x, z, pad = 0) {
 function liftInto(m, sub, base) {
   for (let i = 1; i < sub.p.length; i += 3) sub.p[i] += base;
   for (let i = 1; i < sub.solids.length; i += 6) { sub.solids[i] += base; sub.solids[i + 3] += base; }
+  // Stair treads live in softs. Leaving their AO boxes on the ground floor
+  // stacks every flight's shadow there and removes contact shading upstairs.
+  for (let i = 1; i < sub.softs.length; i += 6) { sub.softs[i] += base; sub.softs[i + 3] += base; }
   m.append(sub);
 }
 
@@ -127,7 +130,7 @@ function buildFloor(m, fi, plan, out) {
   wall(m, CORE.x0, CORE.z0, CORE.x1, CORE.z0, wallH, 0.6, plan.accent, true, base);
   wall(m, CORE.x0, CORE.z1, CORE.x1, CORE.z1, wallH, 0.6, plan.accent, true, base);
   wall(m, CORE.x0, CORE.z0, CORE.x0, CORE.z1, wallH, 0.6, P.wallDk, true, base);
-  wallDoor(m, CORE.x1, CORE.z0, CORE.x1, CORE.z1, wallH, 0.6, P.wallDk, 5, 4, 6.4, DOOR_OPEN);
+  put((s) => wallDoor(s, CORE.x1, CORE.z0, CORE.x1, CORE.z1, wallH, 0.6, P.wallDk, 5, 4, 6.4, DOOR_OPEN));
   m.flag = 0;
 
   put((s) => {
@@ -154,7 +157,7 @@ function buildFloor(m, fi, plan, out) {
   glassWall(m, MR.x0, MR.z0, MR.x0, MR.z1, wallH, 0, base);
   // Swings INTO the room (negative angle). Opening outward parked the leaf
   // across the corridor that serves the desks east of it and stranded them.
-  wallDoor(m, MR.x0, MR.z1, MR.x1, MR.z1, wallH, 0.5, P.wall, 5, 4.5, 6.4, -DOOR_OPEN);
+  put((s) => wallDoor(s, MR.x0, MR.z1, MR.x1, MR.z1, wallH, 0.5, P.wall, 5, 4.5, 6.4, -DOOR_OPEN));
   m.flag = 0;
 
   const mcx = (MR.x0 + MR.x1) / 2, mcz = (MR.z0 + MR.z1) / 2 + 1;
@@ -200,7 +203,7 @@ function buildFloor(m, fi, plan, out) {
   /* ---- break room and pantry ---- */
   m.flag = 1;
   wall(m, BR.x1, BR.z0, BR.x1, BR.z1, wallH, 0.5, P.wallWarm, true, base);
-  wallDoor(m, BR.x0, BR.z0, BR.x1, BR.z0, wallH, 0.5, P.wallWarm, 9, 5, 6.4, DOOR_OPEN);
+  put((s) => wallDoor(s, BR.x0, BR.z0, BR.x1, BR.z0, wallH, 0.5, P.wallWarm, 9, 5, 6.4, DOOR_OPEN));
   m.flag = 0;
   rug(m, 8, 38.5, 10, 6.5, P.rug);
   put((s) => {
@@ -360,6 +363,32 @@ function buildSite(m, floors) {
   }
   m.box(-1.6, top / 2, 22, 2.4, top, 48, P.extWall);
   m.box(65.6, top / 2, 22, 2.4, top, 48, P.extWall);
+  // Layered cladding gives the shell human-scale joints and real ledges for
+  // sunlight to catch. It stays outside the existing collision footprint and
+  // uses the same hard floor cut as the piers, never a new flag or a roof cap.
+  m.noSolid = true;
+  m.mat = 0;
+  for (let fi = 0; fi < floors; fi++) {
+    const y = fi * B.storey;
+    for (const z of [-1.7, 45.7]) {
+      m.box(32, y + B.storey - 0.88, z, 68.0, 0.84, 1.32, P.spandrel);
+      m.box(32, y + B.storey - 1.34, z, 68.5, 0.12, 1.72, P.coping);
+    }
+    for (const x of [-2.87, 66.87]) {
+      m.box(x, y + B.storey - 0.25, 22, 0.12, 0.18, 48, P.reveal);
+      m.box(x, y + 0.40, 22, 0.18, 0.70, 48, P.stoneDk);
+      for (let z = 2; z < 44; z += 7) {
+        m.box(x, y + B.storey / 2, z, 0.11, B.storey - 0.4, 0.10, P.reveal);
+      }
+    }
+  }
+  // Metal shoes and caps break up the long concrete piers without thickening
+  // the route through the front entrance.
+  for (let x = -2; x <= 66; x += 8) for (const z of [-1.6, 45.6]) {
+    m.box(x, 0.45, z, 2.28, 0.90, 2.28, P.stoneDk);
+    m.box(x, top - 0.18, z, 2.34, 0.25, 2.34, P.coping);
+  }
+  m.noSolid = false;
   // A parapet RING, not a cap: a solid roof slab would fill the frame. CEIL_FLAG,
   // not SITE, so looking at a lower floor removes it instead of leaving it
   // hanging — and removes it cleanly rather than in a dithered band.

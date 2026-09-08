@@ -116,7 +116,7 @@ class View {
 
     /* ---- 가구 배치 ---- */
     this.place = null;              // the piece being positioned, if any
-    this.gPlaced = null; this.gGhost = null; this.gZones = null;
+    this.gPlaced = null; this.gPlacedGlass = null; this.gGhost = null; this.gZones = null;
     this.frameOpts = null;          // last frame's camera/cut state, for the skin pass
 
     /* ---- 1인칭 ---- */
@@ -205,7 +205,10 @@ class View {
     const built = buildPlaced(this.game.company.placed);
     this.desks = built.desks;
     disposeMesh(this.gPlaced);
-    this.gPlaced = built.mesh.count() ? upload(splitGlass(built.mesh).solid) : null;
+    disposeMesh(this.gPlacedGlass);
+    const parts = splitGlass(built.mesh);
+    this.gPlaced = parts.solid.count() ? upload(parts.solid) : null;
+    this.gPlacedGlass = parts.glass.count() ? upload(parts.glass) : null;
 
     // Solids carry world Y and buildPlaced already lifted them onto their
     // storey, so each floor's grid filters by its own Y window and the combined
@@ -1584,6 +1587,7 @@ class View {
     }
     if (pass === 'glass') {
       renderer.drawMesh(L, this.gGlass, null);
+      renderer.drawMesh(L, this.gPlacedGlass, null);
       // The zone patches and the ghost ride the blended pass: they are meant to
       // be seen through, and it saves a program of their own.
       renderer.drawMesh(L, this.gZones, null);
@@ -1750,14 +1754,24 @@ async function boot() {
     e.preventDefault();
     if (lostShown) return;
     lostShown = true;
-    try { game.save(); } catch (err) { /* 저장이 안 돼도 재시작은 해야 한다 */ }
+    const saved = game.save();
     const box = document.createElement('div');
     box.id = 'glLost';
-    box.innerHTML = '<div class="glc card"><b>그래픽을 다시 불러옵니다…</b>'
-      + '<span>진행 상황은 저장됐습니다.</span></div>';
+    box.innerHTML = saved
+      ? '<div class="glc card"><b>그래픽을 다시 불러옵니다…</b><span>진행 상황은 저장됐습니다.</span></div>'
+      : '<div class="glc card"><b>그래픽 연결이 끊겼습니다.</b>'
+        + '<span>저장에 실패하여 자동으로 새로고침하지 않았습니다. 저장 공간을 확인한 뒤 다시 시도하세요.</span>'
+        + '<button class="btn">저장 후 다시 불러오기</button></div>';
     document.body.appendChild(box);
-    setTimeout(() => location.reload(), 1200);
+    if (saved) setTimeout(() => location.reload(), 1200);
+    else box.querySelector('button').onclick = () => {
+      if (game.save()) location.reload();
+      else box.querySelector('span').textContent = '아직 저장할 수 없습니다. 새로고침하면 마지막 저장 이후 진행을 잃을 수 있습니다.';
+    };
   }, false);
+
+  // 초기화 직후 reload에서는 지운 회사를 다시 저장하지 않는다.
+  window.addEventListener('pagehide', () => { if (Game.hasSave()) game.save(); });
 
   let last = performance.now();
   let loopErr = 0;

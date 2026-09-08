@@ -7,9 +7,9 @@
    Kenney City Kit 은 같은 건물을 두 벌로 싣고 온다: 제대로 만든 `building-*`
    (한 채 2,200~10,500 삼각형) 과 실루엣용 `low-detail-building-*` (124~756).
    창밖 200 유닛 밖의 실루엣에 만 단위 삼각형을 쓰는 것은 폰에서 그대로
-   프레임이므로, 기본은 저폴리 쪽이고 길 건너 두 채만 제대로 된 모델이다.
-   차 여섯 대까지 합쳐 2만 5천 삼각형 — 사무실을 다섯 층까지 올려도 표가
-   나지 않는 양이다.
+   프레임이므로 먼 고리는 저폴리 팩을 유지한다. 길 건너 첫 줄은 창 깊이와
+   외장 모듈을 가진 절차적 건물 일곱 채, 그 뒤의 두 채는 팩 모델이다.
+   가까운 실루엣에만 디테일을 쓰고 도시 전체를 고밀도로 바꾸지 않는다.
 
    ── 톤
    팩의 건물은 아주 밝은 라벤더 회색이라, 이 게임의 밝은 조명 아래에서는
@@ -83,33 +83,89 @@ const onRoad = (z) => Math.abs(z - ROAD_Z) < ROAD_HALF + 11;
 /* 거리에 따른 톤. 가까운 것은 진하고 먼 것은 옅다. */
 const tintFor = (r) => 0.92 - Math.min(0.28, (r - 90) / 700);
 
-/* 도시를 짓는다. 키트가 아직 안 왔으면 false 를 돌려주고, 부르는 쪽이
-   예전의 절차적 상자 스카이라인으로 되돌아간다 — 첫 실행에서 네트워크가
-   느리다고 창밖이 빈 회색 판이 되면 안 된다. */
+/* 가까운 건물은 층고와 창 깊이가 보여야 한다. 거대한 상자에 선을 칠하는
+   대신 어두운 창 안쪽, 유리, 돌출 창턱, 세로 프레임을 서로 다른 면에 둔다.
+   먼 건물에는 이 밀도를 쓰지 않는다. 각 창을 여섯 면짜리 두꺼운 액자로
+   둘러싸지 않고 층별 띠와 세로 기둥을 공유해 정점 수를 제한한다. */
+function cityBlock(m, x, z, w, d, floors, rnd, warm = false) {
+  const saved = { mat: m.mat, flag: m.flag, noSolid: m.noSolid };
+  m.flag = 4; m.noSolid = true;
+  const sh = 8.2, h = floors * sh, wall = warm ? P.facadeWarm : P.facade;
+  m.mat = 0;
+  m.box(x, h / 2, z, w, h, d, wall);
+  m.box(x, 0.40, z, w + 0.65, 0.8, d + 0.65, P.stoneDk);
+
+  // 사방향 모두 같은 깊이 규칙. 유리는 불투명한 실내 뒤판을 가진 외장
+  // 패널이므로 flag 2 로 빼지 않는다 — 사무실 유리의 블렌드 순서와 무관하다.
+  for (const [axis, side, span, depth] of [[0, -1, w, d], [0, 1, w, d], [1, -1, d, w], [1, 1, d, w]]) {
+    const face = (u, y, offset, fw, fh, fd, col) => {
+      if (axis === 0) m.box(x + u, y, z + side * (depth / 2 + offset), fw, fh, fd, col);
+      else m.box(x + side * (depth / 2 + offset), y, z + u, fd, fh, fw, col);
+    };
+    const bays = Math.max(3, Math.round(span / 5.2)), bw = (span - 1.2) / bays;
+    for (let f = 0; f < floors; f++) {
+      const base = f * sh, wh = f === 0 ? 5.8 : 5.0, wy = base + sh * 0.54;
+      face(0, wy, 0.035, span - 0.9, wh + 0.34, 0.07, P.reveal);
+      for (let b = 0; b < bays; b++) {
+        const u = (b + 0.5 - bays / 2) * bw;
+        const q = rnd(), glass = q < 0.17 ? P.windowWarm : q < 0.52 ? P.windowBlue : P.window;
+        face(u, wy, 0.086, bw - 0.28, wh, 0.035, glass);
+        // 일부 창의 블라인드가 반쯤 내려와 같은 모듈의 반복을 끊는다.
+        if (q > 0.79) face(u, wy + wh * 0.29, 0.11, bw - 0.30, wh * 0.38, 0.025, P.blindDk);
+      }
+      face(0, wy - wh / 2 - 0.15, 0.15, span + 0.16, 0.22, 0.42, P.coping);
+      face(0, base + sh - 0.35, 0.035, span, 0.48, 0.12, P.spandrel);
+    }
+    for (let b = 0; b <= bays; b++) {
+      face((b - bays / 2) * bw, h / 2, 0.14, b === 0 || b === bays ? 0.42 : 0.15,
+        h, 0.24, P.coping);
+    }
+  }
+
+  // 옥상은 벽돌 덩어리의 평평한 윗면으로 끝나지 않는다. 난간 테두리와
+  // 뒤로 물러난 설비실, 팬 두 개만으로 위에서 보는 실루엣을 만든다.
+  m.box(x, h + 0.12, z, w + 0.25, 0.24, d + 0.25, P.roof);
+  for (const k of [-1, 1]) {
+    m.box(x, h + 0.65, z + k * (d / 2 - 0.18), w, 1.1, 0.38, P.stone);
+    m.box(x + k * (w / 2 - 0.18), h + 0.65, z, 0.38, 1.1, d, P.stone);
+  }
+  m.box(x - w * 0.17, h + 1.8, z - d * 0.10, w * 0.34, 3.2, d * 0.34, P.stoneDk);
+  for (let i = 0; i < 2; i++) {
+    const vx = x + w * 0.24, vz = z + (i - 0.5) * 3.8;
+    m.box(vx, h + 0.78, vz, 2.6, 1.4, 2.8, P.alu);
+    m.cyl(vx, h + 1.52, vz, 0.94, 0.12, P.charcoal, 12);
+    for (let g = -2; g <= 2; g++) m.box(vx + g * 0.31, h + 1.60, vz, 0.075, 0.06, 1.65, P.steel);
+  }
+  // 정면 출입구: 문턱은 낮게, 캐노피는 실제 사람 키보다 높게 둔다.
+  m.box(x, 3.2, z - d / 2 - 0.16, 3.4, 6.4, 0.12, P.reveal);
+  m.box(x, 3.2, z - d / 2 - 0.24, 0.09, 6.2, 0.10, P.chrome);
+  m.box(x, 6.9, z - d / 2 - 1.15, 6.2, 0.24, 2.8, P.coping);
+  m.mat = saved.mat; m.flag = saved.flag; m.noSolid = saved.noSolid;
+}
+
+/* 도시를 짓는다. 키트가 없어도 절차적 건물과 도로를 완성한다.
+   true 반환은 기존 buildSite 계약을 유지하면서 상자 스카이라인이
+   새 건물 위에 중복으로 생성되지 않게 한다. */
 export function buildCity(m) {
-  if (!kitReady('city')) return false;
+  const hasKit = kitReady('city');
   const rnd = mulberry32(90210);
 
   // ── 길 건너 한 줄 ──
   // 창에서 가장 가깝고 가장 많이 보이는 줄이다. 사옥과 나란히 세워야
   // 도시가 격자로 읽힌다.
-  for (let x = -52; x <= 124; x += 25) {
-    const wide = rnd() < 0.34;
-    const id = wide ? BLOCKS[Math.floor(rnd() * BLOCKS.length)]
-      : TOWERS[Math.floor(rnd() * TOWERS.length)];
-    const s = wide ? 0.75 + rnd() * 0.3 : 0.42 + rnd() * 0.35;
+  for (let x = -52; x <= 146; x += 33) {
     /* 길 북쪽 갓길(z 101)에서 한참 물러선다. 바짝 붙여 놓으면 카메라를
        돌리는 동안 이웃이 사옥과 카메라 사이에 들어와 화면을 막는다 —
        SITE 플래그는 벽 자르기의 예외라 녹지도 않는다. */
-    kitPut(m, id, x + (rnd() - 0.5) * 6, 128 + rnd() * 18, 0,
-      { s, solid: false, tint: 0.80 + rnd() * 0.10 });
+    cityBlock(m, x, 130 + rnd() * 12, 21 + rnd() * 3, 19 + rnd() * 4,
+      4 + Math.floor(rnd() * 5), rnd, rnd() > 0.5);
   }
 
   // ── 길 건너 랜드마크 두 채 ──
   // 여기만 제대로 된 모델을 쓴다. 하나는 낮은 상가, 하나는 탑 — 실루엣에
   // 높이 차이가 있어야 도시가 평평해 보이지 않는다.
-  kitPut(m, 'building-c', -12, 126, 0, { s: 0.9, solid: false, tint: 0.86 });
-  kitPut(m, 'building-skyscraper-a', 104, 152, 0, { s: 0.78, solid: false, tint: 0.82 });
+  kitPut(m, 'building-c', -12, 169, 0, { s: 0.9, solid: false, tint: 0.86 });
+  kitPut(m, 'building-skyscraper-a', 104, 185, 0, { s: 0.78, solid: false, tint: 0.82 });
 
   // ── 둘레 ──
   // 사옥을 둘러싼 고리. 길 쪽은 비운다.
@@ -126,7 +182,10 @@ export function buildCity(m) {
       : BLOCKS[Math.floor(rnd() * BLOCKS.length)];
     // 멀수록 크게. 지평선 쪽이 낮으면 도시가 접시처럼 보인다.
     const s = (tall ? 0.5 : 0.8) + (r / 260) * 0.7 + rnd() * 0.3;
-    kitPut(m, id, bx, bz, 0, { s, solid: false, tint: tintFor(r) * (0.94 + rnd() * 0.12) });
+    // 에셋 요청이 실패해도 창문과 층이 있는 저밀도 건물이 남는다. 도로도
+    // 아래에서 항상 짓기 때문에 네트워크 오류가 회색 공터로 이어지지 않는다.
+    if (hasKit) kitPut(m, id, bx, bz, 0, { s, solid: false, tint: tintFor(r) * (0.94 + rnd() * 0.12) });
+    else cityBlock(m, bx, bz, 18 + s * 3, 18 + s * 3, 3 + Math.floor(s * 3), rnd, i % 2 === 0);
   }
 
   // ── 길 위의 차 ──
@@ -222,7 +281,8 @@ function buildStreet(m, rnd) {
   // 인도 안쪽 줄. 기둥 하나에 팔 하나, 그 끝에 발광 머리.
   for (let x = -84; x <= 168; x += 42) {
     for (const [z, dir] of [[Z - 27, 1], [Z + 27, -1]]) {
-      m.box(x, 7.4, z, 0.9, 15, 0.9, P.pole);
+      m.cyl(x, 7.4, z, 0.29, 15, P.pole, 12);
+      m.cyl(x, 0.75, z, 0.52, 1.0, P.pole, 12);
       m.box(x, 14.6, z + dir * 2.4, 0.7, 0.7, 5.2, P.pole);
       m.box(x, 14.1, z + dir * 4.8, 2.4, 0.9, 1.6, P.lampHead);
     }
@@ -231,7 +291,7 @@ function buildStreet(m, rnd) {
   // ── 신호등 ──
   // 횡단보도 양쪽에 하나씩. 세 알이 세로로 붙는다.
   for (const [x, z] of [[17, Z - 26], [44, Z + 26]]) {
-    m.box(x, 6.0, z, 0.8, 12, 0.8, P.pole);
+    m.cyl(x, 6.0, z, 0.26, 12, P.pole, 12);
     m.box(x, 12.6, z, 1.9, 5.2, 1.4, P.charcoal);
     m.box(x, 14.2, z + 0.75, 1.1, 1.1, 0.3, P.signRed);
     m.box(x, 12.6, z + 0.75, 1.1, 1.1, 0.3, P.signAmber);
@@ -251,8 +311,14 @@ function buildStreet(m, rnd) {
   for (let x = -66; x <= 162; x += 42) {
     for (const z of [Z - 33, Z + 33]) {
       const h = 9 + rnd() * 4;
-      m.box(x, h / 2, z, 1.1, h, 1.1, P.trunk);
-      m.box(x, h + 2.6, z, 7.5 + rnd() * 2, 6.2, 7.5 + rnd() * 2, P.hedge);
+      m.cyl(x, h / 2, z, 0.43, h, P.trunk, 10);
+      m.box(x, 0.60, z, 4.4, 0.5, 4.4, P.stoneDk);
+      m.box(x, 0.88, z, 3.8, 0.08, 3.8, P.walnutDk);
+      // 수관은 겹치는 타원체로 나눈다. 한 덩어리 큐브의 모서리와 평평한
+      // 윗면이 사라지면서 기존 LEAF 재질이 둥근 표면을 따라 빛을 받는다.
+      m.ball(x, h + 2.0, z, 3.4, 4.0, 3.1, P.hedge, 12, 8);
+      m.ball(x - 2.1, h + 1.1, z + 0.7, 2.7, 2.8, 2.5, P.leafDk, 10, 7);
+      m.ball(x + 1.8, h + 2.3, z - 0.8, 2.5, 3.2, 2.7, P.leaf, 10, 7);
     }
   }
   m.mat = prevMat;

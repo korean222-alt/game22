@@ -32,7 +32,7 @@ import {
   previewQuality, funScore, canUrge, comboMult, URGE, randomTitle, bugTimeLeft,
 } from '../game/project.js';
 import { TUTORIAL } from '../game/tutorial.js';
-import { STAMINA_REGEN } from '../game/state.js';
+import { Game, STAMINA_REGEN } from '../game/state.js';
 import { giftText } from '../game/mail.js';
 import { AWARD_CATS, AWARD_GRADES, EXPO_PLANS, awardBar } from '../game/awards.js';
 import { monsterFor, monsterForStage } from '../game/monsters.js';
@@ -1155,7 +1155,9 @@ export class UI {
 
   _wireKeys() {
     window.addEventListener('keydown', (e) => {
-      if (e.target.tagName === 'INPUT') return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)
+          || e.target.isContentEditable || e.ctrlKey || e.metaKey || e.altKey) return;
+      if ($('modal')?.classList.contains('show')) return;
       // While walking the office, WASD/E/F belong to the first-person
       // controller; the management shortcuts would fight it for the same keys.
       if (this.view.fp && this.view.fp.on) return;
@@ -1166,8 +1168,7 @@ export class UI {
       else if (k === 'tab') { e.preventDefault(); this.view.toggleCut(); }
       else if (k >= '1' && k <= '7') {
         const tabs = ['company', 'staff', 'dev', 'shop', 'dex', 'live', 'office'];
-        const t = document.querySelector(`#tabs .tab[data-tab="${tabs[+k - 1]}"]`);
-        if (t) t.click();
+        this.openTab(tabs[+k - 1]);
       }
     });
   }
@@ -1938,7 +1939,16 @@ export class UI {
      the grant. A save that has already been founded skips straight past. */
   openingFlow() {
     const c = this.g.company;
-    if (c.founded) return;
+    if (c.founded) {
+      const award = this.g.pendingAward;
+      this.g.checkTasks();
+      if (this.g.pendingEvent) this._pop(() => this._eventFlow());
+      else this.g._drainWeeks();
+      if (award) this._pop(() => this.showAwards(award));
+      this.renderAll();
+      this.g.save();
+      return;
+    }
     this.askCompanyName();
   }
 
@@ -2076,7 +2086,14 @@ export class UI {
       ev.options.map((o, i) => ({
         name: o.ko,
         desc: o.desc,
-        onPick: () => { this.g.answerEvent(i); this.g.save(); },
+        onPick: () => {
+          const result = this.g.answerEvent(i);
+          if (!result.ok) {
+            this.toast(result.why, 'bad');
+            this._pop(() => this._eventFlow());
+          }
+          this.g.save();
+        },
       })));
   }
 
@@ -2177,7 +2194,7 @@ export class UI {
      진행시키고 싶을 때의 지름길이다 — 스태미나는 들지 않는다. */
   doTurn() {
     const g = this.g;
-    if (this.busy) return;
+    if (this.busy || $('modal')?.classList.contains('show')) return;
     if (g.project && g.project.pendingCards) { this._cardFlow(); return; }
     if (!g.project) return;
     const r = g.devTurn();
@@ -2192,6 +2209,7 @@ export class UI {
   renderAll() {
     this.renderHUD(); this.renderFloors(); this.renderPanel(); this.renderBadges();
     this.renderBattle(); this.renderProgress(); this.renderSales(); this.renderShell();
+    this.renderSaleRun(this.g.sales);
   }
 
   /* 판매 카드의 접기. 접었는지는 세이브가 아니라 기기에 남는다 — 화면의
@@ -2756,13 +2774,19 @@ export class UI {
       '<div class="d">왼쪽 아래 <b>조이스틱</b>으로 걷고, 화면을 끌면 시점이 돈다. 데스크톱은 <kbd>WASD</kbd>.</div>'));
 
     const sv = el('button', 'btn wide sm', '저장하기');
-    sv.onclick = () => { g.save(); this.toast('저장했습니다.', 'good'); };
+    sv.onclick = () => {
+      const saved = g.save();
+      this.toast(saved ? '저장했습니다.' : '저장하지 못했습니다. 브라우저 저장 공간과 설정을 확인하세요.',
+        saved ? 'good' : 'bad');
+    };
     box.appendChild(sv);
     const rs = el('button', 'btn wide sm danger', '처음부터 다시');
     rs.onclick = () => {
       this.confirm('처음부터 다시 시작할까요?', '지금까지의 회사 기록이 모두 사라집니다.',
-        () => location.reload(),
-        () => { try { Game.clearSave(); } catch (e) { /* ignore */ } });
+        () => {
+          if (Game.clearSave()) location.reload();
+          else this.toast('저장 기록을 지우지 못했습니다. 다시 시작하지 않았습니다.', 'bad');
+        });
     };
     box.appendChild(rs);
 
@@ -3990,7 +4014,7 @@ export class UI {
       const b = el('button', 'btn sm danger', '지금 서비스 종료');
       b.style.marginTop = '6px';
       b.onclick = () => {
-        this.confirm(`「${r.title}」 서비스를 종료할까요?`, '한 주가 지나면 어차피 닫힙니다.',
+        this.confirm(`「${r.title}」 서비스를 종료할까요?`, '남은 판매 매출을 포기하고 종료합니다. 판매 정산은 확인할 수 있습니다.',
           () => { g.endService(r.id); g.save(); });
       };
       it.appendChild(b);

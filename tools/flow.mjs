@@ -905,6 +905,9 @@ await step('이름이 바뀐 소재(sports2 → soccer)를 옛 세이브에서 �
     delete d.company.contentsOwned;      // 뽑기가 없던 시절의 세이브
     if (d.releases && d.releases[0]) d.releases[0].contentId = 'sports2';
     localStorage.setItem(key, JSON.stringify(d));
+    // 탭을 닫을 때 도는 자동 저장이 방금 심어 둔 옛 세이브를 덮어쓴다.
+    // 이 검사는 '옛 세이브를 읽는 순간' 을 보는 것이므로 그것만 막는다.
+    window.__game.save = () => true;
   });
   await page.reload({ waitUntil: 'load' });
   await page.waitForFunction(() => document.getElementById('boot')?.classList.contains('gone'), { timeout: 180000 });

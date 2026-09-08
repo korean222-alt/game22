@@ -133,12 +133,14 @@ MB.boxY = function (cx, cy, cz, w, h, d, ry, col, top) {
     y0 = cy - h / 2, y1 = cy + h / 2, t = top || col;
   const R = (lx, lz) => [cx + lx * c + lz * s, cz - lx * s + lz * c];
   const a = R(-hw, -hd), b = R(hw, -hd), e = R(hw, hd), f = R(-hw, hd);
-  this.quad([a[0], y1, a[1]], [b[0], y1, b[1]], [e[0], y1, e[1]], [f[0], y1, f[1]], t);
-  this.quad([a[0], y0, a[1]], [f[0], y0, f[1]], [e[0], y0, e[1]], [b[0], y0, b[1]], col);
-  this.quad([a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], [a[0], y1, a[1]], col);
-  this.quad([b[0], y0, b[1]], [e[0], y0, e[1]], [e[0], y1, e[1]], [b[0], y1, b[1]], col);
-  this.quad([e[0], y0, e[1]], [f[0], y0, f[1]], [f[0], y1, f[1]], [e[0], y1, e[1]], col);
-  this.quad([f[0], y0, f[1]], [a[0], y0, a[1]], [a[0], y1, a[1]], [f[0], y1, f[1]], col);
+  // Rotation preserves winding. These faces must point outward just like box(),
+  // or BACK culling removes their near sides as soon as furniture is turned.
+  this.quad([a[0], y1, a[1]], [f[0], y1, f[1]], [e[0], y1, e[1]], [b[0], y1, b[1]], t);
+  this.quad([a[0], y0, a[1]], [b[0], y0, b[1]], [e[0], y0, e[1]], [f[0], y0, f[1]], col);
+  this.quad([a[0], y0, a[1]], [a[0], y1, a[1]], [b[0], y1, b[1]], [b[0], y0, b[1]], col);
+  this.quad([b[0], y0, b[1]], [b[0], y1, b[1]], [e[0], y1, e[1]], [e[0], y0, e[1]], col);
+  this.quad([e[0], y0, e[1]], [e[0], y1, e[1]], [f[0], y1, f[1]], [f[0], y0, f[1]], col);
+  this.quad([f[0], y0, f[1]], [f[0], y1, f[1]], [a[0], y1, a[1]], [a[0], y0, a[1]], col);
   const mx = Math.abs(hw * c) + Math.abs(hd * s), mz = Math.abs(hw * s) + Math.abs(hd * c);
   this.solid(cx - mx, y0, cz - mz, cx + mx, y1, cz + mz);
   return this;
@@ -153,9 +155,14 @@ MB.cyl = function (cx, cy, cz, r, h, col, seg, top) {
   }
   for (let i = 0; i < seg; i++) {
     const p0 = pts[i], p1 = pts[(i + 1) % seg];
-    this.quad([p0[0], y0, p0[1]], [p1[0], y0, p1[1]], [p1[0], y1, p1[1]], [p0[0], y1, p0[1]], col);
-    this.tri(cx, y1, cz, p0[0], y1, p0[1], p1[0], y1, p1[1], t);
-    this.tri(cx, y0, cz, p1[0], y0, p1[1], p0[0], y0, p0[1], col);
+    // Radial side normals keep round legs and poles smooth; caps stay flat.
+    // The old winding pointed all three surfaces into the cylinder.
+    const n0 = [(p0[0] - cx) / (r || 1), 0, (p0[1] - cz) / (r || 1)];
+    const n1 = [(p1[0] - cx) / (r || 1), 0, (p1[1] - cz) / (r || 1)];
+    this.quadN([p0[0], y0, p0[1]], n0, [p0[0], y1, p0[1]], n0,
+      [p1[0], y1, p1[1]], n1, [p1[0], y0, p1[1]], n1, col);
+    this.tri(cx, y1, cz, p1[0], y1, p1[1], p0[0], y1, p0[1], t);
+    this.tri(cx, y0, cz, p0[0], y0, p0[1], p1[0], y0, p1[1], col);
   }
   this.solid(cx - r, y0, cz - r, cx + r, y1, cz + r);
   return this;
@@ -174,8 +181,11 @@ MB.limbUp = function (len, r0, r1, seg, col, squashX, squashZ) {
     const a = i / seg * 6.2831853, ca = Math.cos(a), sa = Math.sin(a);
     ring0.push([ca * r0 * squashX, 0, sa * r0 * squashZ]);
     ring1.push([ca * r1 * squashX, len, sa * r1 * squashZ]);
-    const nl = Math.hypot(ca / squashX, sa / squashZ) || 1;
-    nrm.push([ca / squashX / nl, 0, sa / squashZ / nl]);
+    // A taper's normal tilts with its slope; purely radial normals make a
+    // shoulder or calf reflect light as though it were a straight pipe.
+    const ny = (r0 - r1) / (len || 1);
+    const nl = Math.hypot(ca / squashX, ny, sa / squashZ) || 1;
+    nrm.push([ca / squashX / nl, ny / nl, sa / squashZ / nl]);
   }
   for (let i = 0; i < seg; i++) {
     const j = (i + 1) % seg;
@@ -200,8 +210,9 @@ MB.limbT = function (len, r0, r1, seg, col, squashX, squashZ, ox, oy, oz, rx) {
     const a = i / seg * 6.2831853, ca = Math.cos(a), sa = Math.sin(a);
     ring0.push(T([ca * r0 * squashX, 0, sa * r0 * squashZ]));
     ring1.push(T([ca * r1 * squashX, -len, sa * r1 * squashZ]));
-    const nl = Math.hypot(ca / squashX, sa / squashZ) || 1;
-    nrm.push(TN([ca / squashX / nl, 0, sa / squashZ / nl]));
+    const ny = (r1 - r0) / (len || 1);
+    const nl = Math.hypot(ca / squashX, ny, sa / squashZ) || 1;
+    nrm.push(TN([ca / squashX / nl, ny / nl, sa / squashZ / nl]));
   }
   for (let i = 0; i < seg; i++) {
     const j = (i + 1) % seg;
