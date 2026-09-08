@@ -629,6 +629,9 @@ body.in-battle #hint,body.placing #hint,body.picking #hint{display:none}
 .pinfo b{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pinfo .ok{font-size:10px;color:var(--good)}
 .pinfo .no{font-size:10px;color:var(--bad)}
+/* 조작 안내 한 줄. 배치 중에는 패널이 접혀 있어 설명이 설 자리가 여기뿐이다. */
+.pinfo .ph{font-size:9.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:560px){ .pinfo .ph{display:none} }
 /* the panel is closed while placing, so the toolbar owns the bottom edge */
 body.placing #toast,body.picking #toast{bottom:calc(var(--sab) + var(--gap) + 62px)}
 

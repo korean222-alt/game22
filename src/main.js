@@ -2127,16 +2127,23 @@ function wireCamPad() {
    mouse, pen and touch with the same code, and pointer capture keeps a drag
    alive when the finger slides over the HUD.
 
-   ── 배치 모드는 캔버스를 통째로 가져간다 ──
-   예전에는 "손가락 하나면 가구, 둘이면 카메라" 였다. 그럴듯하지만 실기기
-   에서는 무너진다: 가로로 든 폰에서 반대쪽 엄지나 손바닥이 화면에 닿는
-   순간 접점이 둘이 되고, 책상을 끌던 손가락이 카메라 팬으로 바뀐다.
-   플레이어에게는 "책상을 움직이려는데 화면이 움직인다" 로 보인다 — 실제로
-   그 제보를 받았다.
+   ── 배치 모드: 무엇을 짚었느냐로 가른다 ──
+   처음에는 "손가락 하나면 가구, 둘이면 카메라" 였다. 실기기에서 무너졌다:
+   가로로 든 폰에서 반대쪽 엄지나 손바닥이 닿는 순간 접점이 둘이 되고,
+   책상을 끌던 손가락이 카메라 팬으로 바뀐다 — "책상을 움직이려는데 화면이
+   움직인다".
 
-   그래서 배치 중에는 캔버스의 어떤 제스처도 카메라를 건드리지 않는다.
-   카메라는 화면 오른쪽 아래의 조이스틱이 맡는다. 손가락 수와 상관없이
-   결과가 하나뿐이라 흔들릴 여지가 없다. */
+   그래서 한동안 배치 중에는 캔버스의 어떤 제스처도 카메라를 건드리지 않게
+   했다. 이번에는 그것이 반대편에서 걸렸다: 카메라를 보려면 오른쪽 아래
+   조이스틱을 써야 하니, 가구를 쥔 손 말고 **다른 손이 하나 더** 필요했다.
+
+   손가락 수가 아니라 **짚은 것**으로 가른다.
+     · 가구(발자국) 위에서 시작한 드래그 → 가구가 따라온다
+     · 빈 바닥에서 시작한 드래그 → 카메라가 돈다 (한 손으로 된다)
+     · 끌지 않고 툭 놓으면 → 그 자리로 가구가 간다 (예전 그대로)
+   쥔 손가락은 `placeId` 에 묶여 있으므로 뒤늦게 닿는 접점이 그것을 빼앗지
+   못하고, 배치 중에는 두 손가락 확대·이동도 여전히 없다. 손바닥이 닿아서
+   책상이 도망가던 자리는 그대로 막혀 있다. */
 function wirePointer() {
   const pts = new Map();
   let pinch = 0, mid = null, moved = 0;
@@ -2162,18 +2169,41 @@ function wirePointer() {
     return cam.hitPlane(e.clientX, e.clientY, vp.w, vp.h, view.floor * STOREY + 0.05);
   };
 
+  /* 지금 놓는 중인 가구를 짚었는가.
+
+     바닥 평면 하나로만 보면 안 된다. 손가락은 화면에 **서 있는 가구**를
+     짚는데, 책상 상판을 짚은 손가락이 바닥 평면과 만나는 곳은 그 책상보다
+     서너 칸 뒤다(카메라가 비스듬히 보고 있으므로). 그러면 책상을 정확히
+     눌러도 "빈 바닥을 짚었다" 가 되어 화면이 돌아간다.
+
+     그래서 가구가 서 있는 높이를 몇 겹으로 뚫어 보고, 그중 하나라도
+     발자국 안에 들어오면 짚은 것으로 친다. 여유(1.2)는 손가락 굵기다 —
+     화분처럼 작은 가구를 정확히 짚으라고 요구하면 잡히지 않는다. */
+  const onPiece = (e) => {
+    const p = view.place;
+    if (!p) return false;
+    const f = footprint(p.def, p.rot);
+    const m = 1.2;
+    const vp = viewportSize();
+    const base = view.floor * STOREY;
+    for (const y of [base + 0.05, base + 1.8, base + 3.4]) {
+      const hit = cam.hitPlane(e.clientX, e.clientY, vp.w, vp.h, y);
+      if (!hit) continue;
+      if (Math.abs(hit[0] - (p.x + f.ox)) <= f.w / 2 + m
+          && Math.abs(hit[2] - (p.z + f.oz)) <= f.d / 2 + m) return true;
+    }
+    return false;
+  };
+
   /* 잡는다. 짚은 곳과 가구 중심의 차이를 기억해 두면, 가구가 손가락 밑으로
      순간이동하지 않고 잡은 그대로 따라온다 — 반 칸 단위로 미세하게 맞출 때
-     이것이 있고 없고가 크게 다르다. 단, 가구에서 멀리 떨어진 바닥을 짚으면
-     그건 "저기로 옮겨라" 라는 뜻이므로 어긋남을 버린다. */
+     이것이 있고 없고가 크게 다르다. */
   const grabPlace = (e) => {
     if (!view.place) return false;
     placeId = e.pointerId;
     const hit = floorHit(e);
     if (!hit) { placeOff = null; return true; }
-    const dx = view.place.x - hit[0], dz = view.place.z - hit[2];
-    placeOff = Math.hypot(dx, dz) <= 6 ? [dx, dz] : null;
-    if (!placeOff) view.movePlace(hit[0], hit[2]);
+    placeOff = [view.place.x - hit[0], view.place.z - hit[2]];
     return true;
   };
 
@@ -2233,16 +2263,16 @@ function wirePointer() {
     // Walking: a drag on the canvas turns your head. The stick is its own DOM
     // control, so the two can never be confused for one another.
     if (view.fp.on) { view.fp.startLook(e.pointerId, e.clientX, e.clientY); firstGesture(); return; }
-    /* 배치 중에는 첫 손가락이 가구를 쥔다. 그 뒤에 몇 개가 더 닿든 카메라는
-       움직이지 않고, 나중에 닿은 손가락이 드래그를 빼앗지도 않는다.
+    /* 배치 중: 가구를 짚었으면 그 손가락이 가구를 쥐고, 뒤에 몇 개가 더
+       닿든 그것을 빼앗지 못한다. 빈 바닥을 짚었으면 아무것도 쥐지 않고
+       그 드래그는 아래에서 카메라를 돌린다.
 
-       다만 쥔 손가락을 **잃어버리는** 경우가 실제로 있다. 브라우저가
-       제스처를 가로채면 pointerup 이 오지 않고, 그러면 placeId 가 유령
-       포인터에 붙박여 그 뒤로는 아무리 끌어도 가구가 안 움직인다. 지금
-       화면에 손가락이 하나뿐이면 이전 주인은 확실히 사라진 것이므로,
-       그 손가락이 다시 쥔다. */
+       쥔 손가락을 **잃어버리는** 경우가 실제로 있다 — 브라우저가 제스처를
+       가로채면 pointerup 이 오지 않고, 그러면 placeId 가 유령 포인터에
+       붙박여 그 뒤로는 아무리 끌어도 가구가 안 움직인다. 지금 화면에
+       손가락이 하나뿐이면 이전 주인은 확실히 사라진 것이므로 다시 쥔다. */
     if (view.place) {
-      if (placeId === null || pts.size === 1) grabPlace(e);
+      if ((placeId === null || pts.size === 1) && onPiece(e)) grabPlace(e);
       firstGesture();
       return;
     }
@@ -2263,9 +2293,11 @@ function wirePointer() {
     if (holdAt && moved >= 8) cancelHold();
     if (view.fp.on) { view.fp.moveLook(e.pointerId, nx, ny); return; }
     if (view.place) {
-      // 쥐고 있는 손가락만 가구를 옮긴다. 나머지는 아무 일도 하지 않는다 —
-      // 특히 카메라를 건드리지 않는다.
+      // 쥐고 있는 손가락은 가구를, 빈 바닥에서 시작한 첫 손가락은 카메라를
+      // 움직인다. 그 밖의 접점(손바닥·반대쪽 엄지)은 아무 일도 하지 않는다 —
+      // 배치 중에 두 손가락 확대·이동이 없는 것은 그대로다.
       if (e.pointerId === placeId) dragPlace(e);
+      else if (placeId === null && pts.size === 1) cam.orbit(nx - prev.x, ny - prev.y);
       return;
     }
     if (pts.size === 1) cam.orbit(nx - prev.x, ny - prev.y);
@@ -2289,6 +2321,12 @@ function wirePointer() {
       pts.delete(e.pointerId);
       if (!pts.size) canvas.classList.remove('drag');
       return;
+    }
+    /* 배치 중에 빈 바닥을 툭 누르면 "저기로 옮겨라" 다. 끌었으면 카메라를
+       돌린 것이므로 가구는 그대로 둔다. */
+    if (view.place && e.pointerId !== placeId && moved < 8 && pts.size === 1) {
+      const hit = floorHit(e);
+      if (hit) view.movePlace(hit[0], hit[2]);
     }
     if (e.pointerId === placeId) { placeId = null; placeOff = null; }
     /* 회수 모드: 짚은 자리의 가구를 가방에 넣는다. 끌었으면 카메라를 돌린

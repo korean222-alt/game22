@@ -3402,7 +3402,7 @@ export class UI {
     if (next) {
       box.appendChild(el('div', 'item plat lock',
         `<div class="t"><span class="n">🔒 ???</span><span class="j">랭크 ${next.rank}</span></div>
-         <div class="d">랭크가 하나 오를 때마다 새 플랫폼이 하나씩 열립니다.</div>`));
+         <div class="d">새 플랫폼은 <b>두 랭크마다</b> 하나씩 열립니다. 지금 랭크 ${g.company.rank}.</div>`));
     }
 
     box.appendChild(el('h4', 'sec', '수익 모델'));
@@ -4068,6 +4068,7 @@ export class UI {
     ]) box.appendChild(el('div', 'row', `<span>${k}</span><b>${v}</b>`));
     box.appendChild(el('div', 'item',
       '<div class="d">가구를 사면 <b>가방</b>에 들어갑니다. <b>배치</b>를 눌러 바닥의 파란 구역에 놓으세요. '
+      + '가구를 손가락으로 <b>끌면</b> 따라오고, <b>빈 바닥을 끌면</b> 화면이 돌아갑니다. 빈 바닥을 툭 누르면 그 자리로 옮겨집니다.<br>'
       + '책상 하나에 직원 한 명이 앉습니다. 쾌적도가 높으면 직원 의욕이 잘 유지되고 기획력이 오릅니다.<br>'
       + '이미 놓은 가구는 화면에서 <b>꾹 누르면</b> 들어 올려서 옮기거나 🎒 로 회수할 수 있습니다.</div>'));
 
@@ -4373,7 +4374,10 @@ export class UI {
     bar2.classList.add('show');
     const def = FURNITURE_BY_ID.get(p.id);
     this._pb.info.innerHTML = `<b>${def ? def.ko : ''}</b>`
-      + `<span class="${p.valid ? 'ok' : 'no'}">${p.valid ? '놓을 수 있습니다' : (p.why || '여기엔 안 됩니다')}</span>`;
+      + `<span class="${p.valid ? 'ok' : 'no'}">${p.valid ? '놓을 수 있습니다' : (p.why || '여기엔 안 됩니다')}</span>`
+      /* 손가락 하나로 다 되는 모드라는 것을 여기 적어 둔다 — 배치 중에는
+         패널이 접혀 있어서 설명이 있을 자리가 이 줄뿐이다. */
+      + '<span class="ph">가구를 끌면 따라오고, 빈 바닥을 끌면 화면이 돕니다</span>';
     this._pb.ok.disabled = !p.valid;
   }
 
@@ -4646,10 +4650,11 @@ export class UI {
   }
 
   showRankUp(up) {
-    /* 랭크 하나가 플랫폼 하나를 연다. 그것이 이 화면에서 가장 큰 소식인데
-       한동안 어디에도 안 적혀 있었다 — 개발 탭에 들어가야만 새 줄이 생긴
-       것을 알 수 있었고, 그러면 사다리가 올라간 순간이 아무 일도 아닌 것이
-       된다. */
+    /* 이 칸이 무엇을 열었는지가 이 화면에서 가장 큰 소식인데 한동안 어디에도
+       안 적혀 있었다 — 개발 탭에 들어가야만 새 줄이 생긴 것을 알 수 있었고,
+       그러면 사다리가 올라간 순간이 아무 일도 아닌 것이 된다. rankUnlocks 가
+       그 표를 들고 있고, 플랫폼이 없는 칸에도 층·수익 모델·도우미 자리·
+       상점이 걸려 있다. */
     const opened = rankUnlocks(up.rank);
     const next = rankUnlocks(up.rank + 1);
     const list = opened.length

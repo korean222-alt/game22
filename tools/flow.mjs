@@ -334,11 +334,16 @@ await step('책상을 여러 개 늘린다', async () => {
 });
 
 /* ── 배치 조작 ──
-   제보: "배치 모드에서 책상을 움직이려는데 화면이 움직인다." 원인은 손가락
-   수로 역할을 나눈 것이었다 — 가로로 든 폰에서 손바닥이 화면에 닿으면
-   접점이 둘이 되고, 그 순간 가구 드래그가 카메라 팬으로 바뀐다. 이제
-   배치 중에는 캔버스가 카메라를 아예 건드리지 않고, 카메라는 조이스틱이
-   맡는다. 아래 세 검사가 그 계약이다. */
+   제보 둘이 겹친 자리다. (1) "책상을 움직이려는데 화면이 움직인다" — 손가락
+   수로 역할을 나눈 탓이었다. 가로로 든 폰에서 손바닥이 닿으면 접점이 둘이
+   되고 가구 드래그가 카메라 팬으로 바뀌었다. (2) "카메라를 보려면 두 손이
+   필요하다" — 그래서 캔버스가 카메라를 아예 안 건드리게 했더니 조이스틱을
+   쥘 손이 하나 더 필요해졌다.
+
+   지금 규칙은 손가락 수가 아니라 **짚은 것**이다: 가구 위에서 시작한
+   드래그는 가구를, 빈 바닥에서 시작한 드래그는 카메라를 움직인다. 쥔
+   손가락은 뒤늦게 닿는 접점에 뺏기지 않고, 배치 중 두 손가락 확대·이동은
+   여전히 없다. 아래 검사들이 그 계약이다. */
 console.log('\n── 3-b. 배치 조작 (드래그 · 십자 · 조이스틱) ──');
 const camState = () => page.evaluate(() => ({
   az: +window.__cam.az.toFixed(4), el: +window.__cam.el.toFixed(4),
@@ -372,27 +377,85 @@ await step('배치 모드를 다시 연다', async () => {
   if (!(await state()).placing) throw new Error('배치 모드가 안 켜짐');
   return '화분 배치 중';
 });
-await step('두 손가락으로 끌어도 카메라가 움직이지 않는다', async () => {
-  const c0 = await camState();
-  const frames = [{ t: 'touchStart', p: [{ x: 300, y: 200, id: 1 }, { x: 520, y: 260, id: 2 }] }];
-  for (let i = 1; i <= 8; i++) {
-    frames.push({ t: 'touchMove', p: [{ x: 300 - i * 7, y: 200, id: 1 }, { x: 520 + i * 7, y: 260 + i * 5, id: 2 }] });
-  }
-  await gesture(frames);
-  const c1 = await camState();
-  if (JSON.stringify(c0) !== JSON.stringify(c1)) {
-    throw new Error(`카메라가 움직임: ${JSON.stringify(c0)} → ${JSON.stringify(c1)}`);
-  }
-  return `az/el/거리 그대로 (${c1.az}/${c1.el}/${c1.d})`;
+/* 카메라가 멈출 때까지 기다린다. 목표점은 감쇠로 따라가므로 장면이 바뀐
+   직후에는 매 프레임 화면이 조금씩 달라진다 — 그 사이에 좌표를 재면 손가락이
+   가구가 **있던** 자리를 짚는다. 실제 플레이어는 지금 보이는 화면을 짚으므로
+   생기지 않는 문제이고, 검사에만 필요한 기다림이다. */
+/* 지금 놓는 중인 가구가 화면 어디에 서 있는가. 검사가 "가구를 짚는다" 와
+   "빈 바닥을 짚는다" 를 구분하려면 이 좌표가 있어야 한다.
+
+   좌표가 **두 번 연속 같을 때까지** 기다린다. 카메라의 목표점은 감쇠로
+   따라가므로 장면이 바뀐 직후에는 매 프레임 화면이 조금씩 달라지고, 그
+   사이에 잰 좌표로 손가락을 놓으면 가구가 있던 자리를 짚는다. 실제
+   플레이어는 지금 보이는 화면을 짚으므로 없는 문제이고, 검사에만 필요하다. */
+const rawPieceAt = () => page.evaluate(() => {
+  const v = window.__view, c = window.__cam;
+  const pt = c.project(v.place.x, v.floor * 13 + 0.5, v.place.z, window.innerWidth, window.innerHeight);
+  return pt ? { x: Math.round(pt.x), y: Math.round(pt.y) } : null;
 });
-await step('한 손가락 드래그는 가구를 옮긴다', async () => {
+const pieceAt = async () => {
+  /* 두 번 연속 같은 값인지로는 부족하다 — SwiftShader 에서는 250ms 안에
+     프레임이 한 장도 안 그려질 수 있고, 그러면 "안 변했다" 가 "다 왔다" 로
+     읽힌다. 카메라가 **목표에 닿았는지**를 직접 본다. */
+  for (let i = 0; i < 40; i++) {
+    const gap = await page.evaluate(() => {
+      const c = window.__cam;
+      return Math.abs(c.tx - c.gx) + Math.abs(c.ty - c.gy) + Math.abs(c.tz - c.gz)
+           + Math.abs(c.dist - c.goalDist);
+    });
+    if (gap < 0.05) break;
+    await page.waitForTimeout(250);
+  }
+  return rawPieceAt();
+};
+
+await step('가구를 짚고 끌면 가구가 따라온다', async () => {
+  const at = await pieceAt();
+  if (!at) throw new Error('가구가 화면 밖');
   const p0 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
-  const frames = [{ t: 'touchStart', p: [{ x: 360, y: 210, id: 3 }] }];
-  for (let i = 1; i <= 8; i++) frames.push({ t: 'touchMove', p: [{ x: 360 + i * 9, y: 210 + i * 4, id: 3 }] });
+  const frames = [{ t: 'touchStart', p: [{ x: at.x, y: at.y, id: 3 }] }];
+  for (let i = 1; i <= 8; i++) frames.push({ t: 'touchMove', p: [{ x: at.x + i * 9, y: at.y + i * 4, id: 3 }] });
   await gesture(frames);
   const p1 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
   if (p0.x === p1.x && p0.z === p1.z) throw new Error('가구가 그대로');
   return `(${p0.x}, ${p0.z}) → (${p1.x}, ${p1.z})`;
+});
+await step('빈 바닥을 한 손가락으로 끌면 카메라가 돈다', async () => {
+  const at = await pieceAt();
+  const far = { x: Math.max(40, at.x - 260), y: Math.max(40, at.y - 120) };
+  const c0 = await camState();
+  const p0 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
+  const frames = [{ t: 'touchStart', p: [{ x: far.x, y: far.y, id: 4 }] }];
+  for (let i = 1; i <= 8; i++) frames.push({ t: 'touchMove', p: [{ x: far.x + i * 10, y: far.y + i * 3, id: 4 }] });
+  await gesture(frames);
+  const c1 = await camState();
+  const p1 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
+  if (c0.az === c1.az && c0.el === c1.el) throw new Error('카메라가 그대로');
+  if (p0.x !== p1.x || p0.z !== p1.z) throw new Error('가구가 딸려 왔다');
+  return `방위각 ${c0.az} → ${c1.az} · 가구는 제자리`;
+});
+await step('쥔 손가락은 두 번째 접점에 뺏기지 않는다', async () => {
+  const at = await pieceAt();
+  const c0 = await camState();
+  const p0 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
+  const frames = [{ t: 'touchStart', p: [{ x: at.x, y: at.y, id: 5 }] }];
+  // 가구를 쥔 채로 손바닥이 닿는다 — 그 뒤로 두 접점이 같이 벌어져도
+  // 카메라는 확대도 이동도 하지 않아야 한다.
+  frames.push({ t: 'touchStart', p: [{ x: at.x, y: at.y, id: 5 }, { x: at.x + 220, y: at.y + 60, id: 6 }] });
+  for (let i = 1; i <= 8; i++) {
+    frames.push({ t: 'touchMove', p: [
+      { x: at.x + i * 6, y: at.y + i * 3, id: 5 },
+      { x: at.x + 220 + i * 9, y: at.y + 60 + i * 6, id: 6 },
+    ] });
+  }
+  await gesture(frames);
+  const c1 = await camState();
+  const p1 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
+  if (JSON.stringify(c0) !== JSON.stringify(c1)) {
+    throw new Error(`카메라가 움직임: ${JSON.stringify(c0)} → ${JSON.stringify(c1)}`);
+  }
+  if (p0.x === p1.x && p0.z === p1.z) throw new Error('쥔 가구가 안 따라옴');
+  return `가구만 (${p0.x}, ${p0.z}) → (${p1.x}, ${p1.z})`;
 });
 await step('십자 버튼이 반 칸씩 옮긴다', async () => {
   const p0 = await page.evaluate(() => ({ x: window.__view.place.x, z: window.__view.place.z }));
