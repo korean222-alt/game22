@@ -135,7 +135,7 @@ export function shouldShowInstallGuide() {
   return true;
 }
 
-export function wireInstallGuide(root) {
+export function wireInstallGuide(root, onClose) {
   if (!root) return;
   const on = (id, fn) => { const e = document.getElementById(id); if (e) e.onclick = fn; };
   const ios = document.getElementById('a2ios');
@@ -154,7 +154,9 @@ export function wireInstallGuide(root) {
   if (ios) ios.hidden = !useIOS;
   if (and) and.hidden = useIOS;
 
-  const hide = () => root.classList.remove('show');
+  /* 닫을 때 부른 쪽에 알린다. 설정에서 연 경우 패널을 접고 열었으므로,
+     알리지 않으면 안내만 사라지고 화면이 빈 채로 남는다. */
+  const hide = () => { root.classList.remove('show'); if (onClose) onClose(); };
   on('a2close', () => {
     // Closed, not refused: ask again next time the game is opened fresh.
     try { sessionStorage.setItem(A2HS_KEY, '1'); } catch (e) { /* ignore */ }

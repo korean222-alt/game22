@@ -12,7 +12,7 @@
 import {
   JOBS, JOB_ABILITY, GENRES, CONTENTS, PLATFORMS, MONETIZE, ITEMS, STATS, STAT_KO, METHODS,
   RESEARCH, MARKETING, TRAITS, FLOOR_UPKEEP, UNKNOWN_COMBO,
-  comboScore, comboLabel, rankInfo, RANK_UP_FANS, researchEffect,
+  comboScore, comboLabel, rankInfo, RANK_UP_FANS, rankUnlocks, researchEffect,
   STARTUP_GRANT, hireDiscount,
   SHOP, SHOP_KINDS, GEAR_SLOTS, BOSSES, bossFor, BOSS_STAGES, BOSS_PHASES, RAID, OVERTIME,
   shopItem,
@@ -2612,6 +2612,19 @@ export class UI {
       ['누적 매출', won(c.totalEarned)],
     ]) box.appendChild(el('div', 'row', `<span>${k}</span><b>${v}</b>`));
 
+    /* 랭크가 왜 필요한지는 사다리 위쪽에 무엇이 걸려 있느냐로만 설명된다.
+       팬 수만 적어 두면 다음 칸은 그냥 더 큰 숫자다. */
+    const nextUp = rankUnlocks(c.rank + 1);
+    if (nextUp.length) {
+      box.appendChild(el('h4', 'sec',
+        `랭크 ${c.rank + 1}에 열리는 것 · 팬 ${num(RANK_UP_FANS(c.rank))}명`));
+      for (const u of nextUp) {
+        box.appendChild(el('div', 'item',
+          `<div class="t"><span class="n">${u.icon} ${u.ko}</span></div>
+           <div class="d">${u.desc}</div>`));
+      }
+    }
+
     box.appendChild(el('h4', 'sec', '달력'));
     /* '다음 주로 넘기기' 버튼이 있던 자리다. 그 버튼이 있는 동안에는
        아무것도 만들지 않고 달력만 미는 것이 언제나 가장 빨랐다. 이제
@@ -2716,7 +2729,8 @@ export class UI {
     const a2 = el('button', 'btn wide sm', '홈 화면에 추가하는 법 보기');
     a2.onclick = () => {
       const root = $('a2hs');
-      if (root) { wireInstallGuide(root); this.togglePanel(true); }
+      // 안내가 닫히면 패널을 다시 편다 — 안 그러면 접힌 채로 남는다.
+      if (root) { wireInstallGuide(root, () => this.togglePanel(false)); this.togglePanel(true); }
     };
     box.appendChild(a2);
 
@@ -4636,21 +4650,25 @@ export class UI {
        한동안 어디에도 안 적혀 있었다 — 개발 탭에 들어가야만 새 줄이 생긴
        것을 알 수 있었고, 그러면 사다리가 올라간 순간이 아무 일도 아닌 것이
        된다. */
-    const plat = PLATFORMS.find((p) => p.rank === up.rank);
+    const opened = rankUnlocks(up.rank);
+    const next = rankUnlocks(up.rank + 1);
+    const list = opened.length
+      ? `<h4 class="sec">이번에 열린 것</h4>${opened.map((u) => `
+          <div class="item"><div class="t"><span class="n">${u.icon} ${u.ko}</span></div>
+          <div class="d">${u.desc}</div></div>`).join('')}`
+      : '<h4 class="sec">이번에 열린 것</h4><div class="item"><div class="d">이번 칸은 회사의 그릇만 커졌습니다 — 정원·스태미나·자금 상한이 올랐습니다.</div></div>';
     this.openModal('랭크 업', `회사 랭크 ${up.rank}!`,
       `<div class="mfrom">🏢 업계 평가가 갱신됐습니다 — 우리 회사가 한 칸 올라갔습니다</div>
        <div class="grade">${up.rank}</div>
        <div class="gsub">RANK UP</div>
-       ${plat ? `<div class="row"><span>새 플랫폼</span><b class="stars">${plat.ko} 개방</b></div>` : ''}
+       ${list}
+       <h4 class="sec">회사의 그릇</h4>
        <div class="row"><span>직원 정원</span><b>${up.info.staffCap}명</b></div>
        <div class="row"><span>스태미나</span><b>${up.info.staminaMax}</b></div>
        <div class="row"><span>의욕 상한</span><b>${up.info.motivationCap}</b></div>
        <div class="row"><span>자금 상한</span><b>${won(up.info.cashCap)}</b></div>
-       ${plat ? `<p style="color:var(--dim);font-size:11.5px;margin-top:8px">
-         <b>${plat.ko}</b> — 시장 ${num(plat.market)}명 · 구매력 ×${plat.share.toFixed(2)} ·
-         착수 스태미나 ${plat.stamina}. 개발 탭에서 고를 수 있습니다.</p>` : ''}
-       ${up.unlockedFloor ? `<div class="row"><span>새 층</span><b>${up.info.floors}층 입주 가능</b></div>` : ''}
-       ${up.unlockedFloor ? '<p style="color:var(--dim);font-size:11.5px;margin-top:8px">사무실 탭에서 입주할 수 있습니다.</p>' : ''}`);
+       ${next.length ? `<p style="color:var(--dim);font-size:11.5px;margin-top:10px">
+         다음 랭크 ${up.rank + 1}에서 열리는 것 — <b>${next.map((u) => u.ko).join(' · ')}</b></p>` : ''}`);
     this.renderFloors();
   }
 

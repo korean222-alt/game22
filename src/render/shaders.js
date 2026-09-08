@@ -58,6 +58,10 @@ float dither4(){
 }
 
 bool cutAway(vec3 w, float flag){
+  /* Flag 6 is a UI overlay drawn in the world — the placement zone patches and
+     the furniture ghost. It is a marker, not architecture: no cut of any kind
+     may touch it or the very thing the player is aiming at disappears. */
+  if(flag > 5.5) return false;
   /* Flag 5 is the ceiling assembly — the slab above this floor and its light
      troffers. It gets a HARD cut, never a dithered one.
 
@@ -262,6 +266,25 @@ struct Surf { vec3 albedo; float rough; float metal; vec3 emis; };
 
 void main(){
   if(cutAway(vW, vFlag)) discard;
+
+  /* ---- 배치 오버레이 ----
+     놓을 수 있는 구역과 가구 고스트는 유리와 같은 블렌드 패스를 타는데,
+     유리 셰이딩은 알베도를 흰색 쪽으로 80% 끌어당긴다(창문이 그래야 하므로).
+     그래서 파랗게 칠해 둔 바닥 구역이 화면에서는 **흰 판**으로 나왔고,
+     밝은 바닥 위에서는 있는지도 안 보였다.
+
+     오버레이는 물건이 아니라 표시다. 조명·반사·안개를 타지 않고 자기 색을
+     그대로 낸다. 1.7 은 뒤에서 ACES 톤맵이 눌러 내릴 만큼을 미리 얹어 두는
+     값이다 — 안 얹으면 파랑이 회색에 가깝게 나온다. */
+  if(vFlag > 5.5){
+    /* 면의 방향으로만 아주 조금 밝기를 준다. 바닥 패치(위를 보는 면)는 칠한
+       색 그대로, 고스트의 옆면은 살짝 어둡게 — 덩어리가 아니라 가구의 형태로
+       읽히면서도 색은 카메라 각도와 무관하게 늘 같다. */
+    vec3 n = dot(vN, vN) > 1e-12 ? normalize(vN) : vec3(0.0, 1.0, 0.0);
+    float k = mix(0.74, 1.0, clamp(n.y, 0.0, 1.0));
+    outColor = vec4(vC * 1.7 * k, 0.56);     // ACES 를 지나도 색이 살아 있도록
+    return;
+  }
 
   /* 면적이 0 인 삼각형은 법선도 0 이다 (외부 팩의 OBJ 에는 그런 면이
      실제로 들어 있다). normalize(0) 은 NaN 이고, NaN 한 픽셀은 블룸을 타고

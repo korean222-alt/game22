@@ -70,6 +70,11 @@ export function floorField(m, x0, z0, x1, z1, col, tile, y) {
    실루엣을 부드럽게 할 이유가 없으므로 깔끔하게 자른다. */
 export const CEIL_FLAG = 5;
 
+/* 6 은 세계 안에 그리는 UI 다 — 배치 구역 패치와 가구 고스트. 블렌드 패스를
+   타지만 유리처럼 셰이딩되지 않고, 어떤 자르기도 통과한다: 표시가 잘리면
+   플레이어가 겨냥하던 자리가 사라진다. */
+export const OVERLAY_FLAG = 6;
+
 /* Structural slab for a floor above ground, drawn as the ceiling of the floor
    below. */
 

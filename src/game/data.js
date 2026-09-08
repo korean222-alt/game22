@@ -497,6 +497,75 @@ export function rankInfo(rank) {
   };
 }
 
+/* ---------- 랭크가 여는 것들 ----------
+   랭크가 오르면 정확히 무엇이 손에 들어오는지가 한동안 어디에도 안 적혀
+   있었다. 정원과 자금 상한 같은 숫자만 뜨고, 정작 큰 소식인 **새 플랫폼·
+   수익 모델·층·도우미 자리**는 해당 탭에 들어가 봐야 알 수 있었다.
+
+   그래서 해제 조건을 한 곳에 모은다. 랭크업 창과 회사 탭의 예고가 같은
+   목록을 읽으므로, 새 해제를 추가할 때 화면 두 곳을 따로 고칠 일이 없다. */
+
+/* 외주 의뢰가 들어오기 시작하는 랭크. 그 전에는 회사가 너무 작아서 남의
+   일을 받을 곳이 없다 — 그리고 초반에 이 창이 뜨면 "게임을 만들지 않고
+   외주만 돌리는" 쪽이 가장 빠른 길이 되어 버린다. */
+export const OUTSOURCE_RANK = 4;
+
+/* 도우미를 낄 수 있는 자리가 하나씩 늘어나는 랭크. helpers.js 가 이 표를
+   읽어 자리 수를 센다. */
+export const HELPER_SLOT_RANKS = [4, 10];
+
+/* `rank` 로 올라선 순간 새로 열리는 것들. 없으면 빈 배열이다. */
+export function rankUnlocks(rank) {
+  const r = Math.max(1, rank || 1);
+  const prev = rankInfo(Math.max(1, r - 1));
+  const now = rankInfo(r);
+  const out = [];
+
+  const plat = PLATFORMS.find((p) => p.rank === r);
+  if (plat) {
+    out.push({
+      icon: '🎮', ko: `${plat.ko} 개방`,
+      desc: `새 플랫폼 · 시장 ${plat.market.toLocaleString('ko-KR')}명 · 구매력 ×${plat.share.toFixed(2)} · 착수 스태미나 ${plat.stamina}`,
+    });
+  }
+
+  for (const m of MONETIZE) {
+    if (m.rank === r) out.push({ icon: '💰', ko: `${m.ko} 수익 모델`, desc: m.desc });
+  }
+
+  if (r > 1 && now.floors > prev.floors) {
+    out.push({ icon: '🏢', ko: `${now.floors}층 입주 허가`, desc: '사무실 탭에서 돈을 내고 입주합니다.' });
+  }
+
+  if (HELPER_SLOT_RANKS.includes(r)) {
+    const slots = HELPER_SLOT_RANKS.filter((x) => x <= r).length + 1;
+    out.push({ icon: '🦆', ko: `도우미 자리 ${slots}칸`, desc: '개발 중에 쓰는 능력이 한 번 더 늘어납니다.' });
+  }
+
+  if (r === OUTSOURCE_RANK) {
+    out.push({ icon: '📞', ko: '외주 의뢰', desc: '돈이 급할 때 받는 안전한 일감이 걸려 오기 시작합니다.' });
+  }
+
+  if (r === EARLY_RETURN.freeRank) {
+    out.push({ icon: '📈', ko: '수익 상한 해제', desc: '한 작품이 개발비의 몇 배를 벌든 더 이상 깎이지 않습니다.' });
+  }
+
+  if (r === 6) {
+    out.push({ icon: '🧑‍💼', ko: '경력직 지원', desc: '채용 후보에 이미 승급한 사람이 섞이기 시작합니다.' });
+  }
+
+  const shop = SHOP.filter((i) => (i.rank || 1) === r);
+  if (shop.length) {
+    const names = shop.slice(0, 3).map((i) => i.ko).join(' · ');
+    out.push({
+      icon: '🛒', ko: `상점 새 상품 ${shop.length}종`,
+      desc: names + (shop.length > 3 ? ` 외 ${shop.length - 3}종` : ''),
+    });
+  }
+
+  return out;
+}
+
 /* ---------- 랭크 사다리 ----------
    `RANK_UP_FANS(r)` 는 랭크 r 에서 r+1 로 올라가는 데 필요한 팬 수다.
 

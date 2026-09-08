@@ -17,6 +17,7 @@ import { Rig } from './char/rig.js';
 import './world/palette.js';                  // registers the hex -> material map
 import { buildOffice, BUILDING, FLOOR_PLANS, STOREY, placeZones, inPlaceZone } from './world/office.js';
 import { buildPlaced, buildGhost, calibrateFootprints } from './world/placed.js';
+import { OVERLAY_FLAG } from './world/props.js';
 import { loadKit } from './world/kit.js';
 import { initSound, sfx } from './ui/sound.js';
 import { FURNITURE_BY_ID, footprint } from './game/furniture.js';
@@ -841,7 +842,9 @@ class View {
       // a red one is unmistakably this desk not fitting, not a generic error.
       const col = p.valid ? [0.42, 0.86, 0.62] : [0.95, 0.34, 0.30];
       for (let i = 0; i < mb.c.length; i += 3) { mb.c[i] = col[0]; mb.c[i + 1] = col[1]; mb.c[i + 2] = col[2]; }
-      for (let i = 0; i < mb.f.length; i++) mb.f[i] = 2;      // draw in the blended pass
+      // 오버레이 표시로 그린다. 유리(2)로 두면 유리 셰이딩이 색을 흰색으로
+      // 씻어 내서 초록도 빨강도 같은 흰 덩어리가 된다.
+      for (let i = 0; i < mb.f.length; i++) mb.f[i] = OVERLAY_FLAG;
       this.gGhost = upload(mb);
     }
     if (!this.gZones) this.buildZoneOverlay();
@@ -853,10 +856,22 @@ class View {
     disposeMesh(this.gZones);
     const mb = new MeshBuilder();
     mb.noSolid = true;
-    mb.flag = 2;
+    /* 유리가 아니라 오버레이다. 유리 패스에 얹혀 있던 동안에는 유리 셰이딩이
+       이 파란 판을 흰색으로 씻어 냈고, 밝은 바닥 위에서 구역이 사실상 안
+       보였다 — "놓을 수 있는 자리" 를 눈으로 찾을 수 없었다는 뜻이다. */
+    mb.flag = OVERLAY_FLAG;
     const y = this.floor * STOREY + 0.06;
     for (const r of placeZones(this.floor)) {
-      mb.quad([r.x0, y, r.z1], [r.x1, y, r.z1], [r.x1, y, r.z0], [r.x0, y, r.z0], '#3f7fd0');
+      mb.quad([r.x0, y, r.z1], [r.x1, y, r.z1], [r.x1, y, r.z0], [r.x0, y, r.z0], '#2f6fd8');
+      /* 테두리 한 줄. 면만 깔면 어디서 끝나는지가 흐릿한데, 가구는 구역
+         **안에 전부** 들어가야 놓이므로 경계가 곧 규칙이다. */
+      const b = 0.16, yb = y + 0.01;
+      const edge = (x0, z0, x1, z1) =>
+        mb.quad([x0, yb, z1], [x1, yb, z1], [x1, yb, z0], [x0, yb, z0], '#8fd0ff');
+      edge(r.x0, r.z0, r.x1, r.z0 + b);
+      edge(r.x0, r.z1 - b, r.x1, r.z1);
+      edge(r.x0, r.z0 + b, r.x0 + b, r.z1 - b);
+      edge(r.x1 - b, r.z0 + b, r.x1, r.z1 - b);
     }
     this.gZones = mb.count() ? upload(mb) : null;
   }

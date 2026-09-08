@@ -20,14 +20,17 @@
    것**이다 (게임덱스 부스, 시상식, 주간 사건, 팬 편지). 그래서 도우미는
    돈을 넣으면 나오는 것이 아니라 회사가 바깥과 만난 흔적이 된다.
 
-   순수 데이터 모듈이다. */
+   자리를 여는 랭크만 data.js 에서 읽는다. */
+
+import { HELPER_SLOT_RANKS } from './data.js';
 
 /* 낄 수 있는 자리. 랭크가 열어 준다. 능력이 액티브가 되면서 자리 하나의
-   값이 커졌으므로 예전(5·12)보다 조금 일찍 열어 준다. */
+   값이 커졌으므로 예전(5·12)보다 조금 일찍 열어 준다.
+
+   여는 랭크는 data.js 에 있다 — 랭크업 창이 "무엇이 열렸는가" 를 같은 표에서
+   읽어야 둘이 어긋나지 않는다. */
 export function helperSlots(rank) {
-  if (rank >= 10) return 3;
-  if (rank >= 4) return 2;
-  return 1;
+  return 1 + HELPER_SLOT_RANKS.filter((r) => (rank || 1) >= r).length;
 }
 
 /* 능력의 종류

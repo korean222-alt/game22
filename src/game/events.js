@@ -11,13 +11,8 @@
    returns a line of text, and nothing reaches for the DOM. The UI renders
    whatever `pending` holds. */
 
-import { GENRES, CONTENTS, CONTRACTS, contractPay } from './data.js';
+import { GENRES, CONTENTS, CONTRACTS, contractPay, OUTSOURCE_RANK } from './data.js';
 import { addMotivation } from './staff.js';
-
-/* 외주 의뢰가 들어오기 시작하는 랭크. 그 전에는 회사가 너무 작아서 남의
-   일을 받을 곳이 없다 — 그리고 초반에 이 창이 뜨면 "게임을 만들지 않고
-   외주만 돌리는" 쪽이 가장 빠른 길이 되어 버린다. */
-const OUTSOURCE_RANK = 4;
 
 const pickOne = (rnd, arr) => arr[Math.floor(rnd() * arr.length)];
 const won = (n) => '₩' + Math.round(n).toLocaleString('ko-KR');
